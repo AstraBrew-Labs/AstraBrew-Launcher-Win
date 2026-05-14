@@ -1,2 +1,4 @@
 /target
 /data
+/.workbuddy
+*.py

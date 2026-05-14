@@ -1,7 +1,22 @@
 use eframe::egui;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
+
+/// Github 测试弹窗状态
+struct GithubTestPopupState {
+    show: bool,
+    results: Vec<crate::core::network::GithubMultiTestItem>,
+}
+
+static GITHUB_TEST_POPUP_STATE: Lazy<Mutex<GithubTestPopupState>> = Lazy::new(|| {
+    Mutex::new(GithubTestPopupState {
+        show: false,
+        results: Vec::new(),
+    })
+});
 
 #[derive(PartialEq, Default)]
 pub enum SettingsTab {
@@ -870,4 +885,91 @@ pub fn render(
             });
         }
     }
+    // === Github 测试弹窗 ===
+    {
+        // 获取弹窗状态（不持有锁）
+        let (show, results) = {
+            let state = GITHUB_TEST_POPUP_STATE.lock().unwrap();
+            (state.show, state.results.clone())
+        };
+        
+        if show {
+            let mut open = true;
+            let mut results = results;
+            
+            egui::Window::new(lang::t("github_test", &state.language))
+                .open(&mut open)
+                .resizable(true)
+                .default_width(500.0)
+                .show(ui.ctx(), |ui| {
+                    // 检查测试是否正在进行
+                    let testing = crate::core::network::is_github_multi_test_in_progress();
+                    
+                    // 开始测试按钮
+                    if !testing {
+                        if ui.button(lang::t("start_test", &state.language)).clicked() {
+                            // 启动测试
+                            let mode = if state.github_proxy_enabled {
+                                "proxy"
+                            } else {
+                                "none"
+                            };
+                            let host = state.github_proxy_url.clone();
+                            crate::core::network::start_github_multi_test(mode, &host, 0, true);
+                        }
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(lang::t("testing", &state.language));
+                        });
+                    }
+                    
+                    ui.separator();
+                    
+                    // 显示结果
+                    if !results.is_empty() {
+                        ui.heading(lang::t("test_results", &state.language));
+                        egui::ScrollArea::vertical()
+                            .max_height(300.0)
+                            .show(ui, |ui| {
+                                for item in &results {
+                                    ui.horizontal(|ui| {
+                                        ui.label(&item.key);
+                                        ui.separator();
+                                        ui.label(&item.name);
+                                        ui.separator();
+                                        if item.success {
+                                            if let Some(latency) = item.latency_ms {
+                                                ui.colored_label(egui::Color32::GREEN, format!("{} ms", latency));
+                                            } else {
+                                                ui.colored_label(egui::Color32::GREEN, lang::t("success", &state.language));
+                                            }
+                                        } else {
+                                            ui.colored_label(egui::Color32::RED, lang::t("failed", &state.language));
+                                        }
+                                        if let Some(err) = &item.error {
+                                            ui.label(err);
+                                        }
+                                        if let Some(warn) = &item.warning {
+                                            ui.colored_label(egui::Color32::YELLOW, warn);
+                                        }
+                                    });
+                                    ui.separator();
+                                }
+                            });
+                    }
+                });
+            
+            // 检查测试是否完成（不持有锁时调用）
+            if let Some(test_results) = crate::core::network::get_github_multi_test_result() {
+                results = test_results;
+            }
+            
+            // 保存状态
+            let mut state = GITHUB_TEST_POPUP_STATE.lock().unwrap();
+            state.show = open;
+            state.results = results;
+        }
+    }
+
 }
