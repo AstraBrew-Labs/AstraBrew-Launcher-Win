@@ -180,193 +180,351 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                     ui.add_space(10.0);
 
                     // 界面设置
-                    setting_section(ui, egui_phosphor::regular::PAINT_BRUSH, "界面设置", |ui| {
-                        setting_row(ui, egui_phosphor::regular::TRANSLATE, "语言", "选择应用程序显示的语言", |ui| {
-                            egui::ComboBox::from_id_salt("lang_combo")
-                                .selected_text(match state.language {
-                                    Language::Chinese => "中文",
-                                    Language::English => "English",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut state.language, Language::Chinese, "中文");
-                                    ui.selectable_value(&mut state.language, Language::English, "English");
-                                });
-                        });
-                        ui.add_space(10.0);
-                        setting_row(ui, egui_phosphor::regular::PALETTE, "主题", "切换明亮或夜晚模式", |ui| {
-                            egui::ComboBox::from_id_salt("theme_combo")
-                                .selected_text(match state.theme {
-                                    Theme::Light => "明亮主题",
-                                    Theme::Dark => "夜晚主题",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut state.theme, Theme::Light, "明亮主题");
-                                    ui.selectable_value(&mut state.theme, Theme::Dark, "夜晚主题");
-                                });
-                        });
-                        ui.add_space(10.0);
-                        setting_row(ui, egui_phosphor::regular::CORNERS_OUT, "记住上次窗口位置", "启动时恢复上次窗口的位置和大小", |ui| {
-                            ui.radio_value(&mut state.remember_window_pos, false, "关闭");
-                            ui.radio_value(&mut state.remember_window_pos, true, "开启");
-                        });
-                    });
+                    setting_section(
+                        ui,
+                        egui_phosphor::regular::PAINT_BRUSH,
+                        "界面设置",
+                        |ui| {
+                            setting_row(
+                                ui,
+                                egui_phosphor::regular::TRANSLATE,
+                                "语言",
+                                "选择应用程序显示的语言",
+                                |ui| {
+                                    egui::ComboBox::from_id_salt("lang_combo")
+                                        .selected_text(match state.language {
+                                            Language::Chinese => "中文",
+                                            Language::English => "English",
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(
+                                                &mut state.language,
+                                                Language::Chinese,
+                                                "中文",
+                                            );
+                                            ui.selectable_value(
+                                                &mut state.language,
+                                                Language::English,
+                                                "English",
+                                            );
+                                        });
+                                },
+                            );
+                            ui.add_space(10.0);
+                            setting_row(
+                                ui,
+                                egui_phosphor::regular::PALETTE,
+                                "主题",
+                                "切换明亮或夜晚模式",
+                                |ui| {
+                                    egui::ComboBox::from_id_salt("theme_combo")
+                                        .selected_text(match state.theme {
+                                            Theme::Light => "明亮主题",
+                                            Theme::Dark => "夜晚主题",
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(
+                                                &mut state.theme,
+                                                Theme::Light,
+                                                "明亮主题",
+                                            );
+                                            ui.selectable_value(
+                                                &mut state.theme,
+                                                Theme::Dark,
+                                                "夜晚主题",
+                                            );
+                                        });
+                                },
+                            );
+                            ui.add_space(10.0);
+                            setting_row(
+                                ui,
+                                egui_phosphor::regular::CORNERS_OUT,
+                                "记住上次窗口位置",
+                                "启动时恢复上次窗口的位置和大小",
+                                |ui| {
+                                    ui.radio_value(&mut state.remember_window_pos, false, "关闭");
+                                    ui.radio_value(&mut state.remember_window_pos, true, "开启");
+                                },
+                            );
+                        },
+                    );
 
                     // 基本设置
                     setting_section(ui, egui_phosphor::regular::SLIDERS, "基本设置", |ui| {
-                        setting_row(ui, egui_phosphor::regular::CPU, "扫描占用核心数", "分配用于全盘扫描的 CPU 线程数", |ui| {
-                            egui::ComboBox::from_id_salt("cpu_combo")
-                                .selected_text(match state.cpu_cores {
-                                    CpuCores::Auto => "Auto",
-                                    CpuCores::Half => "1/2核心",
-                                    CpuCores::All => "所有核心",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut state.cpu_cores, CpuCores::Auto, "Auto");
-                                    ui.selectable_value(&mut state.cpu_cores, CpuCores::Half, "1/2核心");
-                                    ui.selectable_value(&mut state.cpu_cores, CpuCores::All, "所有核心");
-                                });
-                        });
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::CPU,
+                            "扫描占用核心数",
+                            "分配用于全盘扫描的 CPU 线程数",
+                            |ui| {
+                                egui::ComboBox::from_id_salt("cpu_combo")
+                                    .selected_text(match state.cpu_cores {
+                                        CpuCores::Auto => "Auto",
+                                        CpuCores::Half => "1/2核心",
+                                        CpuCores::All => "所有核心",
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut state.cpu_cores,
+                                            CpuCores::Auto,
+                                            "Auto",
+                                        );
+                                        ui.selectable_value(
+                                            &mut state.cpu_cores,
+                                            CpuCores::Half,
+                                            "1/2核心",
+                                        );
+                                        ui.selectable_value(
+                                            &mut state.cpu_cores,
+                                            CpuCores::All,
+                                            "所有核心",
+                                        );
+                                    });
+                            },
+                        );
                         ui.add_space(10.0);
-                        setting_row(ui, egui_phosphor::regular::ROCKET, "酒馆启动模式", "设置酒馆的启动方式", |ui| {
-                            ui.radio_value(&mut state.start_mode, StartMode::Public, "公网服务");
-                            ui.radio_value(&mut state.start_mode, StartMode::Lan, "局域网服务");
-                            ui.radio_value(&mut state.start_mode, StartMode::Desktop, "桌面程序");
-                            ui.radio_value(&mut state.start_mode, StartMode::Normal, "正常模式");
-                        });
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::ROCKET,
+                            "酒馆启动模式",
+                            "设置酒馆的启动方式",
+                            |ui| {
+                                crate::ui::segmented::segmented_control(
+                                    ui,
+                                    &mut state.start_mode,
+                                    &[
+                                        (StartMode::Normal, "正常模式"),
+                                        (StartMode::Desktop, "桌面程序"),
+                                        (StartMode::Lan, "局域网服务"),
+                                        (StartMode::Public, "公网服务"),
+                                    ],
+                                );
+                            },
+                        );
                     });
 
                     // Git 设置
                     setting_section(ui, egui_phosphor::regular::GIT_BRANCH, "Git 设置", |ui| {
-                        setting_row(ui, egui_phosphor::regular::INFO, "Git 环境信息", "查看当前使用的 Git 版本和路径", |ui| {
-                            ui.vertical(|ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("未知").color(egui::Color32::GRAY));
-                                    ui.label("版本：");
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("未知").color(egui::Color32::GRAY));
-                                    ui.label("路径：");
-                                });
-                            });
-                        });
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::INFO,
+                            "Git 环境信息",
+                            "查看当前使用的 Git 版本和路径\n版本：未知\n路径：未知",
+                            |_| {},
+                        );
                         ui.add_space(10.0);
-                        setting_row(ui, egui_phosphor::regular::WRENCH, "Git 环境来源", "可切换使用系统 Git 或内置 Git", |ui| {
-                            egui::ComboBox::from_id_salt("git_env_combo")
-                                .selected_text(match state.git_env {
-                                    EnvSource::System => "系统环境",
-                                    EnvSource::Builtin => "内置环境（默认）",
-                                    EnvSource::Custom => "自定义环境",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut state.git_env, EnvSource::System, "系统环境");
-                                    ui.selectable_value(&mut state.git_env, EnvSource::Builtin, "内置环境（默认）");
-                                    ui.selectable_value(&mut state.git_env, EnvSource::Custom, "自定义环境");
-                                });
-                        });
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::WRENCH,
+                            "Git 环境来源",
+                            "可切换使用系统 Git 或内置 Git",
+                            |ui| {
+                                egui::ComboBox::from_id_salt("git_env_combo")
+                                    .selected_text(match state.git_env {
+                                        EnvSource::System => "系统环境",
+                                        EnvSource::Builtin => "内置环境（默认）",
+                                        EnvSource::Custom => "自定义环境",
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut state.git_env,
+                                            EnvSource::System,
+                                            "系统环境",
+                                        );
+                                        ui.selectable_value(
+                                            &mut state.git_env,
+                                            EnvSource::Builtin,
+                                            "内置环境（默认）",
+                                        );
+                                        ui.selectable_value(
+                                            &mut state.git_env,
+                                            EnvSource::Custom,
+                                            "自定义环境",
+                                        );
+                                    });
+                            },
+                        );
                     });
 
                     // NodeJs 设置
                     setting_section(ui, egui_phosphor::regular::TERMINAL, "NodeJs 设置", |ui| {
-                        setting_row(ui, egui_phosphor::regular::INFO, "NodeJs 环境信息", "查看当前使用的 NodeJs 版本和路径", |ui| {
-                            ui.vertical(|ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("未知").color(egui::Color32::GRAY));
-                                    ui.label("版本：");
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("未知").color(egui::Color32::GRAY));
-                                    ui.label("路径：");
-                                });
-                            });
-                        });
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::INFO,
+                            "NodeJs 环境信息",
+                            "查看当前使用的 NodeJs 版本和路径\n版本：未知\n路径：未知",
+                            |_| {},
+                        );
                         ui.add_space(10.0);
-                        setting_row(ui, egui_phosphor::regular::WRENCH, "Node.js 环境来源", "可切换使用系统 NodeJs 或内置 NodeJs", |ui| {
-                            egui::ComboBox::from_id_salt("nodejs_env_combo")
-                                .selected_text(match state.nodejs_env {
-                                    EnvSource::System => "系统环境",
-                                    EnvSource::Builtin => "内置环境（默认）",
-                                    EnvSource::Custom => "自定义环境",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut state.nodejs_env, EnvSource::System, "系统环境");
-                                    ui.selectable_value(&mut state.nodejs_env, EnvSource::Builtin, "内置环境（默认）");
-                                    ui.selectable_value(&mut state.nodejs_env, EnvSource::Custom, "自定义环境");
-                                });
-                        });
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::WRENCH,
+                            "Node.js 环境来源",
+                            "可切换使用系统 NodeJs 或内置 NodeJs",
+                            |ui| {
+                                egui::ComboBox::from_id_salt("nodejs_env_combo")
+                                    .selected_text(match state.nodejs_env {
+                                        EnvSource::System => "系统环境",
+                                        EnvSource::Builtin => "内置环境（默认）",
+                                        EnvSource::Custom => "自定义环境",
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut state.nodejs_env,
+                                            EnvSource::System,
+                                            "系统环境",
+                                        );
+                                        ui.selectable_value(
+                                            &mut state.nodejs_env,
+                                            EnvSource::Builtin,
+                                            "内置环境（默认）",
+                                        );
+                                        ui.selectable_value(
+                                            &mut state.nodejs_env,
+                                            EnvSource::Custom,
+                                            "自定义环境",
+                                        );
+                                    });
+                            },
+                        );
                         ui.add_space(10.0);
-                        setting_row(ui, egui_phosphor::regular::INFO, "NPM 环境信息", "查看当前使用的 NPM 版本和路径", |ui| {
-                            ui.vertical(|ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("未知").color(egui::Color32::GRAY));
-                                    ui.label("版本：");
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("未知").color(egui::Color32::GRAY));
-                                    ui.label("路径：");
-                                });
-                            });
-                        });
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::INFO,
+                            "NPM 环境信息",
+                            "查看当前使用的 NPM 版本和路径\n版本：未知\n路径：未知",
+                            |_| {},
+                        );
                         ui.add_space(10.0);
-                        setting_row(ui, egui_phosphor::regular::GLOBE, "NPM 源设置", "设置 NPM 的镜像源", |ui| {
-                            egui::ComboBox::from_id_salt("npm_registry_combo")
-                                .selected_text(match state.npm_registry {
-                                    NpmRegistry::Official => "官方源",
-                                    NpmRegistry::Taobao => "淘宝源（默认）",
-                                    NpmRegistry::Tencent => "腾讯源",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut state.npm_registry, NpmRegistry::Official, "官方源");
-                                    ui.selectable_value(&mut state.npm_registry, NpmRegistry::Taobao, "淘宝源（默认）");
-                                    ui.selectable_value(&mut state.npm_registry, NpmRegistry::Tencent, "腾讯源");
-                                });
-                        });
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::GLOBE,
+                            "NPM 源设置",
+                            "设置 NPM 的镜像源",
+                            |ui| {
+                                egui::ComboBox::from_id_salt("npm_registry_combo")
+                                    .selected_text(match state.npm_registry {
+                                        NpmRegistry::Official => "官方源",
+                                        NpmRegistry::Taobao => "淘宝源（默认）",
+                                        NpmRegistry::Tencent => "腾讯源",
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut state.npm_registry,
+                                            NpmRegistry::Official,
+                                            "官方源",
+                                        );
+                                        ui.selectable_value(
+                                            &mut state.npm_registry,
+                                            NpmRegistry::Taobao,
+                                            "淘宝源（默认）",
+                                        );
+                                        ui.selectable_value(
+                                            &mut state.npm_registry,
+                                            NpmRegistry::Tencent,
+                                            "腾讯源",
+                                        );
+                                    });
+                            },
+                        );
                     });
 
                     // Github 设置
-                    setting_section(ui, egui_phosphor::regular::GITHUB_LOGO, "Github 设置", |ui| {
-                        setting_row(ui, egui_phosphor::regular::POWER, "替换总开关", "开启后将在源地址前面加上加速地址，实现加速 Github 资源下载", |ui| {
-                            ui.radio_value(&mut state.github_proxy_enabled, false, "关闭");
-                            ui.radio_value(&mut state.github_proxy_enabled, true, "开启");
-                        });
-                        ui.add_space(10.0);
-                        setting_row(ui, egui_phosphor::regular::LIST, "替换节点列表", "通过接口获取可用的加速节点", |ui| {
-                            if state.github_proxy_enabled {
-                                ui.label("加载中...");
-                            } else {
-                                ui.label(egui::RichText::new("请先开启总开关").color(egui::Color32::GRAY));
-                            }
-                        });
-                    });
+                    setting_section(
+                        ui,
+                        egui_phosphor::regular::GITHUB_LOGO,
+                        "Github 设置",
+                        |ui| {
+                            setting_row(
+                                ui,
+                                egui_phosphor::regular::POWER,
+                                "替换总开关",
+                                "开启后将在源地址前面加上加速地址，实现加速 Github 资源下载",
+                                |ui| {
+                                    ui.radio_value(&mut state.github_proxy_enabled, false, "关闭");
+                                    ui.radio_value(&mut state.github_proxy_enabled, true, "开启");
+                                },
+                            );
+                            ui.add_space(10.0);
+                            setting_row(
+                                ui,
+                                egui_phosphor::regular::LIST,
+                                "替换节点列表",
+                                "通过接口获取可用的加速节点",
+                                |ui| {
+                                    if state.github_proxy_enabled {
+                                        ui.label("加载中...");
+                                    } else {
+                                        ui.label(
+                                            egui::RichText::new("请先开启总开关")
+                                                .color(egui::Color32::GRAY),
+                                        );
+                                    }
+                                },
+                            );
+                        },
+                    );
 
                     // 网络设置
                     setting_section(ui, egui_phosphor::regular::WIFI_HIGH, "网络设置", |ui| {
-                        setting_row(ui, egui_phosphor::regular::SHIELD, "代理设置", "设置应用程序的网络代理", |ui| {
-                            egui::ComboBox::from_id_salt("proxy_type_combo")
-                                .selected_text(match state.proxy_type {
-                                    ProxyType::None => "关闭",
-                                    ProxyType::System => "跟随系统",
-                                    ProxyType::Custom => "自定义代理",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut state.proxy_type, ProxyType::None, "关闭");
-                                    ui.selectable_value(&mut state.proxy_type, ProxyType::System, "跟随系统");
-                                    ui.selectable_value(&mut state.proxy_type, ProxyType::Custom, "自定义代理");
-                                });
-                        });
-                        
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::SHIELD,
+                            "代理设置",
+                            "设置应用程序的网络代理",
+                            |ui| {
+                                egui::ComboBox::from_id_salt("proxy_type_combo")
+                                    .selected_text(match state.proxy_type {
+                                        ProxyType::None => "关闭",
+                                        ProxyType::System => "跟随系统",
+                                        ProxyType::Custom => "自定义代理",
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut state.proxy_type,
+                                            ProxyType::None,
+                                            "关闭",
+                                        );
+                                        ui.selectable_value(
+                                            &mut state.proxy_type,
+                                            ProxyType::System,
+                                            "跟随系统",
+                                        );
+                                        ui.selectable_value(
+                                            &mut state.proxy_type,
+                                            ProxyType::Custom,
+                                            "自定义代理",
+                                        );
+                                    });
+                            },
+                        );
+
                         if state.proxy_type == ProxyType::Custom {
                             ui.add_space(10.0);
-                            setting_row(ui, egui_phosphor::regular::LINK, "代理地址", "输入自定义代理地址", |ui| {
-                                ui.text_edit_singleline(&mut state.custom_proxy);
-                            });
+                            setting_row(
+                                ui,
+                                egui_phosphor::regular::LINK,
+                                "代理地址",
+                                "输入自定义代理地址",
+                                |ui| {
+                                    ui.text_edit_singleline(&mut state.custom_proxy);
+                                },
+                            );
                         }
-                        
+
                         ui.add_space(10.0);
-                        setting_row(ui, egui_phosphor::regular::PLUG, "GitHub 连接测试", "不通过代理测试 GitHub 连接", |ui| {
-                            if ui.button("开始测试").clicked() {
-                                // 待实现
-                            }
-                        });
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::PLUG,
+                            "GitHub 连接测试",
+                            "不通过代理测试 GitHub 连接",
+                            |ui| {
+                                if ui.button("开始测试").clicked() {
+                                    // 待实现
+                                }
+                            },
+                        );
                     });
 
                     ui.add_space(20.0);

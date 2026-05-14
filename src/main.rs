@@ -65,6 +65,7 @@ enum Page {
 
 mod core;
 mod pages;
+mod ui;
 use pages::settings::{SettingsState, SettingsTab};
 
 struct MyApp {
