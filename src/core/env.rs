@@ -1,0 +1,121 @@
+use std::path::PathBuf;
+use std::process::Command;
+use std::os::windows::process::CommandExt;
+
+// 隐藏控制台窗口的标志
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+pub fn get_data_dir() -> PathBuf {
+    let mut current_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
+    current_exe.pop();
+    let path_str = current_exe.to_string_lossy();
+    let mut root = if path_str.contains("target\\debug") || path_str.contains("target\\release") {
+        let mut p = current_exe.clone();
+        p.pop();
+        p.pop();
+        p
+    } else {
+        current_exe
+    };
+    root.push("data");
+    root
+}
+
+pub fn get_builtin_git_path() -> Option<PathBuf> {
+    let mut base = get_data_dir();
+    base.push("lib");
+    base.push("git");
+    
+    let cmd_path = base.join("cmd").join("git.exe");
+    if cmd_path.exists() {
+        return Some(cmd_path);
+    }
+    
+    let bin_path = base.join("bin").join("git.exe");
+    if bin_path.exists() {
+        return Some(bin_path);
+    }
+    
+    None
+}
+
+pub fn get_builtin_node_path() -> Option<PathBuf> {
+    let mut path = get_data_dir();
+    path.push("lib");
+    path.push("nodejs");
+    path.push("node.exe");
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+pub fn get_builtin_npm_path() -> Option<PathBuf> {
+    let mut path = get_data_dir();
+    path.push("lib");
+    path.push("nodejs");
+    path.push("npm.cmd");
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+pub fn get_system_cmd_path(cmd: &str) -> Option<PathBuf> {
+    if let Ok(output) = Command::new("where")
+        .arg(cmd)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output() {
+        if output.status.success() {
+            let paths = String::from_utf8_lossy(&output.stdout);
+            
+            // 优先选择 .exe, .cmd, .bat
+            for line in paths.lines() {
+                let p = PathBuf::from(line.trim());
+                if p.exists() {
+                    let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+                    if ext == "exe" || ext == "cmd" || ext == "bat" {
+                        return Some(p);
+                    }
+                }
+            }
+            
+            // 如果没有匹配到特定扩展名，则回退到第一个路径
+            if let Some(first_path) = paths.lines().next() {
+                let p = PathBuf::from(first_path.trim());
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn get_cmd_version(path: &PathBuf) -> Option<String> {
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    
+    // 如果是批处理文件，使用 cmd /c 运行
+    let result = if ext == "cmd" || ext == "bat" {
+        Command::new("cmd")
+            .arg("/c")
+            .arg(path)
+            .arg("--version")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+    } else {
+        Command::new(path)
+            .arg("--version")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+    };
+
+    if let Ok(output) = result {
+        if output.status.success() {
+            return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
+        }
+    }
+    None
+}

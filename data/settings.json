@@ -1,0 +1,13 @@
+{
+  "language": "Chinese",
+  "theme": "Dark",
+  "remember_window_pos": true,
+  "cpu_cores": "Auto",
+  "start_mode": "Normal",
+  "git_env": "System",
+  "nodejs_env": "System",
+  "npm_registry": "Taobao",
+  "github_proxy_enabled": false,
+  "proxy_type": "None",
+  "custom_proxy": ""
+}

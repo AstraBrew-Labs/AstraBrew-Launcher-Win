@@ -1,4 +1,7 @@
 use eframe::egui;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(PartialEq, Default)]
 pub enum SettingsTab {
@@ -7,21 +10,21 @@ pub enum SettingsTab {
     About,
 }
 
-#[derive(PartialEq, Default, Clone)]
+#[derive(PartialEq, Default, Clone, Serialize, Deserialize)]
 pub enum Language {
     #[default]
     Chinese,
     English,
 }
 
-#[derive(PartialEq, Default, Clone)]
+#[derive(PartialEq, Default, Clone, Serialize, Deserialize)]
 pub enum Theme {
     Light,
     #[default]
     Dark,
 }
 
-#[derive(PartialEq, Default, Clone)]
+#[derive(PartialEq, Default, Clone, Serialize, Deserialize)]
 pub enum CpuCores {
     #[default]
     Auto,
@@ -29,7 +32,7 @@ pub enum CpuCores {
     All,
 }
 
-#[derive(PartialEq, Default, Clone)]
+#[derive(PartialEq, Default, Clone, Serialize, Deserialize)]
 pub enum StartMode {
     #[default]
     Normal,
@@ -38,7 +41,7 @@ pub enum StartMode {
     Public,
 }
 
-#[derive(PartialEq, Default, Clone)]
+#[derive(PartialEq, Default, Clone, Serialize, Deserialize)]
 pub enum EnvSource {
     System,
     #[default]
@@ -46,7 +49,7 @@ pub enum EnvSource {
     Custom,
 }
 
-#[derive(PartialEq, Default, Clone)]
+#[derive(PartialEq, Default, Clone, Serialize, Deserialize)]
 pub enum NpmRegistry {
     Official,
     #[default]
@@ -54,7 +57,7 @@ pub enum NpmRegistry {
     Tencent,
 }
 
-#[derive(PartialEq, Default, Clone)]
+#[derive(PartialEq, Default, Clone, Serialize, Deserialize)]
 pub enum ProxyType {
     #[default]
     None,
@@ -62,6 +65,7 @@ pub enum ProxyType {
     Custom,
 }
 
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct SettingsState {
     // 界面设置
     pub language: Language,
@@ -104,6 +108,57 @@ impl Default for SettingsState {
         }
     }
 }
+
+impl SettingsState {
+    fn config_path() -> PathBuf {
+        // 回退到程序运行目录 (或开发时的项目根目录)
+        let mut current_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
+        current_exe.pop(); // 去除执行文件名
+
+        let path_str = current_exe.to_string_lossy();
+        let mut root = if path_str.contains("target\\debug") || path_str.contains("target\\release") {
+            // 回退到项目根目录
+            let mut p = current_exe.clone();
+            p.pop(); // pop debug/release
+            p.pop(); // pop target
+            p
+        } else {
+            current_exe
+        };
+
+        root.push("data");
+        root.push("settings.json");
+        root
+    }
+
+    pub fn load() -> Self {
+        let path = Self::config_path();
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(state) = serde_json::from_str(&content) {
+                    return state;
+                }
+            }
+        }
+        
+        // 如果文件不存在或解析失败，生成默认配置并保存（自动创建目录和文件）
+        let default_state = Self::default();
+        default_state.save();
+        default_state
+    }
+
+    pub fn save(&self) {
+        let path = Self::config_path();
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Ok(content) = serde_json::to_string_pretty(self) {
+            let _ = fs::write(path, content);
+        }
+    }
+}
+
+use crate::lang;
 
 fn setting_section(
     ui: &mut egui::Ui,
@@ -165,10 +220,17 @@ fn setting_row(
     });
 }
 
-pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsState) {
+pub fn render(
+    ui: &mut egui::Ui,
+    tab: &mut SettingsTab,
+    state: &mut SettingsState,
+    git_info: &Option<(String, String)>,
+    nodejs_info: &Option<(String, String)>,
+    npm_info: &Option<(String, String)>,
+) {
     ui.horizontal(|ui| {
-        ui.selectable_value(tab, SettingsTab::General, "基本设置");
-        ui.selectable_value(tab, SettingsTab::About, "关于软件");
+        ui.selectable_value(tab, SettingsTab::General, lang::t("general_settings", &state.language));
+        ui.selectable_value(tab, SettingsTab::About, lang::t("about_software", &state.language));
     });
     ui.separator();
 
@@ -183,29 +245,31 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                     setting_section(
                         ui,
                         egui_phosphor::regular::PAINT_BRUSH,
-                        "界面设置",
+                        lang::t("interface_settings", &state.language),
                         |ui| {
                             setting_row(
                                 ui,
                                 egui_phosphor::regular::TRANSLATE,
-                                "语言",
-                                "选择应用程序显示的语言",
+                                lang::t("language", &state.language),
+                                lang::t("language_desc", &state.language),
                                 |ui| {
                                     egui::ComboBox::from_id_salt("lang_combo")
                                         .selected_text(match state.language {
-                                            Language::Chinese => "中文",
-                                            Language::English => "English",
+                                            Language::Chinese => lang::t("zh_cn", &state.language),
+                                            Language::English => lang::t("en_us", &state.language),
                                         })
                                         .show_ui(ui, |ui| {
+                                            let text_zh = lang::t("zh_cn", &state.language);
+                                            let text_en = lang::t("en_us", &state.language);
                                             ui.selectable_value(
                                                 &mut state.language,
                                                 Language::Chinese,
-                                                "中文",
+                                                text_zh,
                                             );
                                             ui.selectable_value(
                                                 &mut state.language,
                                                 Language::English,
-                                                "English",
+                                                text_en,
                                             );
                                         });
                                 },
@@ -214,24 +278,24 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                             setting_row(
                                 ui,
                                 egui_phosphor::regular::PALETTE,
-                                "主题",
-                                "切换明亮或夜晚模式",
+                                lang::t("theme", &state.language),
+                                lang::t("theme_desc", &state.language),
                                 |ui| {
                                     egui::ComboBox::from_id_salt("theme_combo")
                                         .selected_text(match state.theme {
-                                            Theme::Light => "明亮主题",
-                                            Theme::Dark => "夜晚主题",
+                                            Theme::Light => lang::t("light_theme", &state.language),
+                                            Theme::Dark => lang::t("dark_theme", &state.language),
                                         })
                                         .show_ui(ui, |ui| {
                                             ui.selectable_value(
                                                 &mut state.theme,
                                                 Theme::Light,
-                                                "明亮主题",
+                                                lang::t("light_theme", &state.language),
                                             );
                                             ui.selectable_value(
                                                 &mut state.theme,
                                                 Theme::Dark,
-                                                "夜晚主题",
+                                                lang::t("dark_theme", &state.language),
                                             );
                                         });
                                 },
@@ -240,45 +304,45 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                             setting_row(
                                 ui,
                                 egui_phosphor::regular::CORNERS_OUT,
-                                "记住上次窗口位置",
-                                "启动时恢复上次窗口的位置和大小",
+                                lang::t("remember_window_pos", &state.language),
+                                lang::t("remember_window_pos_desc", &state.language),
                                 |ui| {
-                                    ui.radio_value(&mut state.remember_window_pos, false, "关闭");
-                                    ui.radio_value(&mut state.remember_window_pos, true, "开启");
+                                    ui.radio_value(&mut state.remember_window_pos, false, lang::t("off", &state.language));
+                                    ui.radio_value(&mut state.remember_window_pos, true, lang::t("on", &state.language));
                                 },
                             );
                         },
                     );
 
                     // 基本设置
-                    setting_section(ui, egui_phosphor::regular::SLIDERS, "基本设置", |ui| {
+                    setting_section(ui, egui_phosphor::regular::SLIDERS, lang::t("basic_settings", &state.language), |ui| {
                         setting_row(
                             ui,
                             egui_phosphor::regular::CPU,
-                            "扫描占用核心数",
-                            "分配用于全盘扫描的 CPU 线程数",
+                            lang::t("cpu_cores", &state.language),
+                            lang::t("cpu_cores_desc", &state.language),
                             |ui| {
                                 egui::ComboBox::from_id_salt("cpu_combo")
                                     .selected_text(match state.cpu_cores {
-                                        CpuCores::Auto => "Auto",
-                                        CpuCores::Half => "1/2核心",
-                                        CpuCores::All => "所有核心",
+                                        CpuCores::Auto => lang::t("auto", &state.language),
+                                        CpuCores::Half => lang::t("half_cores", &state.language),
+                                        CpuCores::All => lang::t("all_cores", &state.language),
                                     })
                                     .show_ui(ui, |ui| {
                                         ui.selectable_value(
                                             &mut state.cpu_cores,
                                             CpuCores::Auto,
-                                            "Auto",
+                                            lang::t("auto", &state.language),
                                         );
                                         ui.selectable_value(
                                             &mut state.cpu_cores,
                                             CpuCores::Half,
-                                            "1/2核心",
+                                            lang::t("half_cores", &state.language),
                                         );
                                         ui.selectable_value(
                                             &mut state.cpu_cores,
                                             CpuCores::All,
-                                            "所有核心",
+                                            lang::t("all_cores", &state.language),
                                         );
                                     });
                             },
@@ -287,17 +351,17 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                         setting_row(
                             ui,
                             egui_phosphor::regular::ROCKET,
-                            "酒馆启动模式",
-                            "设置酒馆的启动方式",
+                            lang::t("start_mode", &state.language),
+                            lang::t("start_mode_desc", &state.language),
                             |ui| {
                                 crate::ui::segmented::segmented_control(
                                     ui,
                                     &mut state.start_mode,
                                     &[
-                                        (StartMode::Normal, "正常模式"),
-                                        (StartMode::Desktop, "桌面程序"),
-                                        (StartMode::Lan, "局域网服务"),
-                                        (StartMode::Public, "公网服务"),
+                                        (StartMode::Normal, lang::t("normal_mode", &state.language)),
+                                        (StartMode::Desktop, lang::t("desktop_mode", &state.language)),
+                                        (StartMode::Lan, lang::t("lan_mode", &state.language)),
+                                        (StartMode::Public, lang::t("public_mode", &state.language)),
                                     ],
                                 );
                             },
@@ -305,42 +369,48 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                     });
 
                     // Git 设置
-                    setting_section(ui, egui_phosphor::regular::GIT_BRANCH, "Git 设置", |ui| {
+                    setting_section(ui, egui_phosphor::regular::GIT_BRANCH, lang::t("git_settings", &state.language), |ui| {
+                        let unknown = lang::t("unknown", &state.language);
+                        let (git_ver, git_path) = git_info.as_ref().map(|(v, p)| (v.as_str(), p.as_str())).unwrap_or((unknown, unknown));
+                        let git_info_desc = lang::t("git_env_info_desc", &state.language)
+                            .replace("{version}", git_ver)
+                            .replace("{path}", git_path);
+                            
                         setting_row(
                             ui,
                             egui_phosphor::regular::INFO,
-                            "Git 环境信息",
-                            "查看当前使用的 Git 版本和路径\n版本：未知\n路径：未知",
+                            lang::t("git_env_info", &state.language),
+                            &git_info_desc,
                             |_| {},
                         );
                         ui.add_space(10.0);
                         setting_row(
                             ui,
                             egui_phosphor::regular::WRENCH,
-                            "Git 环境来源",
-                            "可切换使用系统 Git 或内置 Git",
+                            lang::t("git_env_source", &state.language),
+                            lang::t("git_env_source_desc", &state.language),
                             |ui| {
                                 egui::ComboBox::from_id_salt("git_env_combo")
                                     .selected_text(match state.git_env {
-                                        EnvSource::System => "系统环境",
-                                        EnvSource::Builtin => "内置环境（默认）",
-                                        EnvSource::Custom => "自定义环境",
+                                        EnvSource::System => lang::t("system_env", &state.language),
+                                        EnvSource::Builtin => lang::t("builtin_env", &state.language),
+                                        EnvSource::Custom => lang::t("custom_env", &state.language),
                                     })
                                     .show_ui(ui, |ui| {
                                         ui.selectable_value(
                                             &mut state.git_env,
                                             EnvSource::System,
-                                            "系统环境",
+                                            lang::t("system_env", &state.language),
                                         );
                                         ui.selectable_value(
                                             &mut state.git_env,
                                             EnvSource::Builtin,
-                                            "内置环境（默认）",
+                                            lang::t("builtin_env", &state.language),
                                         );
                                         ui.selectable_value(
                                             &mut state.git_env,
                                             EnvSource::Custom,
-                                            "自定义环境",
+                                            lang::t("custom_env", &state.language),
                                         );
                                     });
                             },
@@ -348,82 +418,94 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                     });
 
                     // NodeJs 设置
-                    setting_section(ui, egui_phosphor::regular::TERMINAL, "NodeJs 设置", |ui| {
+                    setting_section(ui, egui_phosphor::regular::TERMINAL, lang::t("nodejs_settings", &state.language), |ui| {
+                        let unknown = lang::t("unknown", &state.language);
+                        let (node_ver, node_path) = nodejs_info.as_ref().map(|(v, p)| (v.as_str(), p.as_str())).unwrap_or((unknown, unknown));
+                        let node_info_desc = lang::t("nodejs_env_info_desc", &state.language)
+                            .replace("{version}", node_ver)
+                            .replace("{path}", node_path);
+                            
                         setting_row(
                             ui,
                             egui_phosphor::regular::INFO,
-                            "NodeJs 环境信息",
-                            "查看当前使用的 NodeJs 版本和路径\n版本：未知\n路径：未知",
+                            lang::t("nodejs_env_info", &state.language),
+                            &node_info_desc,
                             |_| {},
                         );
                         ui.add_space(10.0);
                         setting_row(
                             ui,
                             egui_phosphor::regular::WRENCH,
-                            "Node.js 环境来源",
-                            "可切换使用系统 NodeJs 或内置 NodeJs",
+                            lang::t("nodejs_env_source", &state.language),
+                            lang::t("nodejs_env_source_desc", &state.language),
                             |ui| {
                                 egui::ComboBox::from_id_salt("nodejs_env_combo")
                                     .selected_text(match state.nodejs_env {
-                                        EnvSource::System => "系统环境",
-                                        EnvSource::Builtin => "内置环境（默认）",
-                                        EnvSource::Custom => "自定义环境",
+                                        EnvSource::System => lang::t("system_env", &state.language),
+                                        EnvSource::Builtin => lang::t("builtin_env", &state.language),
+                                        EnvSource::Custom => lang::t("custom_env", &state.language),
                                     })
                                     .show_ui(ui, |ui| {
                                         ui.selectable_value(
                                             &mut state.nodejs_env,
                                             EnvSource::System,
-                                            "系统环境",
+                                            lang::t("system_env", &state.language),
                                         );
                                         ui.selectable_value(
                                             &mut state.nodejs_env,
                                             EnvSource::Builtin,
-                                            "内置环境（默认）",
+                                            lang::t("builtin_env", &state.language),
                                         );
                                         ui.selectable_value(
                                             &mut state.nodejs_env,
                                             EnvSource::Custom,
-                                            "自定义环境",
+                                            lang::t("custom_env", &state.language),
                                         );
                                     });
                             },
                         );
                         ui.add_space(10.0);
+                        
+                        let (npm_ver, npm_path) = npm_info.as_ref().map(|(v, p)| (v.as_str(), p.as_str())).unwrap_or((unknown, unknown));
+                        let npm_info_desc = lang::t("npm_env_info_desc", &state.language)
+                            .replace("{version}", npm_ver)
+                            .replace("{path}", npm_path);
+                            
                         setting_row(
                             ui,
                             egui_phosphor::regular::INFO,
-                            "NPM 环境信息",
-                            "查看当前使用的 NPM 版本和路径\n版本：未知\n路径：未知",
+                            lang::t("npm_env_info", &state.language),
+                            &npm_info_desc,
                             |_| {},
                         );
                         ui.add_space(10.0);
                         setting_row(
                             ui,
                             egui_phosphor::regular::GLOBE,
-                            "NPM 源设置",
-                            "设置 NPM 的镜像源",
+                            lang::t("npm_registry", &state.language),
+                            lang::t("npm_registry_desc", &state.language),
                             |ui| {
                                 egui::ComboBox::from_id_salt("npm_registry_combo")
                                     .selected_text(match state.npm_registry {
-                                        NpmRegistry::Official => "官方源",
-                                        NpmRegistry::Taobao => "淘宝源（默认）",
-                                        NpmRegistry::Tencent => "腾讯源",
+                                        NpmRegistry::Official => lang::t("official_registry", &state.language),
+                                        NpmRegistry::Taobao => lang::t("taobao_registry", &state.language),
+                                        NpmRegistry::Tencent => lang::t("tencent_registry", &state.language),
                                     })
                                     .show_ui(ui, |ui| {
                                         ui.selectable_value(
                                             &mut state.npm_registry,
                                             NpmRegistry::Official,
-                                            "官方源",
+                                            lang::t("official_registry", &state.language),
                                         );
                                         ui.selectable_value(
                                             &mut state.npm_registry,
                                             NpmRegistry::Taobao,
-                                            "淘宝源（默认）",
+                                            lang::t("taobao_registry", &state.language),
                                         );
                                         ui.selectable_value(
                                             &mut state.npm_registry,
                                             NpmRegistry::Tencent,
-                                            "腾讯源",
+                                            lang::t("tencent_registry", &state.language),
                                         );
                                     });
                             },
@@ -434,30 +516,30 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                     setting_section(
                         ui,
                         egui_phosphor::regular::GITHUB_LOGO,
-                        "Github 设置",
+                        lang::t("github_settings", &state.language),
                         |ui| {
                             setting_row(
                                 ui,
                                 egui_phosphor::regular::POWER,
-                                "替换总开关",
-                                "开启后将在源地址前面加上加速地址，实现加速 Github 资源下载",
+                                lang::t("github_proxy", &state.language),
+                                lang::t("github_proxy_desc", &state.language),
                                 |ui| {
-                                    ui.radio_value(&mut state.github_proxy_enabled, false, "关闭");
-                                    ui.radio_value(&mut state.github_proxy_enabled, true, "开启");
+                                    ui.radio_value(&mut state.github_proxy_enabled, false, lang::t("off", &state.language));
+                                    ui.radio_value(&mut state.github_proxy_enabled, true, lang::t("on", &state.language));
                                 },
                             );
                             ui.add_space(10.0);
                             setting_row(
                                 ui,
                                 egui_phosphor::regular::LIST,
-                                "替换节点列表",
-                                "通过接口获取可用的加速节点",
+                                lang::t("github_nodes", &state.language),
+                                lang::t("github_nodes_desc", &state.language),
                                 |ui| {
                                     if state.github_proxy_enabled {
-                                        ui.label("加载中...");
+                                        ui.label(lang::t("loading", &state.language));
                                     } else {
                                         ui.label(
-                                            egui::RichText::new("请先开启总开关")
+                                            egui::RichText::new(lang::t("enable_proxy_first", &state.language))
                                                 .color(egui::Color32::GRAY),
                                         );
                                     }
@@ -467,34 +549,34 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                     );
 
                     // 网络设置
-                    setting_section(ui, egui_phosphor::regular::WIFI_HIGH, "网络设置", |ui| {
+                    setting_section(ui, egui_phosphor::regular::WIFI_HIGH, lang::t("network_settings", &state.language), |ui| {
                         setting_row(
                             ui,
                             egui_phosphor::regular::SHIELD,
-                            "代理设置",
-                            "设置应用程序的网络代理",
+                            lang::t("proxy_settings", &state.language),
+                            lang::t("proxy_settings_desc", &state.language),
                             |ui| {
                                 egui::ComboBox::from_id_salt("proxy_type_combo")
                                     .selected_text(match state.proxy_type {
-                                        ProxyType::None => "关闭",
-                                        ProxyType::System => "跟随系统",
-                                        ProxyType::Custom => "自定义代理",
+                                        ProxyType::None => lang::t("off", &state.language),
+                                        ProxyType::System => lang::t("follow_system", &state.language),
+                                        ProxyType::Custom => lang::t("custom_proxy", &state.language),
                                     })
                                     .show_ui(ui, |ui| {
                                         ui.selectable_value(
                                             &mut state.proxy_type,
                                             ProxyType::None,
-                                            "关闭",
+                                            lang::t("off", &state.language),
                                         );
                                         ui.selectable_value(
                                             &mut state.proxy_type,
                                             ProxyType::System,
-                                            "跟随系统",
+                                            lang::t("follow_system", &state.language),
                                         );
                                         ui.selectable_value(
                                             &mut state.proxy_type,
                                             ProxyType::Custom,
-                                            "自定义代理",
+                                            lang::t("custom_proxy", &state.language),
                                         );
                                     });
                             },
@@ -505,8 +587,8 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                             setting_row(
                                 ui,
                                 egui_phosphor::regular::LINK,
-                                "代理地址",
-                                "输入自定义代理地址",
+                                lang::t("proxy_address", &state.language),
+                                lang::t("proxy_address_desc", &state.language),
                                 |ui| {
                                     ui.text_edit_singleline(&mut state.custom_proxy);
                                 },
@@ -517,10 +599,10 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                         setting_row(
                             ui,
                             egui_phosphor::regular::PLUG,
-                            "GitHub 连接测试",
-                            "不通过代理测试 GitHub 连接",
+                            lang::t("github_test", &state.language),
+                            lang::t("github_test_desc", &state.language),
                             |ui| {
-                                if ui.button("开始测试").clicked() {
+                                if ui.button(lang::t("start_test", &state.language)).clicked() {
                                     // 待实现
                                 }
                             },
@@ -533,16 +615,16 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
         SettingsTab::About => {
             ui.vertical_centered(|ui| {
                 // 上部分：软件关于信息
-                ui.heading("星酿启动器 (AstraBrew Launcher)");
-                ui.label("版本: v0.1.0");
-                ui.label("一款基于 Rust 和 egui 开发的启动器。");
+                ui.heading(lang::t("about_title", &state.language));
+                ui.label(lang::t("about_version", &state.language));
+                ui.label(lang::t("about_desc", &state.language));
                 
                 ui.add_space(20.0);
                 ui.separator();
                 ui.add_space(10.0);
                 
                 // 下部分：开发信息与技术栈表格
-                ui.heading("开发信息与技术栈");
+                ui.heading(lang::t("tech_stack", &state.language));
                 ui.add_space(10.0);
                 
                 // 居中表格：利用 Layout 强制水平居中，并添加垂直滚动条
@@ -558,19 +640,19 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                                 .spacing(egui::vec2(30.0, 15.0)) // 调整间距
                                 .show(ui, |ui| {
                                     // 表头
-                                    ui.vertical_centered(|ui| ui.strong("技术/组件/资源"));
-                                    ui.vertical_centered(|ui| ui.strong("当前版本"));
-                                    ui.vertical_centered(|ui| ui.strong("开源协议"));
-                                    ui.vertical_centered(|ui| ui.strong("说明"));
+                                    ui.vertical_centered(|ui| ui.strong(lang::t("tech_col_1", &state.language)));
+                                    ui.vertical_centered(|ui| ui.strong(lang::t("tech_col_2", &state.language)));
+                                    ui.vertical_centered(|ui| ui.strong(lang::t("tech_col_3", &state.language)));
+                                    ui.vertical_centered(|ui| ui.strong(lang::t("tech_col_4", &state.language)));
                                     ui.end_row();
 
                                     // 资源
                                     ui.vertical_centered(|ui| ui.label("MiSans"));
                                     ui.vertical_centered(|ui| ui.label("2022"));
                                     ui.vertical_centered(|ui| {
-                                        ui.hyperlink_to("免费商用", "https://hyperos.mi.com/font/zh/faq/");
+                                        ui.hyperlink_to(lang::t("free_commercial", &state.language), "https://hyperos.mi.com/font/zh/faq/");
                                     });
-                                    ui.vertical_centered(|ui| ui.label("小米字体"));
+                                    ui.vertical_centered(|ui| ui.label(lang::t("mi_font", &state.language)));
                                     ui.end_row();
                                     
                                     // 数据行
@@ -579,7 +661,7 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                                     ui.vertical_centered(|ui| {
                                         ui.hyperlink_to("MIT / Apache-2.0", "https://github.com/rust-lang/rust/blob/master/LICENSE-MIT");
                                     });
-                                    ui.vertical_centered(|ui| ui.label("核心编程语言，提供内存安全和高性能"));
+                                    ui.vertical_centered(|ui| ui.label(lang::t("rust_desc", &state.language)));
                                     ui.end_row();
                                     
                                     ui.vertical_centered(|ui| ui.label("egui"));
@@ -587,7 +669,7 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                                     ui.vertical_centered(|ui| {
                                         ui.hyperlink_to("MIT / Apache-2.0", "https://github.com/emilk/egui/blob/master/LICENSE-MIT");
                                     });
-                                    ui.vertical_centered(|ui| ui.label("即时模式 GUI 框架"));
+                                    ui.vertical_centered(|ui| ui.label(lang::t("egui_desc", &state.language)));
                                     ui.end_row();
                                     
                                     ui.vertical_centered(|ui| ui.label("eframe"));
@@ -595,7 +677,7 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                                     ui.vertical_centered(|ui| {
                                         ui.hyperlink_to("MIT / Apache-2.0", "https://github.com/emilk/egui/blob/master/LICENSE-MIT");
                                     });
-                                    ui.vertical_centered(|ui| ui.label("egui 的官方集成框架"));
+                                    ui.vertical_centered(|ui| ui.label(lang::t("eframe_desc", &state.language)));
                                     ui.end_row();
                                     
                                     ui.vertical_centered(|ui| ui.label("egui_phosphor"));
@@ -603,7 +685,7 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab, state: &mut SettingsStat
                                     ui.vertical_centered(|ui| {
                                         ui.hyperlink_to("MIT / Apache-2.0", "https://github.com/amPerl/egui-phosphor/blob/main/LICENSE-MIT");
                                     });
-                                    ui.vertical_centered(|ui| ui.label("图标库"));
+                                    ui.vertical_centered(|ui| ui.label(lang::t("phosphor_desc", &state.language)));
                                     ui.end_row();
                                 });
                         });

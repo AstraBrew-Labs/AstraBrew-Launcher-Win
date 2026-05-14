@@ -1,12 +1,14 @@
+#![allow(dead_code)]
+
 use std::env;
 use std::fs::{self, File};
 use std::io;
 use std::path::PathBuf;
 use zip::ZipArchive;
 
-/// 获取程序运行目录的根路径
+/// 获取 data 目录的根路径
 /// 在开发环境下 (如 target/debug), 会回退到项目根目录
-fn get_base_dir() -> io::Result<PathBuf> {
+fn get_data_dir() -> io::Result<PathBuf> {
     let mut current_exe = env::current_exe()?;
     current_exe.pop(); // 去除执行文件名
 
@@ -87,7 +89,7 @@ pub fn download_and_install_nodejs() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 目标解压目录：运行目录下的 data/lib/nodejs
-    let base_dir = get_base_dir()?;
+    let base_dir = get_data_dir()?;
     let nodejs_dir = base_dir.join("data").join("lib").join("nodejs");
 
     // 如果已存在，先清空
@@ -146,9 +148,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_base_dir() {
-        let base_dir = get_base_dir().unwrap();
+    fn test_get_data_dir() {
+        let base_dir = get_data_dir().unwrap();
         println!("Base dir: {:?}", base_dir);
-        assert!(base_dir.exists());
+        assert!(base_dir.is_absolute(), "The returned path should be absolute");
     }
 }

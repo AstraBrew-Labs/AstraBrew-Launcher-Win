@@ -1,0 +1,115 @@
+pub fn translate<'a>(key: &'a str) -> &'a str {
+    match key {
+        "app_title" => "AstraBrew",
+        "app_subtitle" => "Launcher",
+        "one_click_start" => "One-Click Start",
+        "tavern_config" => "Tavern Config",
+        "version_manage" => "Version Manage",
+        "extension_manage" => "Extensions",
+        "resource_manage" => "Resources",
+        "software_settings" => "Settings",
+        
+        // Settings Tab
+        "general_settings" => "General",
+        "about_software" => "About",
+        
+        // Interface Settings
+        "interface_settings" => "Interface Settings",
+        "language" => "Language",
+        "language_desc" => "Select application display language",
+        "zh_cn" => "中文",
+        "en_us" => "English",
+        "theme" => "Theme",
+        "theme_desc" => "Switch between light or dark mode",
+        "light_theme" => "Light Theme",
+        "dark_theme" => "Dark Theme",
+        "remember_window_pos" => "Remember Window Position",
+        "remember_window_pos_desc" => "Restore the last window position and size on startup",
+        "off" => "Off",
+        "on" => "On",
+        
+        // General Settings
+        "basic_settings" => "Basic Settings",
+        "cpu_cores" => "CPU Cores for Scanning",
+        "cpu_cores_desc" => "Allocate CPU threads for full disk scanning",
+        "auto" => "Auto",
+        "half_cores" => "Half Cores",
+        "all_cores" => "All Cores",
+        "start_mode" => "Tavern Start Mode",
+        "start_mode_desc" => "Set the startup method of Tavern",
+        "normal_mode" => "Normal",
+        "desktop_mode" => "Desktop App",
+        "lan_mode" => "LAN Service",
+        "public_mode" => "Public Service",
+        
+        // Git Settings
+        "git_settings" => "Git Settings",
+        "git_env_info" => "Git Environment Info",
+        "git_env_info_desc" => "View current Git version and path\nVersion: {version}\nPath: {path}",
+        "git_env_source" => "Git Environment Source",
+        "git_env_source_desc" => "Switch between System Git or Built-in Git",
+        "system_env" => "System Env",
+        "builtin_env" => "Built-in Env (Default)",
+        "custom_env" => "Custom Env",
+        
+        // NodeJs Settings
+        "nodejs_settings" => "NodeJs Settings",
+        "nodejs_env_info" => "NodeJs Environment Info",
+        "nodejs_env_info_desc" => "View current NodeJs version and path\nVersion: {version}\nPath: {path}",
+        "nodejs_env_source" => "Node.js Environment Source",
+        "nodejs_env_source_desc" => "Switch between System NodeJs or Built-in NodeJs",
+        "npm_env_info" => "NPM Environment Info",
+        "npm_env_info_desc" => "View current NPM version and path\nVersion: {version}\nPath: {path}",
+        "npm_registry" => "NPM Registry",
+        "npm_registry_desc" => "Set the NPM mirror registry",
+        "official_registry" => "Official Registry",
+        "taobao_registry" => "Taobao Registry (Default)",
+        "tencent_registry" => "Tencent Registry",
+        
+        // Github Settings
+        "github_settings" => "Github Settings",
+        "github_proxy" => "Proxy Switch",
+        "github_proxy_desc" => "When enabled, an acceleration address will be prepended to speed up Github downloads",
+        "github_nodes" => "Proxy Nodes List",
+        "github_nodes_desc" => "Fetch available proxy nodes via API",
+        "loading" => "Loading...",
+        "enable_proxy_first" => "Please enable the proxy switch first",
+        
+        // Network Settings
+        "network_settings" => "Network Settings",
+        "proxy_settings" => "Proxy Settings",
+        "proxy_settings_desc" => "Set the application network proxy",
+        "follow_system" => "Follow System",
+        "custom_proxy" => "Custom Proxy",
+        "proxy_address" => "Proxy Address",
+        "proxy_address_desc" => "Enter custom proxy address",
+        "github_test" => "GitHub Connection Test",
+        "github_test_desc" => "Test GitHub connection without proxy",
+        "start_test" => "Start Test",
+        
+        // About
+        "about_title" => "AstraBrew Launcher",
+        "about_version" => "Version: v0.1.0",
+        "about_desc" => "A launcher built with Rust and egui.",
+        "tech_stack" => "Development Info & Tech Stack",
+        "tech_col_1" => "Tech / Component / Resource",
+        "tech_col_2" => "Version",
+        "tech_col_3" => "License",
+        "tech_col_4" => "Description",
+        "free_commercial" => "Free for commercial use",
+        "mi_font" => "Xiaomi Font",
+        "rust_desc" => "Core language, provides memory safety and high performance",
+        "egui_desc" => "Immediate mode GUI framework",
+        "eframe_desc" => "Official integration framework for egui",
+        "phosphor_desc" => "Icon library",
+        
+        // Notifications
+        "settings_saved" => "Settings Saved",
+        "fallback_system_git" => "Built-in Git missing, switched to System Git automatically",
+        "fallback_system_node" => "Built-in NodeJs missing, switched to System NodeJs automatically",
+        "unknown" => "Unknown",
+        
+        // Fallback
+        _ => key,
+    }
+}

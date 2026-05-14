@@ -233,6 +233,8 @@ dependencies = [
  "egui",
  "egui-phosphor",
  "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
  "zip",
 ]

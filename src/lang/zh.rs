@@ -1,0 +1,115 @@
+pub fn translate<'a>(key: &'a str) -> &'a str {
+    match key {
+        "app_title" => "星酿启动器",
+        "app_subtitle" => "AstraBrew Launcher",
+        "one_click_start" => "一键启动",
+        "tavern_config" => "酒馆配置",
+        "version_manage" => "版本管理",
+        "extension_manage" => "扩展管理",
+        "resource_manage" => "资源管理",
+        "software_settings" => "软件设置",
+        
+        // Settings Tab
+        "general_settings" => "基本设置",
+        "about_software" => "关于软件",
+        
+        // Interface Settings
+        "interface_settings" => "界面设置",
+        "language" => "语言",
+        "language_desc" => "选择应用程序显示的语言",
+        "zh_cn" => "中文",
+        "en_us" => "English",
+        "theme" => "主题",
+        "theme_desc" => "切换明亮或夜晚模式",
+        "light_theme" => "明亮主题",
+        "dark_theme" => "夜晚主题",
+        "remember_window_pos" => "记住上次窗口位置",
+        "remember_window_pos_desc" => "启动时恢复上次窗口的位置和大小",
+        "off" => "关闭",
+        "on" => "开启",
+        
+        // General Settings
+        "basic_settings" => "基本设置",
+        "cpu_cores" => "扫描占用核心数",
+        "cpu_cores_desc" => "分配用于全盘扫描的 CPU 线程数",
+        "auto" => "Auto",
+        "half_cores" => "1/2核心",
+        "all_cores" => "所有核心",
+        "start_mode" => "酒馆启动模式",
+        "start_mode_desc" => "设置酒馆的启动方式",
+        "normal_mode" => "正常模式",
+        "desktop_mode" => "桌面程序",
+        "lan_mode" => "局域网服务",
+        "public_mode" => "公网服务",
+        
+        // Git Settings
+        "git_settings" => "Git 设置",
+        "git_env_info" => "Git 环境信息",
+        "git_env_info_desc" => "查看当前使用的 Git 版本和路径\n版本：{version}\n路径：{path}",
+        "git_env_source" => "Git 环境来源",
+        "git_env_source_desc" => "可切换使用系统 Git 或内置 Git",
+        "system_env" => "系统环境",
+        "builtin_env" => "内置环境（默认）",
+        "custom_env" => "自定义环境",
+        
+        // NodeJs Settings
+        "nodejs_settings" => "NodeJs 设置",
+        "nodejs_env_info" => "NodeJs 环境信息",
+        "nodejs_env_info_desc" => "查看当前使用的 NodeJs 版本和路径\n版本：{version}\n路径：{path}",
+        "nodejs_env_source" => "Node.js 环境来源",
+        "nodejs_env_source_desc" => "可切换使用系统 NodeJs 或内置 NodeJs",
+        "npm_env_info" => "NPM 环境信息",
+        "npm_env_info_desc" => "查看当前使用的 NPM 版本和路径\n版本：{version}\n路径：{path}",
+        "npm_registry" => "NPM 源设置",
+        "npm_registry_desc" => "设置 NPM 的镜像源",
+        "official_registry" => "官方源",
+        "taobao_registry" => "淘宝源（默认）",
+        "tencent_registry" => "腾讯源",
+        
+        // Github Settings
+        "github_settings" => "Github 设置",
+        "github_proxy" => "替换总开关",
+        "github_proxy_desc" => "开启后将在源地址前面加上加速地址，实现加速 Github 资源下载",
+        "github_nodes" => "替换节点列表",
+        "github_nodes_desc" => "通过接口获取可用的加速节点",
+        "loading" => "加载中...",
+        "enable_proxy_first" => "请先开启总开关",
+        
+        // Network Settings
+        "network_settings" => "网络设置",
+        "proxy_settings" => "代理设置",
+        "proxy_settings_desc" => "设置应用程序的网络代理",
+        "follow_system" => "跟随系统",
+        "custom_proxy" => "自定义代理",
+        "proxy_address" => "代理地址",
+        "proxy_address_desc" => "输入自定义代理地址",
+        "github_test" => "GitHub 连接测试",
+        "github_test_desc" => "不通过代理测试 GitHub 连接",
+        "start_test" => "开始测试",
+        
+        // About
+        "about_title" => "星酿启动器 (AstraBrew Launcher)",
+        "about_version" => "版本: v0.1.0",
+        "about_desc" => "一款基于 Rust 和 egui 开发的启动器。",
+        "tech_stack" => "开发信息与技术栈",
+        "tech_col_1" => "技术/组件/资源",
+        "tech_col_2" => "当前版本",
+        "tech_col_3" => "开源协议",
+        "tech_col_4" => "说明",
+        "free_commercial" => "免费商用",
+        "mi_font" => "小米字体",
+        "rust_desc" => "核心编程语言，提供内存安全和高性能",
+        "egui_desc" => "即时模式 GUI 框架",
+        "eframe_desc" => "egui 的官方集成框架",
+        "phosphor_desc" => "图标库",
+        
+        // Notifications
+        "settings_saved" => "设置已保存",
+        "fallback_system_git" => "内置 Git 缺失，已自动切换到系统 Git",
+        "fallback_system_node" => "内置 NodeJs 缺失，已自动切换到系统 NodeJs",
+        "unknown" => "未知",
+        
+        // Fallback
+        _ => key,
+    }
+}
