@@ -1,8 +1,9 @@
 [package]
-name = "test-rust"
+name = "astrabrew-launcher-win"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 eframe = "0.33"
 egui = "0.33"
+egui-phosphor = "0.11"
