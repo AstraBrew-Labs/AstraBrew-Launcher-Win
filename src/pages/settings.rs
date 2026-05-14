@@ -46,10 +46,19 @@ pub fn render(ui: &mut egui::Ui, tab: &mut SettingsTab) {
                                 .spacing(egui::vec2(30.0, 15.0)) // 调整间距
                                 .show(ui, |ui| {
                                     // 表头
-                                    ui.vertical_centered(|ui| ui.strong("技术/组件"));
+                                    ui.vertical_centered(|ui| ui.strong("技术/组件/资源"));
                                     ui.vertical_centered(|ui| ui.strong("当前版本"));
                                     ui.vertical_centered(|ui| ui.strong("开源协议"));
                                     ui.vertical_centered(|ui| ui.strong("说明"));
+                                    ui.end_row();
+
+                                    // 资源
+                                    ui.vertical_centered(|ui| ui.label("MiSans"));
+                                    ui.vertical_centered(|ui| ui.label("2022"));
+                                    ui.vertical_centered(|ui| {
+                                        ui.hyperlink_to("免费商用", "https://hyperos.mi.com/font/zh/faq/");
+                                    });
+                                    ui.vertical_centered(|ui| ui.label("小米字体"));
                                     ui.end_row();
                                     
                                     // 数据行
