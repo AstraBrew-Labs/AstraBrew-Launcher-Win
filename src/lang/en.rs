@@ -50,7 +50,6 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "git_env_source_desc" => "Switch between System Git or Built-in Git",
         "system_env" => "System Env",
         "builtin_env" => "Built-in Env (Default)",
-        "custom_env" => "Custom Env",
         
         // NodeJs Settings
         "nodejs_settings" => "NodeJs Settings",
@@ -71,9 +70,21 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "github_proxy" => "Proxy Switch",
         "github_proxy_desc" => "When enabled, an acceleration address will be prepended to speed up Github downloads",
         "github_nodes" => "Proxy Nodes List",
-        "github_nodes_desc" => "Fetch available proxy nodes via API",
+        "github_nodes_desc" => "Fetch available proxy nodes via API. Click Refresh to load.",
+        "refresh_nodes" => "Refresh Nodes",
         "loading" => "Loading...",
+        "loading_nodes" => "Fetching node list and testing latency...",
+        "click_refresh_to_load" => "Click [Refresh Nodes] to load node list",
+        "fetch_error" => "Failed to fetch nodes: ",
         "enable_proxy_first" => "Please enable the proxy switch first",
+        "col_select" => "Select",
+        "col_url" => "Node URL",
+        "col_location" => "Location",
+        "col_latency" => "Latency",
+        "col_speed" => "Speed",
+        "testing" => "Testing",
+        "timeout" => "Timeout",
+        "selected_node" => "Selected: ",
         
         // Network Settings
         "network_settings" => "Network Settings",
@@ -106,8 +117,21 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         // Notifications
         "settings_saved" => "Settings Saved",
         "fallback_system_git" => "Built-in Git missing, switched to System Git automatically",
-        "fallback_system_node" => "Built-in NodeJs missing, switched to System NodeJs automatically",
+        "fallback_system_node" => "Built-in Node.js missing, switched to System Node.js automatically",
         "unknown" => "Unknown",
+        
+        // Node.js Download
+        "download_nodejs_title" => "Download Built-in Node.js",
+        "download_nodejs_prompt" => "Built-in Node.js environment is missing. Do you want to download and extract it now?\nIf not, it will fallback to System Node.js (if available).",
+        "confirm" => "Confirm",
+        "cancel" => "Cancel",
+        "connecting" => "Connecting: {url}",
+        "downloading" => "Downloading: {progress}%",
+        "extracting" => "Extracting: {progress}%",
+        "download_failed" => "Download Failed: {error}",
+        "download_env_title" => "Download {env}",
+        "download_env_prompt" => "{env} not found, do you want to download and install it now?\n(If canceled, it will fallback to system environment)",
+        "download_success" => "Download and extraction successful",
         
         // Fallback
         _ => key,

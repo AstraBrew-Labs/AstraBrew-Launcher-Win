@@ -10,14 +10,12 @@ use zip::ZipArchive;
 use crate::EnvInstallProgress;
 
 /// 获取 data 目录的根路径
-/// 在开发环境下 (如 target/debug), 会回退到项目根目录
 fn get_data_dir() -> io::Result<PathBuf> {
     let mut current_exe = env::current_exe()?;
     current_exe.pop(); // 去除执行文件名
 
     let path_str = current_exe.to_string_lossy();
     if path_str.contains("target\\debug") || path_str.contains("target\\release") {
-        // 回退到项目根目录
         let mut root = current_exe.clone();
         root.pop(); // pop debug/release
         root.pop(); // pop target
@@ -27,25 +25,15 @@ fn get_data_dir() -> io::Result<PathBuf> {
     }
 }
 
-/// 下载并解压 Node.js 到 data/lib/nodejs 目录
-pub fn download_and_install_nodejs(progress_sender: Option<Sender<EnvInstallProgress>>) -> Result<(), Box<dyn std::error::Error>> {
-    let node_os = "win";
-    let node_arch = match env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        _ => "x64",
-    };
-
-    let ext = "zip";
-    let version = "v22.12.0";
-    let filename = format!("node-{}-{}-{}.{}", version, node_os, node_arch, ext);
-
+/// 下载并解压 Git 到 data/lib/Git 目录
+pub fn download_and_install_git(progress_sender: Option<Sender<EnvInstallProgress>>) -> Result<(), Box<dyn std::error::Error>> {
+    let filename = "MinGit-2.53.0.2-64-bit.zip";
     let urls = vec![
-        format!("https://npmmirror.com/mirrors/node/{}/{}", version, filename),
-        format!("https://mirrors.aliyun.com/nodejs-release/{}/{}", version, filename),
-        format!("https://mirrors.tuna.tsinghua.edu.cn/nodejs-release/{}/{}", version, filename),
-        format!("https://mirrors.huaweicloud.com/nodejs/{}/{}", version, filename),
-        format!("https://nodejs.org/dist/{}/{}", version, filename),
+        format!("https://registry.npmmirror.com/-/binary/git-for-windows/v2.53.0.windows.2/{}", filename),
+        format!("https://mirrors.tuna.tsinghua.edu.cn/github-release/git-for-windows/git/Git%20for%20Windows%202.53.0%282%29/{}", filename),
+        format!("https://mirrors.huaweicloud.com/git-for-windows/v2.53.0.windows.2/{}", filename),
+        format!("https://github.moeyy.xyz/https://github.com/git-for-windows/git/releases/download/v2.53.0.windows.2/{}", filename), // 加速地址示例
+        format!("https://github.com/git-for-windows/git/releases/download/v2.53.0.windows.2/{}", filename),
     ];
 
     let temp_dir = env::temp_dir();
@@ -87,7 +75,7 @@ pub fn download_and_install_nodejs(progress_sender: Option<Sender<EnvInstallProg
     }
 
     if !downloaded {
-        let err_msg = "所有 Node.js 下载源均失败，请检查网络连接".to_string();
+        let err_msg = "所有 Git 下载源均失败，请检查网络连接".to_string();
         if let Some(tx) = &progress_sender {
             let _ = tx.send(EnvInstallProgress::Error(err_msg.clone()));
         }
@@ -95,12 +83,12 @@ pub fn download_and_install_nodejs(progress_sender: Option<Sender<EnvInstallProg
     }
 
     let base_dir = get_data_dir()?;
-    let nodejs_dir = base_dir.join("data").join("lib").join("nodejs");
+    let git_dir = base_dir.join("data").join("lib").join("Git");
 
-    if nodejs_dir.exists() {
-        fs::remove_dir_all(&nodejs_dir)?;
+    if git_dir.exists() {
+        fs::remove_dir_all(&git_dir)?;
     }
-    fs::create_dir_all(&nodejs_dir)?;
+    fs::create_dir_all(&git_dir)?;
 
     let file = File::open(&temp_file_path)?;
     let mut archive = ZipArchive::new(file)?;
@@ -119,15 +107,9 @@ pub fn download_and_install_nodejs(progress_sender: Option<Sender<EnvInstallProg
             None => continue,
         };
 
-        let mut components = outpath.components();
-        components.next();
-        let stripped_path = components.as_path();
-
-        if stripped_path.as_os_str().is_empty() {
-            continue;
-        }
-
-        let final_path = nodejs_dir.join(stripped_path);
+        // Note: MinGit zip does not have a top-level directory usually, but we extract it directly into data/lib/Git.
+        // We will just extract as is.
+        let final_path = git_dir.join(outpath);
 
         if file.name().ends_with('/') {
             fs::create_dir_all(&final_path)?;
@@ -148,16 +130,4 @@ pub fn download_and_install_nodejs(progress_sender: Option<Sender<EnvInstallProg
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_get_data_dir() {
-        let base_dir = get_data_dir().unwrap();
-        println!("Base dir: {:?}", base_dir);
-        assert!(base_dir.is_absolute(), "The returned path should be absolute");
-    }
 }

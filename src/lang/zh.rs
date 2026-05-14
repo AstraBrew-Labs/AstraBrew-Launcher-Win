@@ -50,7 +50,6 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "git_env_source_desc" => "可切换使用系统 Git 或内置 Git",
         "system_env" => "系统环境",
         "builtin_env" => "内置环境（默认）",
-        "custom_env" => "自定义环境",
         
         // NodeJs Settings
         "nodejs_settings" => "NodeJs 设置",
@@ -71,9 +70,21 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "github_proxy" => "替换总开关",
         "github_proxy_desc" => "开启后将在源地址前面加上加速地址，实现加速 Github 资源下载",
         "github_nodes" => "替换节点列表",
-        "github_nodes_desc" => "通过接口获取可用的加速节点",
+        "github_nodes_desc" => "通过接口获取可用的加速节点，点击右侧刷新按钮加载",
+        "refresh_nodes" => "刷新节点",
         "loading" => "加载中...",
+        "loading_nodes" => "正在获取节点列表并测速...",
+        "click_refresh_to_load" => "点击「刷新节点」按钮加载节点列表",
+        "fetch_error" => "获取节点失败：",
         "enable_proxy_first" => "请先开启总开关",
+        "col_select" => "选择",
+        "col_url" => "节点地址",
+        "col_location" => "地区",
+        "col_latency" => "实测延迟",
+        "col_speed" => "速度",
+        "testing" => "测试中",
+        "timeout" => "超时",
+        "selected_node" => "当前选中：",
         
         // Network Settings
         "network_settings" => "网络设置",
@@ -106,9 +117,21 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         // Notifications
         "settings_saved" => "设置已保存",
         "fallback_system_git" => "内置 Git 缺失，已自动切换到系统 Git",
-        "fallback_system_node" => "内置 NodeJs 缺失，已自动切换到系统 NodeJs",
+        "fallback_system_node" => "内置 Node.js 缺失，已自动切换到系统 Node.js",
         "unknown" => "未知",
         
+        // Node.js Download
+        "download_nodejs_title" => "下载内置 Node.js",
+        "download_nodejs_prompt" => "检测到缺失内置 Node.js 环境，是否立即下载并解压？\n如果不下载，将自动切换到系统 Node.js（如果存在）。",
+        "confirm" => "确认",
+        "cancel" => "取消",
+        "connecting" => "连接中: {url}",
+        "downloading" => "下载中: {progress}%",
+        "extracting" => "解压中: {progress}%",
+        "download_failed" => "下载失败: {error}",
+        "download_env_title" => "下载 {env}",
+        "download_env_prompt" => "未检测到 {env}，是否立即下载并安装？\n(如果取消，将自动回退到系统环境)",
+        "download_success" => "下载并解压成功",        
         // Fallback
         _ => key,
     }

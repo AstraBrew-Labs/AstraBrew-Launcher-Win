@@ -46,7 +46,6 @@ pub enum EnvSource {
     System,
     #[default]
     Builtin,
-    Custom,
 }
 
 #[derive(PartialEq, Default, Clone, Serialize, Deserialize)]
@@ -71,6 +70,7 @@ pub struct SettingsState {
     pub language: Language,
     pub theme: Theme,
     pub remember_window_pos: bool,
+    pub window_position: Option<[f32; 2]>,
 
     // 基本设置
     pub cpu_cores: CpuCores,
@@ -85,6 +85,7 @@ pub struct SettingsState {
 
     // Github 设置
     pub github_proxy_enabled: bool,
+    pub github_proxy_url: String,
 
     // 网络设置
     pub proxy_type: ProxyType,
@@ -97,12 +98,14 @@ impl Default for SettingsState {
             language: Language::default(),
             theme: Theme::default(),
             remember_window_pos: true,
+            window_position: None,
             cpu_cores: CpuCores::default(),
             start_mode: StartMode::default(),
             git_env: EnvSource::default(),
             nodejs_env: EnvSource::default(),
             npm_registry: NpmRegistry::default(),
             github_proxy_enabled: false,
+            github_proxy_url: String::new(),
             proxy_type: ProxyType::default(),
             custom_proxy: String::new(),
         }
@@ -227,6 +230,8 @@ pub fn render(
     git_info: &Option<(String, String)>,
     nodejs_info: &Option<(String, String)>,
     npm_info: &Option<(String, String)>,
+    github_node_state: &crate::core::settings::github_proxy::NodeLoadState,
+    on_refresh_nodes: &mut bool,
 ) {
     ui.horizontal(|ui| {
         ui.selectable_value(tab, SettingsTab::General, lang::t("general_settings", &state.language));
@@ -385,36 +390,30 @@ pub fn render(
                         );
                         ui.add_space(10.0);
                         setting_row(
-                            ui,
-                            egui_phosphor::regular::WRENCH,
-                            lang::t("git_env_source", &state.language),
-                            lang::t("git_env_source_desc", &state.language),
-                            |ui| {
-                                egui::ComboBox::from_id_salt("git_env_combo")
-                                    .selected_text(match state.git_env {
-                                        EnvSource::System => lang::t("system_env", &state.language),
-                                        EnvSource::Builtin => lang::t("builtin_env", &state.language),
-                                        EnvSource::Custom => lang::t("custom_env", &state.language),
-                                    })
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(
-                                            &mut state.git_env,
-                                            EnvSource::System,
-                                            lang::t("system_env", &state.language),
-                                        );
-                                        ui.selectable_value(
-                                            &mut state.git_env,
-                                            EnvSource::Builtin,
-                                            lang::t("builtin_env", &state.language),
-                                        );
-                                        ui.selectable_value(
-                                            &mut state.git_env,
-                                            EnvSource::Custom,
-                                            lang::t("custom_env", &state.language),
-                                        );
-                                    });
-                            },
-                        );
+                                ui,
+                                egui_phosphor::regular::WRENCH,
+                                lang::t("git_env_source", &state.language),
+                                lang::t("git_env_source_desc", &state.language),
+                                |ui| {
+                                    egui::ComboBox::from_id_salt("git_env_combo")
+                                        .selected_text(match state.git_env {
+                                            EnvSource::System => lang::t("system_env", &state.language),
+                                            EnvSource::Builtin => lang::t("builtin_env", &state.language),
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(
+                                                &mut state.git_env,
+                                                EnvSource::System,
+                                                lang::t("system_env", &state.language),
+                                            );
+                                            ui.selectable_value(
+                                                &mut state.git_env,
+                                                EnvSource::Builtin,
+                                                lang::t("builtin_env", &state.language),
+                                            );
+                                        });
+                                },
+                            );
                     });
 
                     // NodeJs 设置
@@ -434,36 +433,30 @@ pub fn render(
                         );
                         ui.add_space(10.0);
                         setting_row(
-                            ui,
-                            egui_phosphor::regular::WRENCH,
-                            lang::t("nodejs_env_source", &state.language),
-                            lang::t("nodejs_env_source_desc", &state.language),
-                            |ui| {
-                                egui::ComboBox::from_id_salt("nodejs_env_combo")
-                                    .selected_text(match state.nodejs_env {
-                                        EnvSource::System => lang::t("system_env", &state.language),
-                                        EnvSource::Builtin => lang::t("builtin_env", &state.language),
-                                        EnvSource::Custom => lang::t("custom_env", &state.language),
-                                    })
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(
-                                            &mut state.nodejs_env,
-                                            EnvSource::System,
-                                            lang::t("system_env", &state.language),
-                                        );
-                                        ui.selectable_value(
-                                            &mut state.nodejs_env,
-                                            EnvSource::Builtin,
-                                            lang::t("builtin_env", &state.language),
-                                        );
-                                        ui.selectable_value(
-                                            &mut state.nodejs_env,
-                                            EnvSource::Custom,
-                                            lang::t("custom_env", &state.language),
-                                        );
-                                    });
-                            },
-                        );
+                                ui,
+                                egui_phosphor::regular::WRENCH,
+                                lang::t("nodejs_env_source", &state.language),
+                                lang::t("nodejs_env_source_desc", &state.language),
+                                |ui| {
+                                    egui::ComboBox::from_id_salt("nodejs_env_combo")
+                                        .selected_text(match state.nodejs_env {
+                                            EnvSource::System => lang::t("system_env", &state.language),
+                                            EnvSource::Builtin => lang::t("builtin_env", &state.language),
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(
+                                                &mut state.nodejs_env,
+                                                EnvSource::System,
+                                                lang::t("system_env", &state.language),
+                                            );
+                                            ui.selectable_value(
+                                                &mut state.nodejs_env,
+                                                EnvSource::Builtin,
+                                                lang::t("builtin_env", &state.language),
+                                            );
+                                        });
+                                },
+                            );
                         ui.add_space(10.0);
                         
                         let (npm_ver, npm_path) = npm_info.as_ref().map(|(v, p)| (v.as_str(), p.as_str())).unwrap_or((unknown, unknown));
@@ -529,22 +522,206 @@ pub fn render(
                                 },
                             );
                             ui.add_space(10.0);
-                            setting_row(
-                                ui,
-                                egui_phosphor::regular::LIST,
-                                lang::t("github_nodes", &state.language),
-                                lang::t("github_nodes_desc", &state.language),
-                                |ui| {
-                                    if state.github_proxy_enabled {
-                                        ui.label(lang::t("loading", &state.language));
-                                    } else {
+
+                            // 节点列表标题行（带刷新按钮）
+                            ui.horizontal(|ui| {
+                                ui.add_sized(
+                                    [30.0, 30.0],
+                                    egui::Label::new(egui::RichText::new(egui_phosphor::regular::LIST).size(20.0)),
+                                );
+                                ui.vertical(|ui| {
+                                    ui.add_space(2.0);
+                                    ui.label(egui::RichText::new(lang::t("github_nodes", &state.language)).size(14.0).strong());
+                                    ui.label(
+                                        egui::RichText::new(lang::t("github_nodes_desc", &state.language))
+                                            .color(egui::Color32::GRAY)
+                                            .size(12.0),
+                                    );
+                                });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let is_loading = matches!(github_node_state, crate::core::settings::github_proxy::NodeLoadState::Loading);
+                                    ui.add_enabled_ui(!is_loading, |ui| {
+                                        if ui.button(lang::t("refresh_nodes", &state.language)).clicked() {
+                                            *on_refresh_nodes = true;
+                                        }
+                                    });
+                                    if is_loading {
+                                        ui.spinner();
+                                    }
+                                });
+                            });
+
+                            ui.add_space(8.0);
+
+                            if !state.github_proxy_enabled {
+                                ui.label(
+                                    egui::RichText::new(lang::t("enable_proxy_first", &state.language))
+                                        .color(egui::Color32::GRAY),
+                                );
+                            } else {
+                                match github_node_state {
+                                    crate::core::settings::github_proxy::NodeLoadState::Idle => {
                                         ui.label(
-                                            egui::RichText::new(lang::t("enable_proxy_first", &state.language))
+                                            egui::RichText::new(lang::t("click_refresh_to_load", &state.language))
                                                 .color(egui::Color32::GRAY),
                                         );
                                     }
-                                },
-                            );
+                                    crate::core::settings::github_proxy::NodeLoadState::Loading => {
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.label(lang::t("loading_nodes", &state.language));
+                                        });
+                                    }
+                                    crate::core::settings::github_proxy::NodeLoadState::Error(e) => {
+                                        ui.label(
+                                            egui::RichText::new(format!("{} {e}", lang::t("fetch_error", &state.language)))
+                                                .color(egui::Color32::RED),
+                                        );
+                                    }
+                                    crate::core::settings::github_proxy::NodeLoadState::Done(entries) => {
+                                        // 按实测延迟排序（测试中排最后，超时排中间，有值按延迟升序）
+                                        let mut sorted_entries = entries.clone();
+                                        sorted_entries.sort_by(|a, b| {
+                                            let a_ms = *a.measured_ms.lock().unwrap();
+                                            let b_ms = *b.measured_ms.lock().unwrap();
+                                            match (a_ms, b_ms) {
+                                                (None, None) => std::cmp::Ordering::Equal,
+                                                (None, _) => std::cmp::Ordering::Greater,
+                                                (_, None) => std::cmp::Ordering::Less,
+                                                (Some(None), Some(None)) => std::cmp::Ordering::Equal,
+                                                (Some(None), Some(Some(_))) => std::cmp::Ordering::Greater,
+                                                (Some(Some(_)), Some(None)) => std::cmp::Ordering::Less,
+                                                (Some(Some(a)), Some(Some(b))) => a.cmp(&b),
+                                            }
+                                        });
+
+                                        // 节点表格 — 9 列，支持横向滚动
+                                        let avail_w = ui.available_width();
+                                        let select_w: f32 = 50.0;
+                                        let url_w: f32 = 260.0;
+                                        let server_w: f32 = 120.0;
+                                        let ip_w: f32 = 130.0;
+                                        let loc_w: f32 = 90.0;
+                                        let api_latency_w: f32 = 90.0;
+                                        let latency_w: f32 = 90.0;
+                                        let speed_w: f32 = 90.0;
+                                        let tag_w: f32 = 100.0;
+                                        let spacing: f32 = 16.0;
+                                        let total_fixed: f32 = select_w + server_w + ip_w + loc_w + api_latency_w + latency_w + speed_w + tag_w + spacing * 8.0;
+                                        let url_calc: f32 = (avail_w - total_fixed).max(url_w);
+
+                                        egui::ScrollArea::new(egui::Vec2b::TRUE)
+                                            .id_salt("github_nodes_scroll")
+                                            .max_height(400.0)
+                                            .min_scrolled_height(400.0)
+                                            .show(ui, |ui| {
+                                                egui::Grid::new("github_nodes_grid")
+                                                    .striped(true)
+                                                    .num_columns(9)
+                                                    .spacing(egui::vec2(spacing, 6.0))
+                                                    .show(ui, |ui| {
+                                                        // 表头
+                                                        ui.allocate_ui_with_layout(egui::vec2(select_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| { ui.strong(lang::t("col_select", &state.language)); });
+                                                        ui.allocate_ui_with_layout(egui::vec2(url_calc, 28.0), egui::Layout::left_to_right(egui::Align::Center), |ui| { ui.strong(lang::t("col_url", &state.language)); });
+                                                        ui.allocate_ui_with_layout(egui::vec2(server_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| { ui.strong("Server"); });
+                                                        ui.allocate_ui_with_layout(egui::vec2(ip_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| { ui.strong("IP"); });
+                                                        ui.allocate_ui_with_layout(egui::vec2(loc_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| { ui.strong(lang::t("col_location", &state.language)); });
+                                                        ui.allocate_ui_with_layout(egui::vec2(api_latency_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| { ui.strong("接口延迟"); });
+                                                        ui.allocate_ui_with_layout(egui::vec2(latency_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| { ui.strong(lang::t("col_latency", &state.language)); });
+                                                        ui.allocate_ui_with_layout(egui::vec2(speed_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| { ui.strong(lang::t("col_speed", &state.language)); });
+                                                        ui.allocate_ui_with_layout(egui::vec2(tag_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| { ui.strong("Tag"); });
+                                                        ui.end_row();
+
+                                                        for entry in sorted_entries.iter() {
+                                                            let is_selected = state.github_proxy_url == entry.url;
+
+                                                            // 选择列
+                                                            ui.allocate_ui_with_layout(egui::vec2(select_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| {
+                                                                let mut sel = is_selected;
+                                                                if ui.radio(sel, "").clicked() { sel = true; }
+                                                                if sel && !is_selected { state.github_proxy_url = entry.url.clone(); }
+                                                            });
+                                                            // URL
+                                                            let url_display = entry.url.trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/');
+                                                            ui.allocate_ui_with_layout(egui::vec2(url_calc, 28.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                                ui.label(egui::RichText::new(url_display).size(13.0).color(ui.visuals().text_color())).on_hover_text(entry.url.clone());
+                                                            });
+                                                            // Server
+                                                            ui.allocate_ui_with_layout(egui::vec2(server_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| {
+                                                                ui.label(egui::RichText::new(&entry.server).size(13.0));
+                                                            });
+                                                            // IP
+                                                            ui.allocate_ui_with_layout(egui::vec2(ip_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| {
+                                                                ui.label(egui::RichText::new(&entry.ip).size(13.0));
+                                                            });
+                                                            // 地区
+                                                            let loc = if entry.location.is_empty() { "-".to_string() } else { entry.location.clone() };
+                                                            ui.allocate_ui_with_layout(egui::vec2(loc_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| {
+                                                                ui.label(egui::RichText::new(&loc).size(13.0));
+                                                            });
+                                                            // 接口延迟
+                                                            ui.allocate_ui_with_layout(egui::vec2(api_latency_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| {
+                                                                ui.label(egui::RichText::new(format!("{} ms", entry.api_latency)).size(13.0).color(egui::Color32::from_rgb(140, 140, 140)));
+                                                            });
+                                                            // 实测延迟
+                                                            let latency_text = {
+                                                                let guard = entry.measured_ms.lock().unwrap();
+                                                                match &*guard {
+                                                                    None => lang::t("testing", &state.language).to_string(),
+                                                                    Some(None) => lang::t("timeout", &state.language).to_string(),
+                                                                    Some(Some(ms)) => format!("{ms} ms"),
+                                                                }
+                                                            };
+                                                            let latency_color = {
+                                                                let guard = entry.measured_ms.lock().unwrap();
+                                                                match &*guard {
+                                                                    Some(Some(ms)) if *ms < 200 => egui::Color32::from_rgb(80, 200, 100),
+                                                                    Some(Some(ms)) if *ms < 500 => egui::Color32::from_rgb(230, 180, 60),
+                                                                    Some(Some(_)) => egui::Color32::from_rgb(220, 80, 60),
+                                                                    _ => egui::Color32::GRAY,
+                                                                }
+                                                            };
+                                                            ui.allocate_ui_with_layout(egui::vec2(latency_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| {
+                                                                ui.label(egui::RichText::new(&latency_text).size(13.0).color(latency_color));
+                                                            });
+                                                            // 速度
+                                                            let speed_str = if entry.speed >= 1000.0 {
+                                                                format!("{:.1} MB/s", entry.speed / 1024.0)
+                                                            } else {
+                                                                format!("{:.1} KB/s", entry.speed)
+                                                            };
+                                                            ui.allocate_ui_with_layout(egui::vec2(speed_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| {
+                                                                ui.label(egui::RichText::new(&speed_str).size(13.0));
+                                                            });
+                                                            // Tag
+                                                            ui.allocate_ui_with_layout(egui::vec2(tag_w, 28.0), egui::Layout::top_down(egui::Align::Center), |ui| {
+                                                                let tag_display = if entry.tag.is_empty() { "-".to_string() } else { entry.tag.clone() };
+                                                                ui.label(egui::RichText::new(&tag_display).size(13.0));
+                                                            });
+                                                            ui.end_row();
+                                                        }
+                                                    });
+                                            });
+
+                                        // 当前选中节点提示
+                                        if !state.github_proxy_url.is_empty() {
+                                            ui.add_space(6.0);
+                                            ui.horizontal(|ui| {
+                                                ui.label(
+                                                    egui::RichText::new(lang::t("selected_node", &state.language))
+                                                        .size(12.0)
+                                                        .color(egui::Color32::GRAY),
+                                                );
+                                                ui.label(
+                                                    egui::RichText::new(&state.github_proxy_url)
+                                                        .size(12.0)
+                                                        .color(egui::Color32::from_rgb(100, 160, 240)),
+                                                );
+                                            });
+                                        }
+                                    }
+                                }
+                            }
                         },
                     );
 
