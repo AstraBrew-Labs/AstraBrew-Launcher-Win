@@ -23,7 +23,7 @@ impl ConsoleState {
         }
     }
 
-    fn add_log(&mut self, msg: &str) {
+    pub fn add_log(&mut self, msg: &str) {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| {

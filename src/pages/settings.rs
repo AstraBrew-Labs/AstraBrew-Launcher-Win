@@ -107,6 +107,10 @@ pub struct SettingsState {
     pub cpu_cores: CpuCores,
     pub start_mode: StartMode,
     pub data_mode: TavernDataMode,
+    pub auto_start: bool,
+    pub auto_minimize: bool,
+    pub auto_start_tavern: bool,
+    pub allow_tavern_background: bool,
 
     // Git 设置
     pub git_env: EnvSource,
@@ -142,6 +146,10 @@ impl Default for SettingsState {
             cpu_cores: CpuCores::default(),
             start_mode: StartMode::default(),
             data_mode: TavernDataMode::default(),
+            auto_start: false,
+            auto_minimize: false,
+            auto_start_tavern: false,
+            allow_tavern_background: false,
             git_env: EnvSource::default(),
             nodejs_env: EnvSource::default(),
             npm_registry: NpmRegistry::default(),
@@ -273,8 +281,10 @@ pub fn render(
     git_info: &Option<(String, String)>,
     nodejs_info: &Option<(String, String)>,
     npm_info: &Option<(String, String)>,
+    pm2_info: &Option<(String, String)>,
     github_node_state: &crate::core::settings::github_proxy::NodeLoadState,
     on_refresh_nodes: &mut bool,
+    on_install_pm2: &mut bool,
 ) {
     ui.horizontal(|ui| {
         ui.selectable_value(tab, SettingsTab::General, lang::t("general_settings", &state.language));
@@ -363,6 +373,39 @@ pub fn render(
 
                     // 基本设置
                     setting_section(ui, egui_phosphor::regular::SLIDERS, lang::t("basic_settings", &state.language), |ui| {
+                        // --- 自启动相关 ---
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::POWER,
+                            lang::t("auto_start", &state.language),
+                            lang::t("auto_start_desc", &state.language),
+                            |ui| {
+                                ui.add(crate::ui::switch::toggle(&mut state.auto_start));
+                            },
+                        );
+                        ui.add_space(10.0);
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::ARROW_DOWN,
+                            lang::t("auto_minimize", &state.language),
+                            lang::t("auto_minimize_desc", &state.language),
+                            |ui| {
+                                ui.add(crate::ui::switch::toggle(&mut state.auto_minimize));
+                            },
+                        );
+                        ui.add_space(10.0);
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::ROCKET,
+                            lang::t("auto_start_tavern", &state.language),
+                            lang::t("auto_start_tavern_desc", &state.language),
+                            |ui| {
+                                ui.add(crate::ui::switch::toggle(&mut state.auto_start_tavern));
+                            },
+                        );
+                        ui.add_space(10.0);
+
+                        // --- 系统资源 ---
                         setting_row(
                             ui,
                             egui_phosphor::regular::CPU,
@@ -395,9 +438,23 @@ pub fn render(
                             },
                         );
                         ui.add_space(10.0);
+
+                        // --- 后台运行 ---
                         setting_row(
                             ui,
-                            egui_phosphor::regular::ROCKET,
+                            egui_phosphor::regular::ARROW_ARC_LEFT,
+                            lang::t("allow_tavern_background", &state.language),
+                            lang::t("allow_tavern_background_desc", &state.language),
+                            |ui| {
+                                ui.add(crate::ui::switch::toggle(&mut state.allow_tavern_background));
+                            },
+                        );
+                        ui.add_space(10.0);
+
+                        // --- 酒馆启动模式 ---
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::PLAY_CIRCLE,
                             lang::t("start_mode", &state.language),
                             lang::t("start_mode_desc", &state.language),
                             |ui| {
@@ -414,6 +471,8 @@ pub fn render(
                             },
                         );
                         ui.add_space(10.0);
+
+                        // --- 酒馆数据模式 ---
                         let data_mode_desc = match state.data_mode {
                             TavernDataMode::Global => lang::t("data_mode_global_desc", &state.language),
                             TavernDataMode::Current => lang::t("data_mode_current_desc", &state.language),
@@ -564,6 +623,42 @@ pub fn render(
                                             lang::t("tencent_registry", &state.language),
                                         );
                                     });
+                            },
+                        );
+                        ui.add_space(10.0);
+
+                        // PM2 环境信息
+                        let (pm2_ver, pm2_path) = pm2_info.as_ref()
+                            .map(|(v, p)| (v.as_str(), p.as_str()))
+                            .unwrap_or(("", ""));
+                        let pm2_installed = !pm2_ver.is_empty();
+                        let pm2_info_desc = if pm2_installed {
+                            lang::t("pm2_env_info_desc", &state.language)
+                                .replace("{version}", pm2_ver)
+                                .replace("{path}", pm2_path)
+                        } else {
+                            lang::t("pm2_not_installed", &state.language).to_string()
+                        };
+
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::CLOUD,
+                            lang::t("pm2_env_info", &state.language),
+                            &pm2_info_desc,
+                            |ui| {
+                                if !pm2_installed {
+                                    if ui
+                                        .add_sized(
+                                            [80.0, 26.0],
+                                            egui::Button::new(
+                                                egui::RichText::new(lang::t("install", &state.language)).size(12.0),
+                                            ),
+                                        )
+                                        .clicked()
+                                    {
+                                        *on_install_pm2 = true;
+                                    }
+                                }
                             },
                         );
                     });

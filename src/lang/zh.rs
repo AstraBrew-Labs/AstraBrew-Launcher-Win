@@ -74,6 +74,14 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "data_mode_current" => "当前",
         "data_mode_global_desc" => "数据将会统一放到AppData下",
         "data_mode_current_desc" => "以当前酒馆默认为准",
+        "auto_start" => "软件自启动",
+        "auto_start_desc" => "开机时自动启动星酿启动器",
+        "auto_minimize" => "启动后自动最小化",
+        "auto_minimize_desc" => "软件启动后自动最小化到系统托盘",
+        "auto_start_tavern" => "启动后自动启动酒馆",
+        "auto_start_tavern_desc" => "软件启动后自动运行酒馆服务",
+        "allow_tavern_background" => "允许酒馆后台运行",
+        "allow_tavern_background_desc" => "关闭启动器也不影响酒馆服务在后台运行",
         
         // Git Settings
         "git_settings" => "Git 设置",
@@ -97,6 +105,10 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "official_registry" => "官方源",
         "taobao_registry" => "淘宝源（默认）",
         "tencent_registry" => "腾讯源",
+        "pm2_env_info" => "PM2 环境",
+        "pm2_env_info_desc" => "版本: {version}\n路径: {path}",
+        "pm2_not_installed" => "尚未安装 PM2",
+        "install" => "安装",
         
         // Github Settings
         "github_settings" => "Github 设置",
@@ -320,6 +332,26 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "tc_cors_proxy" => "启用 CORS 代理",
         "tc_download_tokenizers" => "允许下载 Tokenizer",
         
+        // Home 一键启动主页
+        "home_welcome" => "欢迎使用星酿启动器",
+        "home_subtitle" => "一键管理你的酒馆服务",
+        "home_btn_start" => "一键启动",
+        "home_btn_stop" => "立即停止",
+        "home_status_stopped" => "服务已停止",
+        "home_status_starting" => "正在启动...",
+        "home_status_running" => "服务运行中",
+        "home_status_stopping" => "正在停止...",
+        "home_status_transitioning" => "操作中...",
+        "home_hint_start" => "点击后将跳转到控制台，自动启动酒馆服务",
+        "home_hint_stop" => "点击后将跳转到控制台，正常关闭酒馆服务",
+        "home_hint_transitioning" => "服务状态切换中，请稍候...",
+        "home_log_started" => "[主页] 通过一键启动，服务已启动",
+        "home_log_stopped" => "[主页] 通过一键启动，服务已正常关闭",
+        "home_card_version" => "当前版本",
+        "home_card_mode" => "启动模式",
+        "home_card_port" => "服务端口",
+        "home_no_version" => "未设置",
+
         // Fallback
         _ => key,
     }

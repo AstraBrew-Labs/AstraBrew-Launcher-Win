@@ -51,3 +51,10 @@
 - 按钮组：启动/重启/停止/强行停止，按状态联动启用/禁用
 - 导航位于底部区域，在设置按钮上方（Page::Console）
 - 翻译键 `console*` 前缀，中英双语 18 个 key
+
+## 一键启动主页（2026-06-04）
+- `src/pages/home.rs`：主页渲染函数 `render(ui, current_page, console_state, lang, version_info)`
+- 英雄按钮：停用态"一键启动"（绿）→ 跳转控制台 + 自动启动，运行态"立即停止"（红）→ 跳转控制台 + 优雅关闭
+- 底部三列信息卡片：当前版本 / 启动模式 / 服务端口
+- `ConsoleState::add_log` 改为 `pub` 供主页调用
+- 翻译键 `home_*` 前缀，中英双语 18 个 key

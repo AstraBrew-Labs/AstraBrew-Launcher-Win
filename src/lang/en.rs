@@ -74,6 +74,14 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "data_mode_current" => "Current",
         "data_mode_global_desc" => "Data will be stored under AppData",
         "data_mode_current_desc" => "Use current tavern default",
+        "auto_start" => "Auto Start",
+        "auto_start_desc" => "Launch AstraBrew Launcher on system startup",
+        "auto_minimize" => "Minimize on Startup",
+        "auto_minimize_desc" => "Minimize to system tray after launch",
+        "auto_start_tavern" => "Auto Start Tavern",
+        "auto_start_tavern_desc" => "Automatically start the tavern service on launch",
+        "allow_tavern_background" => "Allow Background Running",
+        "allow_tavern_background_desc" => "Closing the launcher does not affect the tavern service running in background",
         
         // Git Settings
         "git_settings" => "Git Settings",
@@ -97,6 +105,10 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "official_registry" => "Official Registry",
         "taobao_registry" => "Taobao Registry (Default)",
         "tencent_registry" => "Tencent Registry",
+        "pm2_env_info" => "PM2 Environment",
+        "pm2_env_info_desc" => "Version: {version}\nPath: {path}",
+        "pm2_not_installed" => "PM2 is not installed",
+        "install" => "Install",
         
         // Github Settings
         "github_settings" => "Github Settings",
@@ -320,6 +332,26 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "tc_cors_proxy" => "Enable CORS Proxy",
         "tc_download_tokenizers" => "Enable Downloadable Tokenizers",
         
+        // Home Page
+        "home_welcome" => "Welcome to AstraBrew",
+        "home_subtitle" => "Manage your Tavern service with one click",
+        "home_btn_start" => "One-Click Start",
+        "home_btn_stop" => "Stop Now",
+        "home_status_stopped" => "Service Stopped",
+        "home_status_starting" => "Starting...",
+        "home_status_running" => "Service Running",
+        "home_status_stopping" => "Stopping...",
+        "home_status_transitioning" => "Processing...",
+        "home_hint_start" => "Click to open console and start the service automatically",
+        "home_hint_stop" => "Click to open console and gracefully stop the service",
+        "home_hint_transitioning" => "Service is transitioning, please wait...",
+        "home_log_started" => "[Home] Service started via One-Click Start",
+        "home_log_stopped" => "[Home] Service stopped gracefully via One-Click Start",
+        "home_card_version" => "Current Version",
+        "home_card_mode" => "Start Mode",
+        "home_card_port" => "Service Port",
+        "home_no_version" => "Not Set",
+
         // Fallback
         _ => key,
     }

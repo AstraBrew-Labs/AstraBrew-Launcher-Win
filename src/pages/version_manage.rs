@@ -1293,6 +1293,8 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
     } else {
         None
     };
+
+    let npm_registry = crate::core::settings::npm_registry_url(&settings.npm_registry).to_string();
     
     let repo_url = if let Some(proxy) = github_proxy_url {
         format!("{}https://github.com/SillyTavern/SillyTavern.git", proxy)
@@ -1454,6 +1456,8 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                .arg("--progress")
                .arg("--foreground-scripts")
                .arg("--verbose")
+               .arg("--registry")
+               .arg(&npm_registry)
                .current_dir(&target_dir)
                .creation_flags(0x08000000)
                .stdout(std::process::Stdio::piped())

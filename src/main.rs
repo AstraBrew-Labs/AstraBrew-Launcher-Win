@@ -84,13 +84,14 @@ mod core;
 mod lang;
 mod pages;
 mod ui;
-use pages::console::ConsoleState;
+use pages::console::{ConsoleState, ConsoleStatus};
 use pages::settings::{SettingsState, SettingsTab, Theme};
 use pages::tavern_config::TavernConfigUI;
 
 pub enum EnvInstallProgress {
     Status(String),
     Progress(f32),
+    Log(String),
     Finished,
     Error(String),
 }
@@ -109,6 +110,7 @@ struct MyApp {
     git_info: Option<(String, String)>,
     nodejs_info: Option<(String, String)>,
     npm_info: Option<(String, String)>,
+    pm2_info: Option<(String, String)>,
     
     // 自定义提示 (提示内容, 触发时间)
     toast_message: Option<(String, std::time::Instant)>,
@@ -132,6 +134,13 @@ struct MyApp {
     tavern_config_ui: TavernConfigUI,
     // 控制台状态
     console_state: ConsoleState,
+    // 启动一次性动作标记
+    startup_actions_done: bool,
+    // PM2 安装状态
+    pm2_installing: bool,
+    pm2_install_status: String,
+    pm2_install_logs: Vec<String>,
+    pm2_install_receiver: Option<std::sync::mpsc::Receiver<EnvInstallProgress>>,
 }
 
 impl MyApp {
@@ -145,6 +154,7 @@ impl MyApp {
             git_info: None,
             nodejs_info: None,
             npm_info: None,
+            pm2_info: None,
             toast_message: None,
             show_env_download_prompt: false,
             env_download_tasks: Vec::new(),
@@ -161,6 +171,11 @@ impl MyApp {
                 None,
             ),
             console_state: ConsoleState::new(),
+            startup_actions_done: false,
+            pm2_installing: false,
+            pm2_install_status: String::new(),
+            pm2_install_logs: Vec::new(),
+            pm2_install_receiver: None,
         };
         
         // 初始化时检测并刷新环境信息
@@ -291,6 +306,22 @@ impl MyApp {
             (ver, p.to_string_lossy().to_string())
         });
 
+        // 4. 刷新 PM2 环境
+        let pm2_path_opt = core::env::get_pm2_path();
+        self.pm2_info = pm2_path_opt.map(|p| {
+            let ver = get_cmd_version(&p)
+                .map(|raw| {
+                    // pm2 --version 输出包含 ANSI 颜色码和启动日志，提取最后一行纯数字
+                    raw.lines()
+                        .last()
+                        .unwrap_or("Unknown")
+                        .trim()
+                        .to_string()
+                })
+                .unwrap_or_else(|| "Unknown".to_string());
+            (ver, p.to_string_lossy().to_string())
+        });
+
         if !missing_tasks.is_empty() {
             self.env_download_tasks = missing_tasks;
             self.show_env_download_prompt = true;
@@ -343,6 +374,26 @@ impl eframe::App for MyApp {
                 }
 
                 self.last_monitor_size = Some(monitor_size);
+            }
+        }
+
+        // ---- 启动一次性动作 ----
+        if !self.startup_actions_done {
+            self.startup_actions_done = true;
+
+            // 启动后自动最小化
+            if self.settings_state.auto_minimize {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                eprintln!("[startup] 自动最小化已启用，窗口已最小化");
+            }
+
+            // 启动后自动启动酒馆
+            if self.settings_state.auto_start_tavern {
+                if self.console_state.status == ConsoleStatus::Stopped {
+                    self.console_state.status = ConsoleStatus::Running;
+                    self.console_state.add_log("[系统] 根据「启动后自动启动酒馆」设置，自动启动服务");
+                    eprintln!("[startup] 自动启动酒馆已执行");
+                }
             }
         }
 
@@ -554,9 +605,18 @@ impl eframe::App for MyApp {
             ui.add_enabled_ui(!is_modal_open, |ui| {
                 match self.current_page {
                     Page::OneClickStart => {
-                        ui.heading(lang::t("one_click_start", &self.settings_state.language));
-                        ui.separator();
-                        ui.label("这里是一键启动页面的内容...");
+                        let version = self
+                            .settings_state
+                            .sillytavern
+                            .as_ref()
+                            .map(|inst| inst.version.as_str());
+                        pages::home::render(
+                            ui,
+                            &mut self.current_page,
+                            &mut self.console_state,
+                            &self.settings_state.language,
+                            version,
+                        );
                     }
                     Page::TavernConfig => {
                         // 检测配置路径是否变化（模式/实例切换），自动重新加载
@@ -597,6 +657,7 @@ impl eframe::App for MyApp {
                         ui.heading(lang::t("software_settings", &self.settings_state.language));
                         ui.separator();
                         let mut do_refresh = false;
+                        let mut do_install_pm2 = false;
                         pages::settings::render(
                             ui,
                             &mut self.settings_tab,
@@ -604,11 +665,25 @@ impl eframe::App for MyApp {
                             &self.git_info,
                             &self.nodejs_info,
                             &self.npm_info,
+                            &self.pm2_info,
                             &self.github_node_state,
                             &mut do_refresh,
+                            &mut do_install_pm2,
                         );
                         if do_refresh {
                             self.start_github_node_fetch(true);
+                        }
+                        if do_install_pm2 && !self.pm2_installing {
+                            self.pm2_installing = true;
+                            self.pm2_install_status = String::from("准备安装 PM2...");
+                            self.pm2_install_logs.clear();
+                            self.pm2_install_logs.push("npm install pm2 -g".to_string());
+                            let (tx, rx) = std::sync::mpsc::channel();
+                            self.pm2_install_receiver = Some(rx);
+                            let registry = core::settings::npm_registry_url(&self.settings_state.npm_registry).to_string();
+                            std::thread::spawn(move || {
+                                core::settings::pm2::install_pm2(tx, &registry);
+                            });
                         }
                     }
                 }
@@ -631,6 +706,11 @@ impl eframe::App for MyApp {
                 if self.github_node_state == NodeLoadState::Idle {
                     self.start_github_node_fetch(false);
                 }
+            }
+
+            // 自启动开关变化时同步注册表
+            if old_state.auto_start != self.settings_state.auto_start {
+                core::settings::autostart::sync(self.settings_state.auto_start);
             }
         }
 
@@ -791,6 +871,7 @@ impl eframe::App for MyApp {
                             }
                             self.settings_state.save();
                         }
+                        _ => {}
                     }
                 }
             }
@@ -802,6 +883,76 @@ impl eframe::App for MyApp {
             }
             
             // 请求持续重绘以刷新进度条
+            ctx.request_repaint();
+        }
+
+        // PM2 安装进度弹窗（日志模式）
+        if self.pm2_installing {
+            egui::Window::new("安装 PM2")
+                .order(egui::Order::Tooltip)
+                .collapsible(false)
+                .resizable(true)
+                .min_width(420.0)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(
+                        egui::RichText::new(&self.pm2_install_status)
+                            .size(13.0)
+                            .strong(),
+                    );
+                    ui.separator();
+
+                    let log_height = 200.0;
+                    egui::ScrollArea::vertical()
+                        .max_height(log_height)
+                        .auto_shrink([false; 2])
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            let monospace = egui::FontId::monospace(11.0);
+                            for line in self.pm2_install_logs.iter().rev() {
+                                ui.label(
+                                    egui::RichText::new(line)
+                                        .font(monospace.clone())
+                                        .color(egui::Color32::from_rgb(180, 200, 220)),
+                                );
+                            }
+                        });
+                });
+
+            let mut is_finished = false;
+            if let Some(rx) = &self.pm2_install_receiver {
+                while let Ok(progress) = rx.try_recv() {
+                    match progress {
+                        EnvInstallProgress::Status(status) => {
+                            self.pm2_install_status = status;
+                        }
+                        EnvInstallProgress::Log(line) => {
+                            self.pm2_install_logs.push(line);
+                        }
+                        EnvInstallProgress::Finished => {
+                            self.pm2_installing = false;
+                            is_finished = true;
+                            self.toast_message = Some((
+                                "PM2 安装成功".to_string(),
+                                std::time::Instant::now(),
+                            ));
+                        }
+                        EnvInstallProgress::Error(err) => {
+                            self.pm2_installing = false;
+                            is_finished = true;
+                            self.toast_message = Some((
+                                format!("PM2 安装失败: {}", err),
+                                std::time::Instant::now(),
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if is_finished {
+                self.pm2_install_receiver = None;
+                self.refresh_env_info();
+            }
             ctx.request_repaint();
         }
 

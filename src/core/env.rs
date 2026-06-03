@@ -63,6 +63,36 @@ pub fn get_builtin_npm_path() -> Option<PathBuf> {
     }
 }
 
+pub fn get_pm2_path() -> Option<PathBuf> {
+    // 先尝试系统 PATH 中的 pm2
+    if let Some(p) = get_system_cmd_path("pm2") {
+        return Some(p);
+    }
+
+    // 回退：检查 npm 全局安装目录 (%APPDATA%\npm)
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let npm_global = PathBuf::from(&appdata).join("npm").join("pm2.cmd");
+        if npm_global.exists() {
+            return Some(npm_global);
+        }
+        let npm_global_ps = PathBuf::from(&appdata).join("npm").join("pm2.ps1");
+        if npm_global_ps.exists() {
+            return Some(npm_global_ps);
+        }
+    }
+
+    // 检查 node_modules/.bin 下
+    let builtin_node = get_builtin_node_path();
+    if let Some(node_exe) = builtin_node {
+        let pm2_path = node_exe.parent().unwrap_or(&PathBuf::from(".")).join("pm2.cmd");
+        if pm2_path.exists() {
+            return Some(pm2_path);
+        }
+    }
+
+    None
+}
+
 pub fn get_system_cmd_path(cmd: &str) -> Option<PathBuf> {
     if let Ok(output) = Command::new("where")
         .arg(cmd)
