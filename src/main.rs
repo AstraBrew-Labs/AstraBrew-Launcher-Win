@@ -122,6 +122,9 @@ struct MyApp {
     github_node_state: NodeLoadState,
     github_node_receiver: Option<std::sync::mpsc::Receiver<NodeLoadMsg>>,
     github_node_entries: Vec<core::settings::github_proxy::NodeEntry>,
+
+    // 版本管理状态
+    version_manage_state: pages::version_manage::VersionManageState,
 }
 
 impl MyApp {
@@ -145,6 +148,7 @@ impl MyApp {
             github_node_state: NodeLoadState::Idle,
             github_node_receiver: None,
             github_node_entries: Vec::new(),
+            version_manage_state: pages::version_manage::VersionManageState::new(),
         };
         
         // 初始化时检测并刷新环境信息
@@ -426,7 +430,7 @@ impl eframe::App for MyApp {
                     Page::VersionManage => {
                         ui.heading(lang::t("version_manage", &self.settings_state.language));
                         ui.separator();
-                        ui.label("这里是版本管理页面的内容...");
+                        pages::version_manage::render(ui, &mut self.version_manage_state, &self.settings_state);
                     }
                     Page::ExtensionManage => {
                         ui.heading(lang::t("extension_manage", &self.settings_state.language));
