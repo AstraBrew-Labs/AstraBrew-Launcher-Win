@@ -531,7 +531,13 @@ pub fn render(
                                 lang::t("github_proxy", &state.language),
                                 lang::t("github_proxy_desc", &state.language),
                                 |ui| {
-                                    ui.add(crate::ui::switch::toggle(&mut state.github_proxy_enabled));
+                                    let mut enabled = state.github_proxy_enabled;
+                                    if ui.add(crate::ui::switch::toggle(&mut enabled)).changed() {
+                                        state.github_proxy_enabled = enabled;
+                                        if enabled {
+                                            state.proxy_type = ProxyType::None;
+                                        }
+                                    }
                                 },
                             );
                             ui.add_space(10.0);
@@ -740,35 +746,53 @@ pub fn render(
 
                     // 网络设置
                     setting_section(ui, egui_phosphor::regular::WIFI_HIGH, lang::t("network_settings", &state.language), |ui| {
+                        let mut proxy_desc = lang::t("proxy_settings_desc", &state.language).to_string();
+                        if state.proxy_type == ProxyType::System {
+                            if let Some((_, enabled)) = crate::core::network::read_windows_system_proxy() {
+                                let status_text = if enabled { lang::t("on", &state.language) } else { lang::t("off", &state.language) };
+                                proxy_desc = format!("{} ({} {})", proxy_desc, lang::t("system_proxy_status", &state.language), status_text);
+                            } else {
+                                proxy_desc = format!("{} ({} {})", proxy_desc, lang::t("system_proxy_status", &state.language), lang::t("unknown", &state.language));
+                            }
+                        }
+
                         setting_row(
                             ui,
                             egui_phosphor::regular::SHIELD,
                             lang::t("proxy_settings", &state.language),
-                            lang::t("proxy_settings_desc", &state.language),
+                            &proxy_desc,
                             |ui| {
+                                let mut pt = state.proxy_type.clone();
                                 egui::ComboBox::from_id_salt("proxy_type_combo")
-                                    .selected_text(match state.proxy_type {
+                                    .selected_text(match pt {
                                         ProxyType::None => lang::t("off", &state.language),
                                         ProxyType::System => lang::t("follow_system", &state.language),
                                         ProxyType::Custom => lang::t("custom_proxy", &state.language),
                                     })
                                     .show_ui(ui, |ui| {
                                         ui.selectable_value(
-                                            &mut state.proxy_type,
+                                            &mut pt,
                                             ProxyType::None,
                                             lang::t("off", &state.language),
                                         );
                                         ui.selectable_value(
-                                            &mut state.proxy_type,
+                                            &mut pt,
                                             ProxyType::System,
                                             lang::t("follow_system", &state.language),
                                         );
                                         ui.selectable_value(
-                                            &mut state.proxy_type,
+                                            &mut pt,
                                             ProxyType::Custom,
                                             lang::t("custom_proxy", &state.language),
                                         );
                                     });
+
+                                if pt != state.proxy_type {
+                                    state.proxy_type = pt;
+                                    if state.proxy_type != ProxyType::None {
+                                        state.github_proxy_enabled = false;
+                                    }
+                                }
                             },
                         );
 
@@ -786,17 +810,50 @@ pub fn render(
                         }
 
                         ui.add_space(10.0);
-                        setting_row(
-                            ui,
-                            egui_phosphor::regular::PLUG,
-                            lang::t("github_test", &state.language),
-                            lang::t("github_test_desc", &state.language),
-                            |ui| {
-                                if ui.button(lang::t("start_test", &state.language)).clicked() {
-                                    // 待实现
-                                }
-                            },
-                        );
+                            setting_row(
+                                ui,
+                                egui_phosphor::regular::PLUG,
+                                lang::t("github_test", &state.language),
+                                lang::t("github_test_desc", &state.language),
+                                |ui| {
+                                    if ui.button(lang::t("start_test", &state.language)).clicked() {
+                                          let mut popup_state = GITHUB_TEST_POPUP_STATE.lock().unwrap();
+                                          popup_state.show = true;
+                                          popup_state.results.clear();
+                                          
+                                          // 启动测试
+                                          let has_proxy = state.proxy_type != ProxyType::None;
+                                          let has_accelerate = state.github_proxy_enabled;
+                                          
+                                          let (proxy_mode, proxy_host, accelerate_url) = match (has_proxy, has_accelerate) {
+                                              (true, true) => {
+                                                  let p_mode = match state.proxy_type {
+                                                      ProxyType::System => "system",
+                                                      ProxyType::Custom => "custom",
+                                                      ProxyType::None => "none",
+                                                  };
+                                                  (p_mode, state.custom_proxy.clone(), Some(state.github_proxy_url.clone()))
+                                              },
+                                              (true, false) => {
+                                                  let p_mode = match state.proxy_type {
+                                                      ProxyType::System => "system",
+                                                      ProxyType::Custom => "custom",
+                                                      ProxyType::None => "none",
+                                                  };
+                                                  (p_mode, state.custom_proxy.clone(), None)
+                                              },
+                                              (false, true) => {
+                                                  ("none", String::new(), Some(state.github_proxy_url.clone()))
+                                              },
+                                              (false, false) => {
+                                                  ("none", String::new(), None)
+                                              },
+                                          };
+                                          
+                                          crate::core::network::start_github_multi_test(proxy_mode, &proxy_host, 0, accelerate_url, true);
+                                      }
+                                },
+                            );
                     });
 
                     ui.add_space(20.0);
@@ -898,65 +955,153 @@ pub fn render(
             egui::Window::new(lang::t("github_test", &state.language))
                 .open(&mut open)
                 .resizable(true)
-                .default_width(500.0)
+                .default_width(400.0)
                 .show(ui.ctx(), |ui| {
                     // 检查测试是否正在进行
                     let testing = crate::core::network::is_github_multi_test_in_progress();
                     
-                    // 开始测试按钮
-                    if !testing {
-                        if ui.button(lang::t("start_test", &state.language)).clicked() {
-                            // 启动测试
-                            let mode = if state.github_proxy_enabled {
-                                "proxy"
+                    let has_proxy = state.proxy_type != ProxyType::None;
+                    let has_accelerate = state.github_proxy_enabled;
+                    
+                    let mode_text = match (has_proxy, has_accelerate) {
+                        (false, false) => lang::t("direct_mode", &state.language),
+                        (true, false) => lang::t("proxy_only_mode", &state.language),
+                        (false, true) => lang::t("accelerate_only_mode", &state.language),
+                        (true, true) => lang::t("proxy_and_accelerate_mode", &state.language),
+                    };
+                    
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(lang::t("test_mode", &state.language)).strong());
+                        ui.label(mode_text);
+                        
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if testing {
+                                ui.spinner();
+                                ui.label(lang::t("testing", &state.language));
                             } else {
-                                "none"
-                            };
-                            let host = state.github_proxy_url.clone();
-                            crate::core::network::start_github_multi_test(mode, &host, 0, true);
-                        }
-                    } else {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.label(lang::t("testing", &state.language));
+                                if ui.button(lang::t("start_test", &state.language)).clicked() {
+                                      results.clear();
+                                      let mut popup_state = GITHUB_TEST_POPUP_STATE.lock().unwrap();
+                                      popup_state.show = true;
+                                      popup_state.results.clear();
+                                      
+                                      // 启动测试
+                                      let has_proxy = state.proxy_type != ProxyType::None;
+                                      let has_accelerate = state.github_proxy_enabled;
+                                      
+                                      let (proxy_mode, proxy_host, accelerate_url) = match (has_proxy, has_accelerate) {
+                                          (true, true) => {
+                                              let p_mode = match state.proxy_type {
+                                                  ProxyType::System => "system",
+                                                  ProxyType::Custom => "custom",
+                                                  ProxyType::None => "none",
+                                              };
+                                              (p_mode, state.custom_proxy.clone(), Some(state.github_proxy_url.clone()))
+                                          },
+                                          (true, false) => {
+                                              let p_mode = match state.proxy_type {
+                                                  ProxyType::System => "system",
+                                                  ProxyType::Custom => "custom",
+                                                  ProxyType::None => "none",
+                                              };
+                                              (p_mode, state.custom_proxy.clone(), None)
+                                          },
+                                          (false, true) => {
+                                              ("none", String::new(), Some(state.github_proxy_url.clone()))
+                                          },
+                                          (false, false) => {
+                                              ("none", String::new(), None)
+                                          },
+                                      };
+                                      
+                                      crate::core::network::start_github_multi_test(proxy_mode, &proxy_host, 0, accelerate_url, true);
+                                 }
+                            }
                         });
-                    }
+                    });
                     
                     ui.separator();
                     
-                    // 显示结果
-                    if !results.is_empty() {
-                        ui.heading(lang::t("test_results", &state.language));
-                        egui::ScrollArea::vertical()
-                            .max_height(300.0)
-                            .show(ui, |ui| {
-                                for item in &results {
-                                    ui.horizontal(|ui| {
-                                        ui.label(&item.key);
-                                        ui.separator();
-                                        ui.label(&item.name);
-                                        ui.separator();
-                                        if item.success {
-                                            if let Some(latency) = item.latency_ms {
-                                                ui.colored_label(egui::Color32::GREEN, format!("{} ms", latency));
+                    if testing || !results.is_empty() {
+                         ui.heading(lang::t("test_results", &state.language));
+                         ui.add_space(5.0);
+                         
+                         egui::ScrollArea::vertical()
+                             .max_height(300.0)
+                             .show(ui, |ui| {
+                                 if testing && results.is_empty() {
+                                     let expected_tests = ["文件访问", "仓库访问", "首页访问", "API 访问", "下载速度"];
+                                     for name in expected_tests {
+                                         ui.horizontal(|ui| {
+                                             ui.label(name);
+                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                 ui.spinner();
+                                                 ui.label(egui::RichText::new(lang::t("testing", &state.language)).color(egui::Color32::GRAY));
+                                             });
+                                         });
+                                         ui.separator();
+                                     }
+                                 } else {
+                                     for item in &results {
+                                         ui.horizontal(|ui| {
+                                             ui.label(&item.name);
+                                             
+                                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                 if let Some(warn) = &item.warning {
+                                                     // 异常/警告：图标在右边，文字在左边（由于是 right_to_left，先添加图标）
+                                                     ui.label(egui::RichText::new(egui_phosphor::regular::WARNING_CIRCLE).color(egui::Color32::YELLOW))
+                                                         .on_hover_text(warn);
+                                                     
+                                                     let short_msg = if warn.contains("速度") {
+                                                         // 如果是速度测试，尝试提取括号里的具体速度（例如 "8.50 MB/s"）
+                                                         if let Some(start) = warn.find('(') {
+                                                             if let Some(end) = warn.find(')') {
+                                                                 &warn[start+1..end]
+                                                             } else { "异常" }
+                                                         } else { "异常" }
+                                                     } else {
+                                                         "异常"
+                                                     };
+                                                     ui.label(egui::RichText::new(short_msg).color(egui::Color32::GRAY));
+                                                     
+                                                 } else if item.success {
+                                                // 成功：图标在右边，文字（如果有延迟）在左边
+                                                let mut hover_text = lang::t("connectivity_available", &state.language).to_string();
+                                                if let Some(latency) = item.latency_ms {
+                                                    hover_text.push_str(&format!("\n{} ms", latency));
+                                                }
+                                                ui.label(egui::RichText::new(egui_phosphor::regular::CHECK_CIRCLE).color(egui::Color32::GREEN))
+                                                    .on_hover_text(hover_text);
+                                                    
+                                                if let Some(latency) = item.latency_ms {
+                                                    // 延迟如果太长，可以只显示数字
+                                                    ui.label(egui::RichText::new(format!("{}ms", latency)).color(egui::Color32::GRAY));
+                                                } else {
+                                                    ui.label(egui::RichText::new(lang::t("success", &state.language)).color(egui::Color32::GRAY));
+                                                }
                                             } else {
-                                                ui.colored_label(egui::Color32::GREEN, lang::t("success", &state.language));
-                                            }
-                                        } else {
-                                            ui.colored_label(egui::Color32::RED, lang::t("failed", &state.language));
-                                        }
-                                        if let Some(err) = &item.error {
-                                            ui.label(err);
-                                        }
-                                        if let Some(warn) = &item.warning {
-                                            ui.colored_label(egui::Color32::YELLOW, warn);
-                                        }
-                                    });
-                                    ui.separator();
-                                }
-                            });
-                    }
-                });
+                                                // 失败：图标在右边，简短文字在左边
+                                                let err_text = item.error.as_deref().unwrap_or(lang::t("connectivity_unavailable", &state.language));
+                                                ui.label(egui::RichText::new(egui_phosphor::regular::X_CIRCLE).color(egui::Color32::RED))
+                                                    .on_hover_text(err_text);
+                                                    
+                                                let short_err = if err_text.contains("超时") || err_text.contains("timeout") {
+                                                    "超时"
+                                                } else if err_text.contains("HTTP") {
+                                                    "拒绝"
+                                                } else {
+                                                    "失败"
+                                                };
+                                                ui.label(egui::RichText::new(short_err).color(egui::Color32::GRAY));
+                                             }
+                                         });
+                                     });
+                                     ui.separator();
+                                 }
+                             }
+                         });
+                     }
+                 });
             
             // 检查测试是否完成（不持有锁时调用）
             if let Some(test_results) = crate::core::network::get_github_multi_test_result() {
@@ -964,9 +1109,15 @@ pub fn render(
             }
             
             // 保存状态
-            let mut state = GITHUB_TEST_POPUP_STATE.lock().unwrap();
-            state.show = open;
-            state.results = results;
+            let mut popup_state = GITHUB_TEST_POPUP_STATE.lock().unwrap();
+            
+            if !open && popup_state.show {
+                crate::core::network::cancel_github_multi_test();
+                results.clear();
+            }
+            
+            popup_state.show = open;
+            popup_state.results = results;
         }
     }
 

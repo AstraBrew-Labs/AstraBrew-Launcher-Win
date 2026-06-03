@@ -135,6 +135,7 @@ pub fn read_windows_system_proxy() -> Option<(String, bool)> {
 /// 多链接测试结果项
 #[derive(Debug, Clone)]
 pub struct GithubMultiTestItem {
+    #[allow(dead_code)]
     pub key: String,
     pub name: String,
     pub success: bool,
@@ -147,13 +148,14 @@ pub struct GithubMultiTestItem {
 /// mode: "none" | "system" | "custom" | "proxy"
 /// include_api: 是否包含 api.github.com 测试
 pub fn test_github_multi(
-    mode: &str,
-    host: &str,
-    port: u16,
-    _include_api: bool,
+    proxy_mode: &str,
+    proxy_host: &str,
+    _proxy_port: u16,
+    accelerate_url: Option<String>,
+    include_api: bool,
 ) -> Vec<GithubMultiTestItem> {
     // 定义测试链接列表
-    let test_urls: Vec<(String, String, String)> = vec![
+    let mut test_urls: Vec<(String, String, String)> = vec![
         (
             "raw".to_string(),
             "文件访问".to_string(),
@@ -170,24 +172,33 @@ pub fn test_github_multi(
             "https://www.github.com".to_string(),
         ),
     ];
+    
+    if include_api {
+        test_urls.push((
+            "api".to_string(),
+            "API 访问".to_string(),
+            "https://api.github.com/repos/SillyTavern/SillyTavern/releases".to_string(),
+        ));
+    }
+
+    if let Some(accel) = &accelerate_url {
+        let accel_base = accel.trim_end_matches('/');
+        for url_item in &mut test_urls {
+            url_item.2 = format!("{}/{}", accel_base, url_item.2);
+        }
+    }
 
     // 构建 reqwest client
     let mut builder = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10));
+        .timeout(Duration::from_secs(10))
+        .user_agent("AstraBrew-Launcher");
 
-    match mode {
-        "proxy" => {
-            let proxy_url = if host.starts_with("http://") || host.starts_with("https://") {
-                host.to_string()
-            } else {
-                format!("http://{}", host)
-            };
-            if let Ok(proxy) = reqwest::Proxy::all(&proxy_url) {
-                builder = builder.proxy(proxy);
-            }
-        }
+    match proxy_mode {
         "custom" => {
-            let proxy_url = format!("http://{}:{}", host, port);
+            let mut proxy_url = proxy_host.to_string();
+            if !proxy_url.starts_with("http://") && !proxy_url.starts_with("https://") && !proxy_url.starts_with("socks5://") {
+                proxy_url = format!("http://{}", proxy_url);
+            }
             if let Ok(proxy) = reqwest::Proxy::all(&proxy_url) {
                 builder = builder.proxy(proxy);
             }
@@ -216,7 +227,12 @@ pub fn test_github_multi(
                 } else {
                     server.clone()
                 };
-                let proxy_url = format!("http://{}", proxy_addr);
+                
+                let mut proxy_url = proxy_addr;
+                if !proxy_url.starts_with("http://") && !proxy_url.starts_with("https://") && !proxy_url.starts_with("socks5://") {
+                    proxy_url = format!("http://{}", proxy_url);
+                }
+                
                 if let Ok(proxy) = reqwest::Proxy::all(&proxy_url) {
                     builder = builder.proxy(proxy);
                 }
@@ -248,27 +264,48 @@ pub fn test_github_multi(
     for (key, name, url) in test_urls {
         let start = Instant::now();
         match client.get(&url).send() {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 let latency = start.elapsed().as_millis() as u64;
-                if resp.status().is_success() {
-                    results.push(GithubMultiTestItem {
-                        key,
-                        name,
-                        success: true,
-                        latency_ms: Some(latency),
-                        error: None,
-                        warning: None,
-                    });
-                } else {
-                    results.push(GithubMultiTestItem {
-                        key,
-                        name,
-                        success: false,
-                        latency_ms: Some(latency),
-                        error: Some(format!("HTTP {}", resp.status())),
-                        warning: None,
-                    });
+                let status = resp.status();
+                
+                let mut success = status.is_success();
+                let mut warning = None;
+                let mut error = None;
+
+                if !success {
+                    if accelerate_url.is_some() {
+                        let status_u16 = status.as_u16();
+                        if status_u16 == 403 {
+                            success = true;
+                            warning = Some("加速地址可用，但该资源无法加速 (403)".to_string());
+                        } else if status_u16 == 404 {
+                            success = true;
+                            warning = Some("加速地址可用，但该资源无法加速 (404)".to_string());
+                        } else {
+                            use std::io::Read;
+                            let mut body = String::new();
+                            let _ = resp.read_to_string(&mut body);
+                            let lower = body.to_lowercase();
+                            if lower.contains("invalid input") || lower.contains("无效输入") {
+                                success = true;
+                                warning = Some("加速地址可用，但该资源无法加速".to_string());
+                            } else {
+                                error = Some(format!("HTTP {}", status));
+                            }
+                        }
+                    } else {
+                        error = Some(format!("HTTP {}", status));
+                    }
                 }
+
+                results.push(GithubMultiTestItem {
+                    key,
+                    name,
+                    success,
+                    latency_ms: Some(latency),
+                    error,
+                    warning,
+                });
             }
             Err(e) => {
                 results.push(GithubMultiTestItem {
@@ -283,45 +320,224 @@ pub fn test_github_multi(
         }
     }
 
+    // 下载速度测试
+    let mut speed_test_url = "https://github.com/al01cn/sillyTavern-launcher/releases/download/v0.1.5/SillyTavern.Launcher.GUI_x64.app.tar.gz".to_string();
+    if let Some(accel) = &accelerate_url {
+        let accel_base = accel.trim_end_matches('/');
+        speed_test_url = format!("{}/{}", accel_base, speed_test_url);
+    }
+    
+    let speed_start = Instant::now();
+    let global_timeout = Duration::from_secs(60);
+    
+    match client.get(&speed_test_url).send() {
+        Ok(mut resp) => {
+            let status = resp.status();
+            if status.is_success() {
+                use std::io::Read;
+                let mut downloaded = 0u64;
+                let mut buffer = [0u8; 8192];
+                const MAX_TEST_BYTES: u64 = 4 * 1024 * 1024; // 最多下载 4MB
+                
+                while let Ok(n) = resp.read(&mut buffer) {
+                    if n == 0 { break; }
+                    downloaded += n as u64;
+                    if downloaded >= MAX_TEST_BYTES { break; }
+                    
+                    // 中途检测下载是否超时，避免长时间挂起
+                    if speed_start.elapsed() > global_timeout {
+                        break;
+                    }
+                }
+                
+                let elapsed = speed_start.elapsed();
+                let speed_mbps = (downloaded as f64 / 1_048_576.0) / elapsed.as_secs_f64().max(0.001);
+                
+                let speed_msg = if speed_mbps < 1.0 {
+                    format!("速度太慢 ({:.1} KB/s)", speed_mbps * 1024.0)
+                } else if speed_mbps < 4.0 {
+                    format!("速度正常 ({:.2} MB/s)", speed_mbps)
+                } else if speed_mbps < 10.0 {
+                    format!("速度很快 ({:.2} MB/s)", speed_mbps)
+                } else {
+                    format!("速度极快 ({:.2} MB/s)", speed_mbps)
+                };
+
+                results.push(GithubMultiTestItem {
+                    key: "speed".to_string(),
+                    name: "下载速度".to_string(),
+                    success: true,
+                    latency_ms: None,
+                    error: None,
+                    warning: Some(speed_msg),
+                });
+            } else {
+                let mut success = false;
+                let mut warning = None;
+                let mut error = None;
+
+                if accelerate_url.is_some() {
+                    let status_u16 = status.as_u16();
+                    if status_u16 == 403 {
+                        success = true;
+                        warning = Some("加速地址可用，但该资源无法加速 (403)".to_string());
+                    } else if status_u16 == 404 {
+                        success = true;
+                        warning = Some("加速地址可用，但该资源无法加速 (404)".to_string());
+                    } else {
+                        use std::io::Read;
+                        let mut body = String::new();
+                        let _ = resp.read_to_string(&mut body);
+                        let lower = body.to_lowercase();
+                        if lower.contains("invalid input") || lower.contains("无效输入") {
+                            success = true;
+                            warning = Some("加速地址可用，但该资源无法加速".to_string());
+                        } else {
+                            error = Some(format!("HTTP {}", status));
+                        }
+                    }
+                } else {
+                    error = Some(format!("HTTP {}", status));
+                }
+
+                results.push(GithubMultiTestItem {
+                    key: "speed".to_string(),
+                    name: "下载速度".to_string(),
+                    success,
+                    latency_ms: None,
+                    error,
+                    warning,
+                });
+            }
+        }
+        Err(e) => {
+            results.push(GithubMultiTestItem {
+                key: "speed".to_string(),
+                name: "下载速度".to_string(),
+                success: false,
+                latency_ms: None,
+                error: Some(format!("测速失败: {}", e)),
+                warning: None,
+            });
+        }
+    }
+
     results
 }
 
 /// 多链接测试全局状态
 struct GithubMultiTestState {
     in_progress: bool,
+    test_id: u64,
     results: Option<Vec<GithubMultiTestItem>>,
+    start_time: Option<Instant>,
 }
 
 static GITHUB_MULTI_TEST_STATE: Lazy<Mutex<GithubMultiTestState>> = Lazy::new(|| {
     Mutex::new(GithubMultiTestState {
         in_progress: false,
+        test_id: 0,
         results: None,
+        start_time: None,
     })
 });
 
+/// 取消多链接测试
+pub fn cancel_github_multi_test() {
+    let mut state = GITHUB_MULTI_TEST_STATE.lock().unwrap();
+    state.in_progress = false;
+    state.results = None;
+    state.start_time = None;
+    state.test_id = state.test_id.wrapping_add(1);
+}
+
 /// 检查多链接测试是否正在运行
 pub fn is_github_multi_test_in_progress() -> bool {
-    GITHUB_MULTI_TEST_STATE.lock().unwrap().in_progress
+    let mut state = GITHUB_MULTI_TEST_STATE.lock().unwrap();
+    if state.in_progress {
+        if let Some(st) = state.start_time {
+            if st.elapsed() > Duration::from_secs(60) {
+                // 超时处理：强行结束测试状态并填入超时结果
+                state.in_progress = false;
+                let dummy_results = vec![
+                    GithubMultiTestItem {
+                        key: "raw".to_string(),
+                        name: "文件访问".to_string(),
+                        success: false,
+                        latency_ms: None,
+                        error: Some("连接超时".to_string()),
+                        warning: None,
+                    },
+                    GithubMultiTestItem {
+                        key: "repo".to_string(),
+                        name: "仓库访问".to_string(),
+                        success: false,
+                        latency_ms: None,
+                        error: Some("连接超时".to_string()),
+                        warning: None,
+                    },
+                    GithubMultiTestItem {
+                        key: "homepage".to_string(),
+                        name: "首页访问".to_string(),
+                        success: false,
+                        latency_ms: None,
+                        error: Some("连接超时".to_string()),
+                        warning: None,
+                    },
+                    GithubMultiTestItem {
+                        key: "api".to_string(),
+                        name: "API 访问".to_string(),
+                        success: false,
+                        latency_ms: None,
+                        error: Some("连接超时".to_string()),
+                        warning: None,
+                    },
+                    GithubMultiTestItem {
+                        key: "speed".to_string(),
+                        name: "下载速度".to_string(),
+                        success: false,
+                        latency_ms: None,
+                        error: Some("连接超时".to_string()),
+                        warning: None,
+                    },
+                ];
+                state.results = Some(dummy_results);
+            }
+        }
+    }
+    state.in_progress
 }
 
 /// 启动 Github 多链接测试（后台线程）
-pub fn start_github_multi_test(mode: &str, host: &str, port: u16, include_api: bool) {
+pub fn start_github_multi_test(
+    proxy_mode: &str,
+    proxy_host: &str,
+    proxy_port: u16,
+    accelerate_url: Option<String>,
+    include_api: bool,
+) {
     let mut state = GITHUB_MULTI_TEST_STATE.lock().unwrap();
     if state.in_progress {
         return;
     }
     state.in_progress = true;
+    state.test_id = state.test_id.wrapping_add(1);
+    let current_test_id = state.test_id;
     state.results = None;
+    state.start_time = Some(Instant::now());
     drop(state);
 
-    let mode = mode.to_string();
-    let host = host.to_string();
+    let proxy_mode = proxy_mode.to_string();
+    let proxy_host = proxy_host.to_string();
 
     std::thread::spawn(move || {
-        let results = test_github_multi(&mode, &host, port, include_api);
+        let results = test_github_multi(&proxy_mode, &proxy_host, proxy_port, accelerate_url, include_api);
         let mut state = GITHUB_MULTI_TEST_STATE.lock().unwrap();
-        state.in_progress = false;
-        state.results = Some(results);
+        // 只有在没被超时机制强制终止且为当前测试的情况下才写入结果
+        if state.in_progress && state.test_id == current_test_id {
+            state.in_progress = false;
+            state.results = Some(results);
+        }
     });
 }
 
