@@ -40,6 +40,40 @@ impl ConsoleState {
             .unwrap_or_else(|_| String::from("--:--:--"));
         self.logs.push(format!("[{}] {}", timestamp, msg));
     }
+
+    /// 将所有日志拼接为纯文本（移除 ANSI 转义码）
+    pub fn plain_text(&self) -> String {
+        let mut out = String::new();
+        for line in &self.logs {
+            // 去掉 ANSI 转义序列
+            let clean = strip_ansi(line);
+            out.push_str(&clean);
+            out.push('\n');
+        }
+        out
+    }
+}
+
+/// 去掉字符串中的 ANSI 转义序列
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            i += 2;
+            while i < bytes.len() && bytes[i] != b'm' {
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 1; // skip 'm'
+            }
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
 }
 
 pub fn render(
@@ -212,6 +246,7 @@ pub fn render(
         .corner_radius(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(12, 8))
         .show(ui, |ui| {
+            // 标题栏 + 操作按钮
             ui.horizontal(|ui| {
                 ui.add(
                     egui::Label::new(
@@ -220,15 +255,45 @@ pub fn render(
                     .selectable(false),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add_sized(
-                            [60.0, 22.0],
-                            egui::Button::new(
-                                RichText::new(lang::t("console_btn_clear", lang)).size(11.0),
-                            ),
-                        )
-                        .clicked()
-                    {
+                    // 导出按钮
+                    let export_btn = egui::Button::new(
+                        RichText::new(lang::t("console_btn_export", lang)).size(11.0),
+                    );
+                    if ui.add_sized([52.0, 22.0], export_btn).clicked() {
+                        let txt = state.plain_text();
+                        let path = crate::core::env::get_data_dir()
+                            .join("console_export.log");
+                        if let Err(e) = std::fs::write(&path, &txt) {
+                            state.add_log(&format!("[错误] 导出日志失败: {}", e));
+                        } else {
+                            state.add_log(&format!("[系统] 日志已导出到: {}", path.display()));
+                            // 尝试在资源管理器中打开
+                            let _ = std::process::Command::new("explorer")
+                                .arg("/select,")
+                                .arg(path.to_string_lossy().as_ref())
+                                .spawn();
+                        }
+                    }
+
+                    ui.add_space(4.0);
+
+                    // 复制按钮
+                    let copy_btn = egui::Button::new(
+                        RichText::new(lang::t("console_btn_copy", lang)).size(11.0),
+                    );
+                    if ui.add_sized([52.0, 22.0], copy_btn).clicked() {
+                        let txt = state.plain_text();
+                        ui.ctx().copy_text(txt);
+                        state.add_log(lang::t("console_log_copied", lang));
+                    }
+
+                    ui.add_space(4.0);
+
+                    // 清空按钮
+                    let clear_btn = egui::Button::new(
+                        RichText::new(lang::t("console_btn_clear", lang)).size(11.0),
+                    );
+                    if ui.add_sized([52.0, 22.0], clear_btn).clicked() {
                         state.logs.clear();
                         state.add_log(lang::t("console_log_cleared", lang));
                     }
@@ -293,12 +358,11 @@ fn parse_ansi_line(line: &str) -> Vec<(String, Option<Color32>)> {
 
     while i < bytes.len() {
         if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
-            // 遇到 \x1b[ —— 先保存当前段
             if !current.is_empty() {
                 segments.push((std::mem::take(&mut current), current_color));
             }
 
-            i += 2; // 跳过 \x1b[
+            i += 2;
             let mut code = String::new();
             while i < bytes.len() && bytes[i] != b'm' {
                 if bytes[i].is_ascii_digit() || bytes[i] == b';' {
@@ -307,10 +371,9 @@ fn parse_ansi_line(line: &str) -> Vec<(String, Option<Color32>)> {
                 i += 1;
             }
             if i < bytes.len() {
-                i += 1; // 跳过 'm'
+                i += 1;
             }
 
-            // 解析颜色码
             current_color = resolve_ansi_code(&code, current_color);
         } else {
             current.push(bytes[i] as char);
@@ -318,7 +381,6 @@ fn parse_ansi_line(line: &str) -> Vec<(String, Option<Color32>)> {
         }
     }
 
-    // 最后一段
     if !current.is_empty() {
         segments.push((current, current_color));
     }
@@ -326,7 +388,6 @@ fn parse_ansi_line(line: &str) -> Vec<(String, Option<Color32>)> {
     segments
 }
 
-/// 解析 ANSI SGR 参数码，返回更新后的颜色
 fn resolve_ansi_code(code: &str, prev: Option<Color32>) -> Option<Color32> {
     for part in code.split(';') {
         let n: u8 = match part.parse() {
@@ -334,27 +395,26 @@ fn resolve_ansi_code(code: &str, prev: Option<Color32>) -> Option<Color32> {
             Err(_) => continue,
         };
         match n {
-            0 => return None,                         // 重置
-            1 => {}                                    // 粗体（忽略）
-            30 => return Some(Color32::from_rgb(40, 40, 40)),      // 黑
-            31 => return Some(Color32::from_rgb(255, 80, 80)),      // 红
-            32 => return Some(Color32::from_rgb(80, 220, 80)),      // 绿
-            33 => return Some(Color32::from_rgb(220, 200, 60)),     // 黄
-            34 => return Some(Color32::from_rgb(70, 140, 240)),     // 蓝
-            35 => return Some(Color32::from_rgb(200, 80, 200)),     // 品红
-            36 => return Some(Color32::from_rgb(60, 200, 200)),     // 青
-            37 => return Some(Color32::from_rgb(210, 210, 210)),    // 白
-            90 => return Some(Color32::from_rgb(120, 120, 120)),    // 亮黑（灰）
-            91 => return Some(Color32::from_rgb(255, 120, 120)),    // 亮红
-            92 => return Some(Color32::from_rgb(120, 255, 120)),    // 亮绿
-            93 => return Some(Color32::from_rgb(255, 255, 100)),    // 亮黄
-            94 => return Some(Color32::from_rgb(100, 160, 255)),    // 亮蓝
-            95 => return Some(Color32::from_rgb(255, 120, 255)),    // 亮品红
-            96 => return Some(Color32::from_rgb(100, 255, 255)),    // 亮青
-            97 => return Some(Color32::from_rgb(255, 255, 255)),    // 亮白
+            0 => return None,
+            1 => {}
+            30 => return Some(Color32::from_rgb(40, 40, 40)),
+            31 => return Some(Color32::from_rgb(255, 80, 80)),
+            32 => return Some(Color32::from_rgb(80, 220, 80)),
+            33 => return Some(Color32::from_rgb(220, 200, 60)),
+            34 => return Some(Color32::from_rgb(70, 140, 240)),
+            35 => return Some(Color32::from_rgb(200, 80, 200)),
+            36 => return Some(Color32::from_rgb(60, 200, 200)),
+            37 => return Some(Color32::from_rgb(210, 210, 210)),
+            90 => return Some(Color32::from_rgb(120, 120, 120)),
+            91 => return Some(Color32::from_rgb(255, 120, 120)),
+            92 => return Some(Color32::from_rgb(120, 255, 120)),
+            93 => return Some(Color32::from_rgb(255, 255, 100)),
+            94 => return Some(Color32::from_rgb(100, 160, 255)),
+            95 => return Some(Color32::from_rgb(255, 120, 255)),
+            96 => return Some(Color32::from_rgb(100, 255, 255)),
+            97 => return Some(Color32::from_rgb(255, 255, 255)),
             _ => {}
         }
     }
     prev
 }
-

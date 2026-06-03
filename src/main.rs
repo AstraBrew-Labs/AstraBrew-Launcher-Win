@@ -369,8 +369,12 @@ impl MyApp {
     /// 停止酒馆进程（后台线程，不阻塞 UI）
     fn stop_tavern_process(&mut self, force: bool) {
         self.console_state.status = ConsoleStatus::Stopping;
+        self.console_state.add_log(&format!(
+            "[系统] 正在{}停止服务...",
+            if force { "强制" } else { "" }
+        ));
 
-        // 清掉旧 receiver（如果 start 还在进行中）
+        // 先清掉旧 receiver（如果 start 还在进行中，旧 channel 断开会让启动线程停止推送）
         self.process_receiver = None;
 
         let child_handle = self.tavern_child.clone();
@@ -378,12 +382,26 @@ impl MyApp {
         self.process_receiver = Some(rx);
 
         std::thread::spawn(move || {
-            let logs = core::process::stop_tavern(force, &child_handle);
-            for log in logs {
-                let _ = tx.send(ProcessMsg::Log(log));
+            // 捕获 panic，防止线程崩溃导致 UI 永远收不到 Stopped
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                core::process::stop_tavern(force, &child_handle)
+            }));
+
+            match result {
+                Ok(logs) => {
+                    for log in logs {
+                        let _ = tx.send(ProcessMsg::Log(log));
+                    }
+                }
+                Err(_) => {
+                    let _ = tx.send(ProcessMsg::Log(
+                        "[错误] 停止过程中发生内部异常".to_string(),
+                    ));
+                }
             }
+
+            // 无论如何都要发出 Stopped，保证 UI 可恢复
             let _ = tx.send(ProcessMsg::StateChange(ConsoleStatus::Stopped));
-            // sender 在此处 drop → receiver 收到 Disconnected
         });
     }
 }
@@ -787,7 +805,11 @@ impl eframe::App for MyApp {
         {
             let mut need_repaint = false;
             let mut do_restart = false;
-            if let Some(rx) = self.process_receiver.as_ref() {
+            let mut clear_receiver = false;
+
+            // 先取出 receiver 的所有权，避免在循环中同时持有引用又修改 self
+            let rx_opt = self.process_receiver.take();
+            if let Some(rx) = rx_opt.as_ref() {
                 loop {
                     match rx.try_recv() {
                         Ok(ProcessMsg::Log(msg)) => {
@@ -800,24 +822,31 @@ impl eframe::App for MyApp {
                         }
                         Err(std::sync::mpsc::TryRecvError::Empty) => break,
                         Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                            // 启动线程已完成（无论成功失败）
-                            if self.console_state.pending_restart
-                                && self.console_state.status == ConsoleStatus::Stopped
-                            {
-                                self.console_state.pending_restart = false;
-                                do_restart = true;
-                            }
-                            self.process_receiver = None;
+                            clear_receiver = true;
                             break;
                         }
                     }
                 }
             }
+
+            // 放回 receiver（如果没断开）
+            if !clear_receiver {
+                self.process_receiver = rx_opt;
+            } else {
+                // 通道断开：检查是否需要自动重启
+                if self.console_state.pending_restart
+                    && self.console_state.status == ConsoleStatus::Stopped
+                {
+                    self.console_state.pending_restart = false;
+                    do_restart = true;
+                }
+                // rx_opt 在此处被 drop
+            }
+
             if need_repaint {
                 ctx.request_repaint();
             }
             if do_restart {
-                // 延迟启动，避免借用冲突
                 self.start_tavern_process();
             }
         }

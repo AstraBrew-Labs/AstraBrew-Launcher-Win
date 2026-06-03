@@ -29,6 +29,8 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "console_btn_stop" => "停止",
         "console_btn_kill" => "强行停止",
         "console_btn_clear" => "清空",
+        "console_btn_copy" => "复制",
+        "console_btn_export" => "导出",
         "console_log_area" => "日志输出",
         "console_log_started" => "服务已启动",
         "console_log_stopped" => "服务已停止",
@@ -36,6 +38,8 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "console_log_restarted" => "服务已重启",
         "console_log_killed" => "服务已被强行终止",
         "console_log_cleared" => "日志已清空",
+        "console_log_copied" => "日志已复制到剪贴板",
+        "console_log_exported" => "日志已导出",
         
         // Settings Tab
         "general_settings" => "基本设置",

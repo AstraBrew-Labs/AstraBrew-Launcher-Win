@@ -29,6 +29,8 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "console_btn_stop" => "Stop",
         "console_btn_kill" => "Force Stop",
         "console_btn_clear" => "Clear",
+        "console_btn_copy" => "Copy",
+        "console_btn_export" => "Export",
         "console_log_area" => "Log Output",
         "console_log_started" => "Service started",
         "console_log_stopped" => "Service stopped",
@@ -36,6 +38,8 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "console_log_restarted" => "Service restarted",
         "console_log_killed" => "Service forcefully terminated",
         "console_log_cleared" => "Log cleared",
+        "console_log_copied" => "Log copied to clipboard",
+        "console_log_exported" => "Log exported",
         
         // Settings Tab
         "general_settings" => "General",
