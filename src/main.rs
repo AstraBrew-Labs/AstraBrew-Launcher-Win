@@ -75,6 +75,7 @@ enum Page {
     VersionManage,
     ExtensionManage,
     ResourceManage,
+    Console,
     Settings,
 }
 
@@ -83,6 +84,7 @@ mod core;
 mod lang;
 mod pages;
 mod ui;
+use pages::console::ConsoleState;
 use pages::settings::{SettingsState, SettingsTab, Theme};
 use pages::tavern_config::TavernConfigUI;
 
@@ -128,6 +130,8 @@ struct MyApp {
     version_manage_state: pages::version_manage::VersionManageState,
     // 酒馆配置 UI 状态
     tavern_config_ui: TavernConfigUI,
+    // 控制台状态
+    console_state: ConsoleState,
 }
 
 impl MyApp {
@@ -156,6 +160,7 @@ impl MyApp {
                 crate::core::settings::tavern::ConfigMode::Current,
                 None,
             ),
+            console_state: ConsoleState::new(),
         };
         
         // 初始化时检测并刷新环境信息
@@ -492,11 +497,10 @@ impl eframe::App for MyApp {
                         lang::t("resource_manage", &self.settings_state.language),
                     );
 
-                    // 将设置按钮推到底部
+                    // 将设置按钮和主控台按钮推到底部
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                         ui.add_space(10.0);
-                        // 为了防止在 bottom_up 布局下内部渲染坐标计算错乱，
-                        // 我们可以在分配一块区域后，在这块区域内使用正常的 top_down 布局来绘制按钮。
+                        // 设置按钮（最底部）
                         let button_height = 32.0;
                         let (rect, _) = ui.allocate_exact_size(
                             egui::vec2(ui.available_width(), button_height),
@@ -510,6 +514,21 @@ impl eframe::App for MyApp {
                             Page::Settings,
                             egui_phosphor::regular::GEAR,
                             lang::t("software_settings", &self.settings_state.language),
+                        );
+
+                        // 控制台按钮（设置上方）
+                        ui.add_space(2.0);
+                        let (rect2, _) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), button_height),
+                            egui::Sense::hover(),
+                        );
+                        let mut child_ui2 = ui.new_child(egui::UiBuilder::new().max_rect(rect2).layout(egui::Layout::top_down(egui::Align::Min)));
+                        nav_button(
+                            &mut child_ui2,
+                            &mut self.current_page,
+                            Page::Console,
+                            egui_phosphor::regular::TERMINAL_WINDOW,
+                            lang::t("console", &self.settings_state.language),
                         );
                     });
                 });
@@ -566,6 +585,13 @@ impl eframe::App for MyApp {
                         ui.heading(lang::t("resource_manage", &self.settings_state.language));
                         ui.separator();
                         ui.label("这里是资源管理页面的内容...");
+                    }
+                    Page::Console => {
+                        pages::console::render(
+                            ui,
+                            &mut self.console_state,
+                            &self.settings_state.language,
+                        );
                     }
                     Page::Settings => {
                         ui.heading(lang::t("software_settings", &self.settings_state.language));

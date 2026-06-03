@@ -44,3 +44,10 @@
 - 翻译：中英双语 60+ 个 key（`tc_*` 前缀）
 - **serde_yaml 0.9 不支持 `!tag:yaml.org,2002:null`** — 写 YAML null 用 `Value::Null`，不能用 tagged value，否则回读时解析失败 → 全默认值 → 保存覆盖原配置（数据丢失）
 - YAML 写入后要确保 serde_yaml 能回读
+
+## 控制台页面（2026-06-03）
+- `src/pages/console.rs`：ConsoleState（status + logs）+ render 函数
+- 状态栏（左右布局）+ 日志区（ScrollArea + stick_to_bottom）
+- 按钮组：启动/重启/停止/强行停止，按状态联动启用/禁用
+- 导航位于底部区域，在设置按钮上方（Page::Console）
+- 翻译键 `console*` 前缀，中英双语 18 个 key
