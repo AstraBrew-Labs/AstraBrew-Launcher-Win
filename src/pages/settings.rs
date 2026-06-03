@@ -327,8 +327,7 @@ pub fn render(
                                 lang::t("remember_window_pos", &state.language),
                                 lang::t("remember_window_pos_desc", &state.language),
                                 |ui| {
-                                    ui.radio_value(&mut state.remember_window_pos, false, lang::t("off", &state.language));
-                                    ui.radio_value(&mut state.remember_window_pos, true, lang::t("on", &state.language));
+                                    ui.add(crate::ui::switch::toggle(&mut state.remember_window_pos));
                                 },
                             );
                         },
@@ -532,8 +531,7 @@ pub fn render(
                                 lang::t("github_proxy", &state.language),
                                 lang::t("github_proxy_desc", &state.language),
                                 |ui| {
-                                    ui.radio_value(&mut state.github_proxy_enabled, false, lang::t("off", &state.language));
-                                    ui.radio_value(&mut state.github_proxy_enabled, true, lang::t("on", &state.language));
+                                    ui.add(crate::ui::switch::toggle(&mut state.github_proxy_enabled));
                                 },
                             );
                             ui.add_space(10.0);
