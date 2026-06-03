@@ -84,6 +84,7 @@ mod core;
 mod lang;
 mod pages;
 mod ui;
+use core::process::{ConsoleCommand, ProcessMsg};
 use pages::console::{ConsoleState, ConsoleStatus};
 use pages::settings::{SettingsState, SettingsTab, Theme};
 use pages::tavern_config::TavernConfigUI;
@@ -134,6 +135,9 @@ struct MyApp {
     tavern_config_ui: TavernConfigUI,
     // 控制台状态
     console_state: ConsoleState,
+    // 进程管理
+    tavern_child: std::sync::Arc<std::sync::Mutex<Option<std::process::Child>>>,
+    process_receiver: Option<std::sync::mpsc::Receiver<ProcessMsg>>,
     // 启动一次性动作标记
     startup_actions_done: bool,
     // PM2 安装状态
@@ -171,6 +175,8 @@ impl MyApp {
                 None,
             ),
             console_state: ConsoleState::new(),
+            tavern_child: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            process_receiver: None,
             startup_actions_done: false,
             pm2_installing: false,
             pm2_install_status: String::new(),
@@ -327,6 +333,59 @@ impl MyApp {
             self.show_env_download_prompt = true;
         }
     }
+
+    /// 处理来自 UI 的控制台命令
+    fn handle_console_command(&mut self, cmd: ConsoleCommand) {
+        match cmd {
+            ConsoleCommand::Start => {
+                self.start_tavern_process();
+            }
+            ConsoleCommand::Stop => {
+                self.stop_tavern_process(false);
+            }
+            ConsoleCommand::ForceStop => {
+                self.stop_tavern_process(true);
+            }
+        }
+    }
+
+    /// 在后台线程中启动酒馆
+    fn start_tavern_process(&mut self) {
+        if self.process_receiver.is_some() {
+            // 已有启动进行中
+            return;
+        }
+
+        let settings = self.settings_state.clone();
+        let child_handle = self.tavern_child.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.process_receiver = Some(rx);
+
+        std::thread::spawn(move || {
+            core::process::start_tavern(tx, &settings, child_handle);
+        });
+    }
+
+    /// 停止酒馆进程（后台线程，不阻塞 UI）
+    fn stop_tavern_process(&mut self, force: bool) {
+        self.console_state.status = ConsoleStatus::Stopping;
+
+        // 清掉旧 receiver（如果 start 还在进行中）
+        self.process_receiver = None;
+
+        let child_handle = self.tavern_child.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.process_receiver = Some(rx);
+
+        std::thread::spawn(move || {
+            let logs = core::process::stop_tavern(force, &child_handle);
+            for log in logs {
+                let _ = tx.send(ProcessMsg::Log(log));
+            }
+            let _ = tx.send(ProcessMsg::StateChange(ConsoleStatus::Stopped));
+            // sender 在此处 drop → receiver 收到 Disconnected
+        });
+    }
 }
 
 impl eframe::App for MyApp {
@@ -390,7 +449,7 @@ impl eframe::App for MyApp {
             // 启动后自动启动酒馆
             if self.settings_state.auto_start_tavern {
                 if self.console_state.status == ConsoleStatus::Stopped {
-                    self.console_state.status = ConsoleStatus::Running;
+                    self.start_tavern_process();
                     self.console_state.add_log("[系统] 根据「启动后自动启动酒馆」设置，自动启动服务");
                     eprintln!("[startup] 自动启动酒馆已执行");
                 }
@@ -610,13 +669,18 @@ impl eframe::App for MyApp {
                             .sillytavern
                             .as_ref()
                             .map(|inst| inst.version.as_str());
+                        let mut cmd: Option<ConsoleCommand> = None;
                         pages::home::render(
                             ui,
                             &mut self.current_page,
                             &mut self.console_state,
                             &self.settings_state.language,
                             version,
+                            &mut cmd,
                         );
+                        if let Some(c) = cmd {
+                            self.handle_console_command(c);
+                        }
                     }
                     Page::TavernConfig => {
                         // 检测配置路径是否变化（模式/实例切换），自动重新加载
@@ -647,11 +711,16 @@ impl eframe::App for MyApp {
                         ui.label("这里是资源管理页面的内容...");
                     }
                     Page::Console => {
+                        let mut cmd: Option<ConsoleCommand> = None;
                         pages::console::render(
                             ui,
                             &mut self.console_state,
                             &self.settings_state.language,
+                            &mut cmd,
                         );
+                        if let Some(c) = cmd {
+                            self.handle_console_command(c);
+                        }
                     }
                     Page::Settings => {
                         ui.heading(lang::t("software_settings", &self.settings_state.language));
@@ -711,6 +780,45 @@ impl eframe::App for MyApp {
             // 自启动开关变化时同步注册表
             if old_state.auto_start != self.settings_state.auto_start {
                 core::settings::autostart::sync(self.settings_state.auto_start);
+            }
+        }
+
+        // 轮询酒馆进程消息
+        {
+            let mut need_repaint = false;
+            let mut do_restart = false;
+            if let Some(rx) = self.process_receiver.as_ref() {
+                loop {
+                    match rx.try_recv() {
+                        Ok(ProcessMsg::Log(msg)) => {
+                            self.console_state.add_log(&msg);
+                            need_repaint = true;
+                        }
+                        Ok(ProcessMsg::StateChange(status)) => {
+                            self.console_state.status = status;
+                            need_repaint = true;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            // 启动线程已完成（无论成功失败）
+                            if self.console_state.pending_restart
+                                && self.console_state.status == ConsoleStatus::Stopped
+                            {
+                                self.console_state.pending_restart = false;
+                                do_restart = true;
+                            }
+                            self.process_receiver = None;
+                            break;
+                        }
+                    }
+                }
+            }
+            if need_repaint {
+                ctx.request_repaint();
+            }
+            if do_restart {
+                // 延迟启动，避免借用冲突
+                self.start_tavern_process();
             }
         }
 

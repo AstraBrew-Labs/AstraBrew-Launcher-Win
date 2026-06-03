@@ -1,3 +1,4 @@
+use crate::core::process::ConsoleCommand;
 use crate::lang;
 use crate::pages::console::{ConsoleState, ConsoleStatus};
 use crate::pages::settings::Language;
@@ -6,15 +7,17 @@ use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2};
 
 /// 主页渲染函数
 /// - current_page: 用于页面跳转（点击按钮时切到控制台）
-/// - console_state: 用于触发启动/停止
+/// - console_state: 用于读取当前状态
 /// - lang: 语言
 /// - version_info: 当前版本字符串（可选）
+/// - command: 传出要执行的命令
 pub fn render(
     ui: &mut egui::Ui,
     current_page: &mut Page,
     console_state: &mut ConsoleState,
     lang: &Language,
     version_info: Option<&str>,
+    command: &mut Option<ConsoleCommand>,
 ) {
     let available = ui.available_size();
     let visuals = ui.style().visuals.clone();
@@ -194,13 +197,11 @@ pub fn render(
                         if btn_response.clicked() && !is_transitioning {
                             if is_stopped {
                                 // 一键启动 → 跳转控制台 + 启动服务
-                                console_state.status = ConsoleStatus::Running;
-                                console_state.add_log(lang::t("home_log_started", lang));
+                                *command = Some(ConsoleCommand::Start);
                                 *current_page = Page::Console;
                             } else if is_running {
                                 // 立即停止 → 跳转控制台 + 正常关闭
-                                console_state.status = ConsoleStatus::Stopped;
-                                console_state.add_log(lang::t("home_log_stopped", lang));
+                                *command = Some(ConsoleCommand::Stop);
                                 *current_page = Page::Console;
                             }
                         }

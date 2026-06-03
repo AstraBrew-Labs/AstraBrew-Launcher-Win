@@ -1,3 +1,4 @@
+use crate::core::process::ConsoleCommand;
 use crate::lang;
 use crate::pages::settings::Language;
 use egui::{Color32, RichText, Vec2};
@@ -13,6 +14,8 @@ pub enum ConsoleStatus {
 pub struct ConsoleState {
     pub status: ConsoleStatus,
     pub logs: Vec<String>,
+    /// 用户点了重启 → 停止完成后自动启动
+    pub pending_restart: bool,
 }
 
 impl ConsoleState {
@@ -20,6 +23,7 @@ impl ConsoleState {
         Self {
             status: ConsoleStatus::Stopped,
             logs: vec![String::from("[系统] 控制台已就绪")],
+            pending_restart: false,
         }
     }
 
@@ -38,7 +42,12 @@ impl ConsoleState {
     }
 }
 
-pub fn render(ui: &mut egui::Ui, state: &mut ConsoleState, lang: &Language) {
+pub fn render(
+    ui: &mut egui::Ui,
+    state: &mut ConsoleState,
+    lang: &Language,
+    command: &mut Option<ConsoleCommand>,
+) {
     let available = ui.available_size();
 
     // ---- 状态栏区域（固定高度）----
@@ -128,8 +137,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut ConsoleState, lang: &Language) {
                         .add_enabled(kill_enabled, kill_btn)
                         .clicked()
                     {
-                        state.status = ConsoleStatus::Stopped;
-                        state.add_log(lang::t("console_log_killed", lang));
+                        *command = Some(ConsoleCommand::ForceStop);
                     }
 
                     ui.add_space(6.0);
@@ -149,8 +157,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut ConsoleState, lang: &Language) {
                         .add_enabled(stop_enabled, stop_btn)
                         .clicked()
                     {
-                        state.status = ConsoleStatus::Stopped;
-                        state.add_log(lang::t("console_log_stopped", lang));
+                        *command = Some(ConsoleCommand::Stop);
                     }
 
                     ui.add_space(6.0);
@@ -170,11 +177,8 @@ pub fn render(ui: &mut egui::Ui, state: &mut ConsoleState, lang: &Language) {
                         .add_enabled(restart_enabled, restart_btn)
                         .clicked()
                     {
-                        state.status = ConsoleStatus::Starting;
-                        state.add_log(lang::t("console_log_restarting", lang));
-                        // 模拟重启完成
-                        state.status = ConsoleStatus::Running;
-                        state.add_log(lang::t("console_log_restarted", lang));
+                        *command = Some(ConsoleCommand::Stop);
+                        state.pending_restart = true;
                     }
 
                     ui.add_space(6.0);
@@ -194,8 +198,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut ConsoleState, lang: &Language) {
                         .add_enabled(start_enabled, start_btn)
                         .clicked()
                     {
-                        state.status = ConsoleStatus::Running;
-                        state.add_log(lang::t("console_log_started", lang));
+                        *command = Some(ConsoleCommand::Start);
                     }
                 });
             });
@@ -240,16 +243,118 @@ pub fn render(ui: &mut egui::Ui, state: &mut ConsoleState, lang: &Language) {
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     let monospace = egui::FontId::monospace(12.0);
-                    for line in state.logs.iter().rev() {
-                        let color = if line.contains("[错误]") || line.contains("[ERROR]") {
-                            Color32::from_rgb(255, 100, 100)
-                        } else if line.contains("[警告]") || line.contains("[WARN]") {
-                            Color32::from_rgb(255, 200, 80)
+                    for line in state.logs.iter() {
+                        let segments = parse_ansi_line(line);
+                        if segments.len() == 1 && segments[0].1.is_none() {
+                            // 无 ANSI 码 → 用前缀判定颜色
+                            let color = if line.contains("[错误]") || line.contains("[ERROR]") {
+                                Color32::from_rgb(255, 100, 100)
+                            } else if line.contains("[警告]") || line.contains("[WARN]") {
+                                Color32::from_rgb(255, 200, 80)
+                            } else {
+                                Color32::from_rgb(180, 200, 220)
+                            };
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(line).font(monospace.clone()).color(color),
+                                )
+                                .selectable(false),
+                            );
                         } else {
-                            Color32::from_rgb(180, 200, 220)
-                        };
-                        ui.label(RichText::new(line).font(monospace.clone()).color(color));
+                            // 有 ANSI 码 → 按颜色段渲染
+                            ui.horizontal(|ui| {
+                                for (text, opt_color) in &segments {
+                                    let color = opt_color
+                                        .unwrap_or(Color32::from_rgb(180, 200, 220));
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(text).font(monospace.clone()).color(color),
+                                        )
+                                        .selectable(false),
+                                    );
+                                }
+                            });
+                        }
                     }
                 });
         });
 }
+
+// ---- ANSI 颜色解析 ----
+
+/// 解析一行中 ANSI 转义序列，返回 (文本, 可选颜色) 的片段列表。
+/// 颜色为 None 表示使用默认色。
+fn parse_ansi_line(line: &str) -> Vec<(String, Option<Color32>)> {
+    let mut segments: Vec<(String, Option<Color32>)> = Vec::new();
+    let mut current = String::new();
+    let mut current_color: Option<Color32> = None;
+    let bytes = line.as_bytes();
+    let mut i: usize = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            // 遇到 \x1b[ —— 先保存当前段
+            if !current.is_empty() {
+                segments.push((std::mem::take(&mut current), current_color));
+            }
+
+            i += 2; // 跳过 \x1b[
+            let mut code = String::new();
+            while i < bytes.len() && bytes[i] != b'm' {
+                if bytes[i].is_ascii_digit() || bytes[i] == b';' {
+                    code.push(bytes[i] as char);
+                }
+                i += 1;
+            }
+            if i < bytes.len() {
+                i += 1; // 跳过 'm'
+            }
+
+            // 解析颜色码
+            current_color = resolve_ansi_code(&code, current_color);
+        } else {
+            current.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    // 最后一段
+    if !current.is_empty() {
+        segments.push((current, current_color));
+    }
+
+    segments
+}
+
+/// 解析 ANSI SGR 参数码，返回更新后的颜色
+fn resolve_ansi_code(code: &str, prev: Option<Color32>) -> Option<Color32> {
+    for part in code.split(';') {
+        let n: u8 = match part.parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        match n {
+            0 => return None,                         // 重置
+            1 => {}                                    // 粗体（忽略）
+            30 => return Some(Color32::from_rgb(40, 40, 40)),      // 黑
+            31 => return Some(Color32::from_rgb(255, 80, 80)),      // 红
+            32 => return Some(Color32::from_rgb(80, 220, 80)),      // 绿
+            33 => return Some(Color32::from_rgb(220, 200, 60)),     // 黄
+            34 => return Some(Color32::from_rgb(70, 140, 240)),     // 蓝
+            35 => return Some(Color32::from_rgb(200, 80, 200)),     // 品红
+            36 => return Some(Color32::from_rgb(60, 200, 200)),     // 青
+            37 => return Some(Color32::from_rgb(210, 210, 210)),    // 白
+            90 => return Some(Color32::from_rgb(120, 120, 120)),    // 亮黑（灰）
+            91 => return Some(Color32::from_rgb(255, 120, 120)),    // 亮红
+            92 => return Some(Color32::from_rgb(120, 255, 120)),    // 亮绿
+            93 => return Some(Color32::from_rgb(255, 255, 100)),    // 亮黄
+            94 => return Some(Color32::from_rgb(100, 160, 255)),    // 亮蓝
+            95 => return Some(Color32::from_rgb(255, 120, 255)),    // 亮品红
+            96 => return Some(Color32::from_rgb(100, 255, 255)),    // 亮青
+            97 => return Some(Color32::from_rgb(255, 255, 255)),    // 亮白
+            _ => {}
+        }
+    }
+    prev
+}
+

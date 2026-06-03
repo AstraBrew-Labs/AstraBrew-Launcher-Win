@@ -53,8 +53,31 @@
 - 翻译键 `console*` 前缀，中英双语 18 个 key
 
 ## 一键启动主页（2026-06-04）
-- `src/pages/home.rs`：主页渲染函数 `render(ui, current_page, console_state, lang, version_info)`
-- 英雄按钮：停用态"一键启动"（绿）→ 跳转控制台 + 自动启动，运行态"立即停止"（红）→ 跳转控制台 + 优雅关闭
+- `src/pages/home.rs`：主页渲染函数 `render(ui, current_page, console_state, lang, version_info, command)`
+- 英雄按钮：停用态"一键启动"（绿）→ 发送 ConsoleCommand::Start + 跳转控制台，运行态"立即停止"（红）→ 发送 ConsoleCommand::Stop + 跳转控制台
 - 底部三列信息卡片：当前版本 / 启动模式 / 服务端口
-- `ConsoleState::add_log` 改为 `pub` 供主页调用
 - 翻译键 `home_*` 前缀，中英双语 18 个 key
+
+## 进程管理（2026-06-04）
+- `src/core/process.rs`：核心进程管理模块
+  - `ConsoleCommand` 枚举：`Start` / `Stop` / `ForceStop`
+  - `ProcessMsg` 枚举：`Log(String)` / `StateChange(ConsoleStatus)`
+  - `start_tavern(tx, settings, child_handle)`：后台线程中执行完整启动流程
+    1. 检查 Node.js / Git 环境（从 settings 获取 builtin/system 路径）
+    2. 端口检查：读取 `config.yaml` port 字段 → `netstat` 检测 → `taskkill /F` 释放占用
+    3. 代理配置：非关闭时设置 HTTP_PROXY/HTTPS_PROXY 环境变量
+    4. 内置 Git → 追加到 PATH
+    5. `allow_tavern_background` → PM2 模式（`pm2 start --name astrabrew-tavern`）
+    6. `!allow_tavern_background` → 直接模式（`node server.js`，child 句柄存 Arc<Mutex>）
+    7. `TavernDataMode::Global` → 追加 `--configPath <APPDATA>/.../config.yaml`
+  - `stop_tavern(force, child_handle)`：同步停止，PM2 (`stop/kill` + `flush`) 或直接 kill
+  - 每次停止必清空 PM2 日志（`pm2 flush`），防止日志鬼畜
+- `console.rs`：按钮点击改为发 `ConsoleCommand`；`pending_restart` 字段支持重启；**支持 ANSI 颜色 escape code 渲染**
+- `home.rs`：英雄按钮改为发 `ConsoleCommand`
+- `main.rs`：
+  - `MyApp` 新增 `tavern_child: Arc<Mutex<Option<Child>>>` + `process_receiver`
+  - `handle_console_command()` → 分发命令
+  - `start_tavern_process()` → 克隆 settings + 创建 channel + spawn 线程
+  - `stop_tavern_process(force)` → **异步**：spawn 线程执行停止，完成后通过 channel 回传结果
+  - `update()` 中轮询 ProcessMsg（Log → add_log, StateChange → 更新状态）
+  - Disconnected 时检查 pending_restart → 自动重启
