@@ -7,7 +7,7 @@
 use eframe::egui;
 use egui::{Align, Color32, Frame, Layout, RichText, ScrollArea};
 
-use crate::core::settings::tavern::TavernConfig;
+use crate::core::settings::tavern::{ConfigMode, InstanceInfo, TavernConfig};
 use crate::pages::settings::Language;
 
 // ---------------------------------------------------------------------------
@@ -17,6 +17,18 @@ use crate::pages::settings::Language;
 pub struct TavernConfigUI {
     pub config: TavernConfig,
     pub just_saved: bool,
+    /// 保存触发时间，用于 3 秒后自动恢复按钮状态
+    pub save_time: Option<std::time::Instant>,
+    /// 数据模式（当前 vs 全局）
+    pub config_mode: ConfigMode,
+    /// 当前酒馆实例信息
+    pub instance: Option<InstanceInfo>,
+    /// 配置文件是否已存在
+    pub config_ready: bool,
+    /// 生成配置是否成功（用于显示成功提示）
+    pub gen_config_success: bool,
+    /// 上一帧的完整配置标识 key，用于检测是否需要刷新
+    pub last_config_key: String,
     /// IPv4 编辑开始前的快照（获得焦点时记录，失焦校验不通过则还原）
     ipv4_snapshot: String,
     /// IPv6 编辑开始前的快照
@@ -24,17 +36,56 @@ pub struct TavernConfigUI {
 }
 
 impl TavernConfigUI {
-    pub fn new() -> Self {
+    pub fn new(config_mode: ConfigMode, instance: Option<InstanceInfo>) -> Self {
+        let config_ready = TavernConfig::config_exists(config_mode, instance.as_ref());
+        let config = if config_ready {
+            TavernConfig::load_from_yaml(config_mode, instance.as_ref())
+                .unwrap_or_default()
+        } else {
+            TavernConfig::default()
+        };
         Self {
-            config: TavernConfig::load(),
+            config,
             just_saved: false,
+            save_time: None,
+            config_mode,
+            instance,
+            config_ready,
+            gen_config_success: false,
+            last_config_key: String::new(),
             ipv4_snapshot: String::new(),
             ipv6_snapshot: String::new(),
         }
     }
 
-    pub fn save(&self) {
-        self.config.save();
+    /// 构建当前配置的唯一标识 key（模式 + 实例）
+    pub fn config_key(&self) -> String {
+        match (self.config_mode, &self.instance) {
+            (ConfigMode::Current, Some(inst)) => {
+                format!("Current:{}:{}", 
+                    inst.instance_type, 
+                    inst.path.as_deref().unwrap_or("builtin"))
+            }
+            (ConfigMode::Current, None) => "Current:builtin:".to_string(),
+            (ConfigMode::Global, _) => "Global:".to_string(),
+        }
+    }
+
+    /// 重新扫描配置文件状态并加载；仅在 key 变化或强制刷新时调用
+    pub fn refresh(&mut self) {
+        let new_key = self.config_key();
+        self.config_ready = TavernConfig::config_exists(self.config_mode, self.instance.as_ref());
+        if self.config_ready {
+            self.config = TavernConfig::load_from_yaml(self.config_mode, self.instance.as_ref())
+                .unwrap_or_default();
+        }
+        self.last_config_key = new_key;
+    }
+
+    pub fn save(&mut self) {
+        self.config.save_to_yaml(self.config_mode, self.instance.as_ref());
+        self.just_saved = true;
+        self.save_time = Some(std::time::Instant::now());
     }
 }
 
@@ -183,13 +234,103 @@ fn dynamic_list(ui: &mut egui::Ui, items: &mut Vec<String>, add_label: &str) {
 // ---------------------------------------------------------------------------
 
 pub fn render(ui: &mut egui::Ui, state: &mut TavernConfigUI, lang: &Language) {
+    // 保存成功提示 3 秒后自动恢复按钮状态
+    if state.just_saved {
+        if let Some(t) = state.save_time {
+            if t.elapsed().as_secs_f32() >= 3.0 {
+                state.just_saved = false;
+                state.save_time = None;
+            } else {
+                ui.ctx().request_repaint();
+            }
+        } else {
+            state.just_saved = false;
+        }
+    }
+
+    // 生成配置成功提示 3 秒后自动恢复
+    if state.gen_config_success {
+        if let Some(t) = state.save_time {
+            if t.elapsed().as_secs_f32() >= 3.0 {
+                state.gen_config_success = false;
+                state.save_time = None;
+            } else {
+                ui.ctx().request_repaint();
+            }
+        } else {
+            state.gen_config_success = false;
+        }
+    }
+
+    // ── 未初始化遮罩 ──
+    if !state.config_ready {
+        // 半透明遮罩覆盖整个页面
+        let content_rect = ui.max_rect();
+        ui.painter().rect_filled(content_rect, 0.0, Color32::from_black_alpha(200));
+
+        // 居中提示
+        let center = content_rect.center();
+        let overlay_rect = egui::Rect::from_center_size(
+            center,
+            egui::vec2(320.0, 160.0),
+        );
+
+        let mut child_ui = ui.new_child(egui::UiBuilder::new()
+            .max_rect(overlay_rect)
+            .layout(Layout::top_down(Align::Center)));
+
+        child_ui.add_space(20.0);
+        child_ui.label(
+            RichText::new("⚠ 酒馆实例未初始化")
+                .size(18.0)
+                .color(Color32::from_rgb(255, 200, 100)),
+        );
+        child_ui.add_space(8.0);
+        child_ui.label(
+            RichText::new("目标配置文件不存在，点击下方按钮生成默认配置")
+                .size(13.0)
+                .color(Color32::LIGHT_GRAY),
+        );
+        child_ui.add_space(16.0);
+
+        if child_ui.add_sized(
+            [180.0, 32.0],
+            egui::Button::new(RichText::new("🔄 生成配置").size(15.0)),
+        ).clicked() {
+            let target = TavernConfig::resolve_path(state.config_mode, state.instance.as_ref());
+            if TavernConfig::generate_from_template(&target) {
+                state.refresh();
+                state.just_saved = false;
+                state.gen_config_success = true;
+                state.save_time = Some(std::time::Instant::now());
+            }
+        }
+
+        return; // 后续 UI 不渲染
+    }
+
+    // ── 生成成功 Toast ──
+    if state.gen_config_success {
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("gen_toast")));
+        let screen_rect = ui.ctx().content_rect();
+        let font_id = egui::FontId::proportional(15.0);
+        let text = "✓ 默认配置已生成，请刷新页面查看";
+        let text_galley = painter.layout_no_wrap(text.to_string(), font_id, Color32::from_rgb(16, 185, 129));
+        let rect = egui::Rect::from_center_size(
+            egui::pos2(screen_rect.center().x, screen_rect.max.y - 50.0),
+            text_galley.size() + egui::vec2(24.0, 12.0),
+        );
+        painter.rect(rect, 8.0, Color32::from_black_alpha(220), egui::Stroke::new(1.0, Color32::from_rgb(16, 185, 129).linear_multiply(0.5)), egui::StrokeKind::Middle);
+        painter.galley(egui::pos2(rect.center().x - text_galley.size().x / 2.0, rect.center().y - text_galley.size().y / 2.0), text_galley, Color32::from_rgb(16, 185, 129));
+    }
+
     // ---------- 标题栏 ----------
     ui.horizontal(|ui| {
         ui.label(RichText::new(egui_phosphor::regular::SLIDERS).size(22.0).color(Color32::from_rgb(37, 99, 235)));
         ui.heading(RichText::new(crate::lang::t("tavern_config", lang)).strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui.button("打开配置文件").clicked() {
-                let path = TavernConfig::config_path();
+                let path = TavernConfig::resolve_path(state.config_mode, state.instance.as_ref());
                 let _ = std::process::Command::new("explorer")
                     .arg("/select,")
                     .arg(path.to_string_lossy().as_ref())
@@ -204,7 +345,13 @@ pub fn render(ui: &mut egui::Ui, state: &mut TavernConfigUI, lang: &Language) {
             };
             if ui.add_sized([120.0, 28.0], egui::Button::new(RichText::new(label).color(color))).clicked() {
                 state.save();
-                state.just_saved = true;
+            }
+            ui.add_space(4.0);
+            if ui.add_sized([28.0, 28.0], egui::Button::new(RichText::new(egui_phosphor::regular::ARROWS_CLOCKWISE).size(16.0)))
+                .on_hover_text("从文件重新加载配置")
+                .clicked()
+            {
+                state.refresh();
             }
         });
     });

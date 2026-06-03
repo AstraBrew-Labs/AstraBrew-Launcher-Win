@@ -42,4 +42,5 @@
 - 配置持久化：`data/tavern_config.json`，手动保存模式
 - 状态管理：`TavernConfigUI` 存储于 `MyApp.tavern_config_ui`
 - 翻译：中英双语 60+ 个 key（`tc_*` 前缀）
-- 关键模式：toggle_row / text_row / number_row / dynamic_list / file_path_row
+- **serde_yaml 0.9 不支持 `!tag:yaml.org,2002:null`** — 写 YAML null 用 `Value::Null`，不能用 tagged value，否则回读时解析失败 → 全默认值 → 保存覆盖原配置（数据丢失）
+- YAML 写入后要确保 serde_yaml 能回读

@@ -57,6 +57,13 @@ pub enum StartMode {
 }
 
 #[derive(PartialEq, Default, Clone, Serialize, Deserialize)]
+pub enum TavernDataMode {
+    #[default]
+    Current,
+    Global,
+}
+
+#[derive(PartialEq, Default, Clone, Serialize, Deserialize)]
 pub enum EnvSource {
     System,
     #[default]
@@ -99,6 +106,7 @@ pub struct SettingsState {
     // 基本设置
     pub cpu_cores: CpuCores,
     pub start_mode: StartMode,
+    pub data_mode: TavernDataMode,
 
     // Git 设置
     pub git_env: EnvSource,
@@ -133,6 +141,7 @@ impl Default for SettingsState {
             window_position: None,
             cpu_cores: CpuCores::default(),
             start_mode: StartMode::default(),
+            data_mode: TavernDataMode::default(),
             git_env: EnvSource::default(),
             nodejs_env: EnvSource::default(),
             npm_registry: NpmRegistry::default(),
@@ -400,6 +409,27 @@ pub fn render(
                                         (StartMode::Desktop, lang::t("desktop_mode", &state.language)),
                                         (StartMode::Lan, lang::t("lan_mode", &state.language)),
                                         (StartMode::Public, lang::t("public_mode", &state.language)),
+                                    ],
+                                );
+                            },
+                        );
+                        ui.add_space(10.0);
+                        let data_mode_desc = match state.data_mode {
+                            TavernDataMode::Global => lang::t("data_mode_global_desc", &state.language),
+                            TavernDataMode::Current => lang::t("data_mode_current_desc", &state.language),
+                        };
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::DATABASE,
+                            lang::t("data_mode", &state.language),
+                            data_mode_desc,
+                            |ui| {
+                                crate::ui::segmented::segmented_control(
+                                    ui,
+                                    &mut state.data_mode,
+                                    &[
+                                        (TavernDataMode::Global, lang::t("data_mode_global", &state.language)),
+                                        (TavernDataMode::Current, lang::t("data_mode_current", &state.language)),
                                     ],
                                 );
                             },

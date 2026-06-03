@@ -46,6 +46,11 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "desktop_mode" => "Desktop App",
         "lan_mode" => "LAN Service",
         "public_mode" => "Public Service",
+        "data_mode" => "Tavern Data Mode",
+        "data_mode_global" => "Global",
+        "data_mode_current" => "Current",
+        "data_mode_global_desc" => "Data will be stored under AppData",
+        "data_mode_current_desc" => "Use current tavern default",
         
         // Git Settings
         "git_settings" => "Git Settings",

@@ -152,7 +152,10 @@ impl MyApp {
             github_node_receiver: None,
             github_node_entries: Vec::new(),
             version_manage_state: pages::version_manage::VersionManageState::new(),
-            tavern_config_ui: TavernConfigUI::new(),
+            tavern_config_ui: TavernConfigUI::new(
+                crate::core::settings::tavern::ConfigMode::Current,
+                None,
+            ),
         };
         
         // 初始化时检测并刷新环境信息
@@ -514,6 +517,20 @@ impl eframe::App for MyApp {
 
         // 右侧页面视口
         let old_state = self.settings_state.clone();
+
+        // 每帧同步酒馆配置页的数据模式 & 实例（全局级别，不限于当前页面）
+        {
+            use crate::core::settings::tavern::{ConfigMode, InstanceInfo};
+            self.tavern_config_ui.config_mode = match self.settings_state.data_mode {
+                crate::pages::settings::TavernDataMode::Current => ConfigMode::Current,
+                crate::pages::settings::TavernDataMode::Global => ConfigMode::Global,
+            };
+            self.tavern_config_ui.instance = self.settings_state.sillytavern.as_ref().map(|i| InstanceInfo {
+                instance_type: i.instance_type.clone(),
+                path: i.path.clone(),
+            });
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_enabled_ui(!is_modal_open, |ui| {
                 match self.current_page {
@@ -523,6 +540,12 @@ impl eframe::App for MyApp {
                         ui.label("这里是一键启动页面的内容...");
                     }
                     Page::TavernConfig => {
+                        // 检测配置路径是否变化（模式/实例切换），自动重新加载
+                        let current_key = self.tavern_config_ui.config_key();
+                        if current_key != self.tavern_config_ui.last_config_key {
+                            self.tavern_config_ui.refresh();
+                        }
+
                         pages::tavern_config::render(
                             ui,
                             &mut self.tavern_config_ui,

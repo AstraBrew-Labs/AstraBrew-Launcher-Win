@@ -46,6 +46,11 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "desktop_mode" => "桌面程序",
         "lan_mode" => "局域网服务",
         "public_mode" => "公网服务",
+        "data_mode" => "酒馆数据模式",
+        "data_mode_global" => "全局",
+        "data_mode_current" => "当前",
+        "data_mode_global_desc" => "数据将会统一放到AppData下",
+        "data_mode_current_desc" => "以当前酒馆默认为准",
         
         // Git Settings
         "git_settings" => "Git 设置",
