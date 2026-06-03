@@ -84,6 +84,7 @@ mod lang;
 mod pages;
 mod ui;
 use pages::settings::{SettingsState, SettingsTab, Theme};
+use pages::tavern_config::TavernConfigUI;
 
 pub enum EnvInstallProgress {
     Status(String),
@@ -125,6 +126,8 @@ struct MyApp {
 
     // 版本管理状态
     version_manage_state: pages::version_manage::VersionManageState,
+    // 酒馆配置 UI 状态
+    tavern_config_ui: TavernConfigUI,
 }
 
 impl MyApp {
@@ -149,6 +152,7 @@ impl MyApp {
             github_node_receiver: None,
             github_node_entries: Vec::new(),
             version_manage_state: pages::version_manage::VersionManageState::new(),
+            tavern_config_ui: TavernConfigUI::new(),
         };
         
         // 初始化时检测并刷新环境信息
@@ -158,8 +162,71 @@ impl MyApp {
         if app.settings_state.github_proxy_enabled {
             app.start_github_node_fetch(false);
         }
+
+        // 恢复版本管理状态（从 settings.json + local_instances.json）
+        app.restore_version_state();
         
         app
+    }
+
+    /// 从持久化文件恢复版本管理状态
+    fn restore_version_state(&mut self) {
+        let state = &mut self.version_manage_state;
+        
+        // 加载本地实例列表（仅本地实例，不含在线）
+        state.local_instances = pages::version_manage::load_local_instances();
+        eprintln!("[restore] loaded {} local instances", state.local_instances.len());
+        
+        // 从 settings 恢复当前版本
+        if let Some(ref instance) = self.settings_state.sillytavern {
+            eprintln!("[restore] restoring: type={}, version={}, path={:?}", 
+                instance.instance_type, instance.version, instance.path);
+            match instance.instance_type.as_str() {
+                "builtin" => {
+                    // 检查 builtin 路径是否存在
+                    let builtin_path = pages::version_manage::get_builtin_sillytavern_path();
+                    if builtin_path.exists() {
+                        state.online_installed_version = Some(instance.version.clone());
+                        // 清除所有本地实例的 is_current
+                        for inst in state.local_instances.iter_mut() {
+                            inst.is_current = false;
+                        }
+                    }
+                }
+                "local" => {
+                    if let Some(ref path) = instance.path {
+                        // 在本地实例列表中设置 is_current
+                        for inst in state.local_instances.iter_mut() {
+                            inst.is_current = inst.path == *path;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        } else {
+            eprintln!("[restore] no current instance in settings");
+            // 没有设置但 data/sillytavern 存在 → 自动设为在线实例
+            let builtin_path = pages::version_manage::get_builtin_sillytavern_path();
+            if builtin_path.exists() {
+                let mut pkg_path = builtin_path.clone();
+                pkg_path.push("package.json");
+                let version = pkg_path.exists()
+                    .then(|| std::fs::read_to_string(&pkg_path).ok())
+                    .flatten()
+                    .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                    .and_then(|j| j.get("version").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                    .unwrap_or_else(|| "Unknown".to_string());
+                state.online_installed_version = Some(version.clone());
+                // 自动写入 settings.json
+                self.settings_state.sillytavern = Some(pages::settings::CurrentInstance {
+                    instance_type: "builtin".to_string(),
+                    path: None,
+                    version,
+                });
+                self.settings_state.save();
+                eprintln!("[restore] auto-detected builtin instance and saved to settings");
+            }
+        }
     }
 
     fn start_github_node_fetch(&mut self, force_refresh: bool) {
@@ -291,6 +358,11 @@ impl eframe::App for MyApp {
                 });
         }
 
+        // 同步 Node.js 版本到 SettingsState（供版本管理页使用）
+        self.settings_state.nodejs_version = self.nodejs_info.as_ref()
+            .map(|(v, _)| v.clone())
+            .unwrap_or_default();
+
         // 左侧导航栏
         egui::SidePanel::left("left_panel")
             .resizable(false)
@@ -305,7 +377,35 @@ impl eframe::App for MyApp {
                         ui.heading(egui::RichText::new(lang::t("app_subtitle", &self.settings_state.language)).size(12.0));
                     });
 
-                    ui.add_space(20.0);
+                    // 当前版本信息（从 settings.sillytavern 读取，仅在有当前版本时显示）
+                    let lang = &self.settings_state.language;
+                    if let Some(ref inst) = self.settings_state.sillytavern {
+                        ui.add_space(8.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                egui::RichText::new(lang::t("sidebar_current_version", lang))
+                                    .size(10.0)
+                                    .color(egui::Color32::GRAY),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!("{} {}", lang::t("sidebar_version_label", lang), &inst.version))
+                                    .size(13.0)
+                                    .strong(),
+                            );
+                            let is_online = inst.instance_type == "builtin";
+                            let inst_type = if is_online {
+                                lang::t("sidebar_instance_online", lang)
+                            } else {
+                                lang::t("sidebar_instance_local", lang)
+                            };
+                            ui.label(
+                                egui::RichText::new(inst_type)
+                                    .size(10.0)
+                                    .color(if is_online { egui::Color32::from_rgb(100, 180, 255) } else { egui::Color32::from_rgb(100, 255, 150) }),
+                            );
+                        });
+                        ui.add_space(14.0);
+                    }
 
                     // 导航按钮
                     let nav_button = |ui: &mut egui::Ui,
@@ -423,14 +523,16 @@ impl eframe::App for MyApp {
                         ui.label("这里是一键启动页面的内容...");
                     }
                     Page::TavernConfig => {
-                        ui.heading(lang::t("tavern_config", &self.settings_state.language));
-                        ui.separator();
-                        ui.label("这里是酒馆配置页面的内容...");
+                        pages::tavern_config::render(
+                            ui,
+                            &mut self.tavern_config_ui,
+                            &self.settings_state.language,
+                        );
                     }
                     Page::VersionManage => {
                         ui.heading(lang::t("version_manage", &self.settings_state.language));
                         ui.separator();
-                        pages::version_manage::render(ui, &mut self.version_manage_state, &self.settings_state);
+                        pages::version_manage::render(ui, &mut self.version_manage_state, &mut self.settings_state);
                     }
                     Page::ExtensionManage => {
                         ui.heading(lang::t("extension_manage", &self.settings_state.language));

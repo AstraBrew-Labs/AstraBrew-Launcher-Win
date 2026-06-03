@@ -33,3 +33,13 @@
 - 风格：干脆直接，不废话
 - UI：明确数值约束，无滚动条（或 max_height 限制）
 - 语言：中文沟通
+
+## 酒馆配置页面（2026-06-03）
+- 从 `.docs/Tavern.vue` 转换为 Rust egui 页面
+- 9 个折叠分区：网络与访问、安全与白名单、SSL、CORS、代理与备份、缩略图、性能、日志、会话安全
+- 数据结构：`src/core/settings/tavern.rs`（TavernConfig，含 20+ 子结构体）
+- UI 页面：`src/pages/tavern_config.rs`（collapsible_section 自定义折叠卡片）
+- 配置持久化：`data/tavern_config.json`，手动保存模式
+- 状态管理：`TavernConfigUI` 存储于 `MyApp.tavern_config_ui`
+- 翻译：中英双语 60+ 个 key（`tc_*` 前缀）
+- 关键模式：toggle_row / text_row / number_row / dynamic_list / file_path_row

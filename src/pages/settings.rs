@@ -79,6 +79,15 @@ pub enum ProxyType {
     Custom,
 }
 
+/// 当前激活的 SillyTavern 实例（持久化到 settings.json）
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct CurrentInstance {
+    #[serde(rename = "type")]
+    pub instance_type: String,  // "builtin" 或 "local"
+    pub path: Option<String>,   // builtin 时为 null, local 时为实际路径
+    pub version: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct SettingsState {
     // 界面设置
@@ -105,6 +114,14 @@ pub struct SettingsState {
     // 网络设置
     pub proxy_type: ProxyType,
     pub custom_proxy: String,
+
+    // 当前版本实例
+    #[serde(default)]
+    pub sillytavern: Option<CurrentInstance>,
+
+    // Node.js 运行时版本（不持久化，每帧从 MyApp 写入）
+    #[serde(skip)]
+    pub nodejs_version: String,
 }
 
 impl Default for SettingsState {
@@ -123,6 +140,8 @@ impl Default for SettingsState {
             github_proxy_url: String::new(),
             proxy_type: ProxyType::default(),
             custom_proxy: String::new(),
+            sillytavern: None,
+            nodejs_version: String::new(),
         }
     }
 }
