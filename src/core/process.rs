@@ -318,13 +318,7 @@ fn setup_proxy(settings: &SettingsState, tx: &Sender<ProcessMsg>) -> Option<Stri
 
 /// 获取全局配置文件的绝对路径
 fn get_global_config_path() -> PathBuf {
-    let appdata = std::env::var("APPDATA").unwrap_or_default();
-    PathBuf::from(appdata)
-        .join("astrabrew-launcher")
-        .join("data")
-        .join("sillytavern")
-        .join("data")
-        .join("config.yaml")
+    crate::utils::app_paths().global_tavern_config_file()
 }
 
 /// 通过 PM2 启动酒馆

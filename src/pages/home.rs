@@ -1,4 +1,3 @@
-use crate::core::process::ConsoleCommand;
 use crate::lang;
 use crate::pages::console::{ConsoleState, ConsoleStatus};
 use crate::pages::settings::Language;
@@ -7,17 +6,17 @@ use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Vec2};
 
 /// 主页渲染函数
 /// - current_page: 用于页面跳转（点击按钮时切到控制台）
-/// - console_state: 用于读取当前状态
+/// - console_state: 用于触发启动/停止
 /// - lang: 语言
 /// - version_info: 当前版本字符串（可选）
-/// - command: 传出要执行的命令
+/// - start_mode_label: 当前启动模式的翻译文本
 pub fn render(
     ui: &mut egui::Ui,
     current_page: &mut Page,
     console_state: &mut ConsoleState,
     lang: &Language,
     version_info: Option<&str>,
-    command: &mut Option<ConsoleCommand>,
+    start_mode_label: &str,
 ) {
     let available = ui.available_size();
     let visuals = ui.style().visuals.clone();
@@ -124,6 +123,44 @@ pub fn render(
                     ui.vertical_centered(|ui| {
                         ui.add_space(20.0);
 
+                        // 访问/打开酒馆按钮（运行中 + URL 已捕获时显示，位于状态指示上方）
+                        if is_running {
+                            if let Some(ref url) = console_state.tavern_url {
+                                let (btn_key, icon, open_in_browser) = if console_state.is_desktop_mode && !console_state.desktop_auto_stop {
+                                    ("console_btn_open", egui_phosphor::regular::ARROW_SQUARE_OUT, false)
+                                } else if !console_state.is_desktop_mode {
+                                    ("console_btn_visit", egui_phosphor::regular::GLOBE, true)
+                                } else {
+                                    ("", "", false) // desktop + auto_stop: no button
+                                };
+
+                                if !btn_key.is_empty() {
+                                    let link_color = Color32::from_rgb(80, 180, 255);
+                                    let link = RichText::new(
+                                        format!("{} {}", icon, lang::t(btn_key, lang)),
+                                    )
+                                    .size(15.0)
+                                    .color(link_color);
+                                    let resp = ui.add(
+                                        egui::Label::new(link).sense(egui::Sense::click()),
+                                    );
+                                    if resp.hovered() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                    }
+                                    if resp.clicked() {
+                                        if open_in_browser {
+                                            let _ = std::process::Command::new("open")
+                                                .arg(url)
+                                                .spawn();
+                                        } else {
+                                            console_state.reopen_webview_triggered = true;
+                                        }
+                                    }
+                                    ui.add_space(12.0);
+                                }
+                            }
+                        }
+
                         // 状态标签
                         let (status_icon, status_text, status_color) = match console_state.status {
                             ConsoleStatus::Stopped => (
@@ -196,12 +233,12 @@ pub fn render(
 
                         if btn_response.clicked() && !is_transitioning {
                             if is_stopped {
-                                // 一键启动 → 跳转控制台 + 启动服务
-                                *command = Some(ConsoleCommand::Start);
+                                // 一键启动 → 调用控制台启动服务
+                                console_state.start(lang);
                                 *current_page = Page::Console;
                             } else if is_running {
-                                // 立即停止 → 跳转控制台 + 正常关闭
-                                *command = Some(ConsoleCommand::Stop);
+                                // 立即停止 → 调用控制台正常关闭
+                                console_state.stop(lang);
                                 *current_page = Page::Console;
                             }
                         }
@@ -269,7 +306,7 @@ pub fn render(
                             accent_purple,
                             egui_phosphor::regular::GEAR,
                             lang::t("home_card_mode", lang),
-                            lang::t("normal_mode", lang),
+                            start_mode_label,
                         );
 
                         ui.add_space(12.0);

@@ -6,10 +6,13 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::fs;
+use std::io::BufRead;
 use std::path::PathBuf;
+use std::process::Command;
 
 use crate::lang;
 use crate::pages::settings::SettingsState;
+use crate::utils;
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum VersionTab {
@@ -33,7 +36,6 @@ pub struct GithubRelease {
     pub tag_name: String,
     pub published_at: String,
     pub zipball_url: String,
-    // There are assets, but zipball_url is available in the root of release
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -65,12 +67,18 @@ pub enum ScanMsg {
     Finished,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum ScanMode {
+    Quick,
+    Full,
+}
+
 pub struct VersionManageState {
     pub active_tab: VersionTab,
-    
+
     // Local Instances
     pub local_instances: Vec<LocalInstance>,
-    
+
     // Online Download
     pub online_installed_version: Option<String>,
     pub latest_release: Option<GithubRelease>,
@@ -78,9 +86,9 @@ pub struct VersionManageState {
     pub is_fetching_releases: bool,
     pub fetch_error: Option<String>,
     pub fetch_forbidden: bool,
-    
+
     pub release_receiver: Option<Receiver<ReleaseMsg>>,
-    
+
     // Download state
     pub is_downloading: bool,
     pub download_progress: f32,
@@ -88,7 +96,7 @@ pub struct VersionManageState {
     pub download_logs: Vec<String>,
     pub install_error_alert: Option<String>,
     pub download_receiver: Option<Receiver<DownloadMsg>>,
-    
+
     pub show_other_versions: bool,
     pub npm_install_failed: bool,
     pub show_cancel_confirm: bool,
@@ -97,15 +105,21 @@ pub struct VersionManageState {
     pub update_target: Option<(String, String)>,
     pub active_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
     pub download_finished_time: Option<std::time::Instant>,
-    
+
     // Scan state
     pub is_scanning: bool,
     pub scan_receiver: Option<Receiver<ScanMsg>>,
-    pub scanning_paths: Vec<String>,      // 最近扫描的路径（保留最近5条）
-    pub show_scan_tips: bool,            // 扫描提示是否显示（跨页面持久化）
-    pub scan_finished_time: Option<std::time::Instant>, // 扫描完成时间（3秒后自动隐藏）
-    pub cancel_scan_flag: Option<Arc<AtomicBool>>, // 取消扫描标志（后台线程定期检查）
-    pub show_cancel_scan_confirm: bool,            // 取消扫描二次确认弹窗
+    pub scanning_paths: Vec<String>,      // 保留最近5条
+    pub show_scan_tips: bool,
+    pub scan_finished_time: Option<std::time::Instant>,
+    pub cancel_scan_flag: Option<Arc<AtomicBool>>,
+    pub show_cancel_scan_confirm: bool,
+    /// 点击自动扫描后先让用户选择模式
+    pub show_scan_mode_dialog: bool,
+    /// 点击自动扫描时若无 FDA 权限，弹窗提示
+    pub show_fda_dialog: bool,
+    /// 待启动的扫描模式（帧末执行，None=空闲）
+    pub pending_scan: Option<ScanMode>,
 }
 
 impl Default for VersionManageState {
@@ -147,6 +161,9 @@ impl VersionManageState {
             scan_finished_time: None,
             cancel_scan_flag: None,
             show_cancel_scan_confirm: false,
+            show_scan_mode_dialog: false,
+            show_fda_dialog: false,
+            pending_scan: None,
         }
     }
 
@@ -155,8 +172,8 @@ impl VersionManageState {
             return;
         }
 
-        // Cache logic
-        let cache_path = get_cache_path();
+        // Cache logic — use caches directory
+        let cache_path = utils::app_paths().caches.join("releases_cache.json");
         if !force {
             if let Ok(content) = fs::read_to_string(&cache_path) {
                 if let Ok(cache) = serde_json::from_str::<ReleasesCache>(&content) {
@@ -174,26 +191,25 @@ impl VersionManageState {
         self.is_fetching_releases = true;
         self.fetch_error = None;
         self.fetch_forbidden = false;
-        
+
         let (tx, rx) = mpsc::channel();
         self.release_receiver = Some(rx);
-        
+
         let proxy_type = settings.proxy_type.clone();
         let custom_proxy = settings.custom_proxy.clone();
-        
+
         thread::spawn(move || {
             let mut client_builder = reqwest::blocking::Client::builder()
-                .user_agent("AstraBrew-Launcher");
-                
+                .user_agent("AstraBrew-Launcher-macOS");
+
             // Configure proxy based on settings
-            use crate::pages::settings::ProxyType;
             match proxy_type {
-                ProxyType::None => {
+                crate::pages::settings::ProxyType::None => {
                     client_builder = client_builder.no_proxy();
                 }
-                ProxyType::System => {
-                    // Try to fetch system proxy if enabled
-                    if let Some((proxy_url, enabled)) = crate::core::network::read_windows_system_proxy() {
+                crate::pages::settings::ProxyType::System => {
+                    // Read macOS system proxy
+                    if let Some((proxy_url, enabled)) = crate::core::network::read_system_proxy() {
                         if enabled && !proxy_url.is_empty() {
                             let url = if !proxy_url.starts_with("http") {
                                 format!("http://{}", proxy_url)
@@ -206,7 +222,7 @@ impl VersionManageState {
                         }
                     }
                 }
-                ProxyType::Custom => {
+                crate::pages::settings::ProxyType::Custom => {
                     if !custom_proxy.is_empty() {
                         let url = if !custom_proxy.starts_with("http") {
                             format!("http://{}", custom_proxy)
@@ -219,21 +235,20 @@ impl VersionManageState {
                     }
                 }
             }
-            
+
             // Github API request requires headers
             let mut headers = reqwest::header::HeaderMap::new();
             headers.insert(
                 reqwest::header::ACCEPT,
                 reqwest::header::HeaderValue::from_static("application/vnd.github.v3+json"),
             );
-            
-            // Re-build client with headers
+
             let client = client_builder
                 .timeout(std::time::Duration::from_secs(15))
                 .default_headers(headers)
                 .build()
                 .unwrap_or_else(|_| reqwest::blocking::Client::new());
-            
+
             // Fetch latest
             let latest_resp = client.get("https://api.github.com/repos/SillyTavern/SillyTavern/releases/latest").send();
             match latest_resp {
@@ -255,7 +270,7 @@ impl VersionManageState {
                     return;
                 }
             }
-            
+
             // Fetch recent (max 5)
             let recent_resp = client.get("https://api.github.com/repos/SillyTavern/SillyTavern/releases?per_page=5").send();
             match recent_resp {
@@ -278,33 +293,30 @@ impl VersionManageState {
     }
 }
 
-fn get_cache_path() -> PathBuf {
-    let mut current_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
-    current_exe.pop(); // remove executable name
-    let path_str = current_exe.to_string_lossy();
-    let mut root = if path_str.contains("target\\debug") || path_str.contains("target\\release") {
-        let mut p = current_exe.clone();
-        p.pop();
-        p.pop();
-        p
-    } else {
-        current_exe
-    };
-    root.push("data");
-    root.push("releases_cache.json");
-    root
+/// 解析 npm registry URL
+fn npm_registry_url(registry: &crate::pages::settings::NpmRegistry) -> &'static str {
+    match registry {
+        crate::pages::settings::NpmRegistry::Official => "https://registry.npmjs.org/",
+        crate::pages::settings::NpmRegistry::Taobao => "https://registry.npmmirror.com/",
+        crate::pages::settings::NpmRegistry::Tencent => "https://mirrors.cloud.tencent.com/npm/",
+    }
 }
 
-/// 本地实例列表持久化文件路径
-fn get_instances_path() -> PathBuf {
-    let mut path = crate::core::env::get_data_dir();
-    path.push("local_instances.json");
-    path
+/// 查找系统命令的完整路径（通过 `which`）
+fn find_command(cmd: &str) -> Option<PathBuf> {
+    let output = Command::new("which").arg(cmd).output().ok()?;
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
+        }
+    }
+    None
 }
 
 /// 保存本地实例列表（仅保留 is_online == false 的本地实例）
 pub fn save_local_instances(instances: &[LocalInstance]) {
-    let path = get_instances_path();
+    let path = utils::app_paths().instances_file();
     let locals: Vec<&LocalInstance> = instances.iter().filter(|i| !i.is_online).collect();
     if let Ok(content) = serde_json::to_string_pretty(&locals) {
         let _ = fs::write(path, content);
@@ -313,7 +325,7 @@ pub fn save_local_instances(instances: &[LocalInstance]) {
 
 /// 加载本地实例列表
 pub fn load_local_instances() -> Vec<LocalInstance> {
-    let path = get_instances_path();
+    let path = utils::app_paths().instances_file();
     if path.exists() {
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(instances) = serde_json::from_str::<Vec<LocalInstance>>(&content) {
@@ -325,16 +337,15 @@ pub fn load_local_instances() -> Vec<LocalInstance> {
 }
 
 /// 计算在线实例（builtin）的固定路径
+#[allow(dead_code)]
 pub fn get_builtin_sillytavern_path() -> PathBuf {
-    let mut path = crate::core::env::get_data_dir();
-    path.push("sillytavern");
-    path
+    utils::app_paths().sillytavern_dir()
 }
 
 /// 保存当前版本到 settings.json
 pub fn save_current_to_settings(
-    instance_type: &str,  // "builtin" 或 "local"
-    path: Option<&str>,   // builtin 时 None，local 时绝对路径
+    instance_type: &str,
+    path: Option<&str>,
     version: &str,
     settings: &mut SettingsState,
 ) {
@@ -346,23 +357,46 @@ pub fn save_current_to_settings(
     settings.save();
 }
 
-/// 全盘扫描时跳过的目录名（大小写不敏感）
+/// 全盘扫描时跳过的目录名（macOS 版，大小写不敏感）
+///
+/// 注意：jwalk 无法在遍历前裁剪子树，因此需要在遍历线程中对
+/// `$HOME` 下级目录做预过滤，直接跳过整个排除目录，避免无效遍历。
 const SCAN_EXCLUDED_DIRS: &[&str] = &[
-    "Windows",
+    // 系统/隐藏
+    ".Trash",
+    ".DocumentRevisions-V100",
+    ".fseventsd",
+    ".Spotlight-V100",
+    ".TemporaryItems",
+    ".VolumeIcon.icns",
+    ".PKInstallSandboxManager",
+    ".vol",
+    "System",
+    "private",
+    "usr",
+    "bin",
+    "sbin",
+    "opt",
+    "dev",
+    "cores",
+    "Volumes",
+    // macOS 用户目录下大概率无代码的文件夹
+    "Library",
+    "Movies",
+    "Music",
+    "Pictures",
+    "Public",
+    "Applications",
+    // 开发工具缓存 / 大型依赖目录
     "node_modules",
     ".git",
-    "$Recycle.Bin",
-    "System Volume Information",
-    "Program Files",
-    "Program Files (x86)",
-    "ProgramData",
-    "Recovery",
-    "MSOCache",
-    "Config.Msi",
-    "Intel",
-    "AMD",
-    "NVIDIA",
-    "PerfLogs",
+    ".npm",
+    ".cargo",
+    ".cache",
+    ".vscode",
+    // 虚拟机（通常很大）
+    "Parallels",
+    "Virtual Machines",
 ];
 
 /// 检查路径是否命中排除目录
@@ -379,7 +413,7 @@ fn is_path_excluded(path: &std::path::Path) -> bool {
     })
 }
 
-/// 路径太长时用省略号替换中间部分，保留盘符前缀和末尾（按字符数截断，支持中日文等多字节字符）
+/// 路径太长时用省略号替换中间部分
 fn truncate_path_mid(path: &str, max_len: usize) -> String {
     let char_count = path.chars().count();
     if char_count <= max_len {
@@ -405,39 +439,32 @@ fn parse_version_major_minor(version: &str) -> Option<(u32, u32)> {
     }
 }
 
-/// 检查酒馆版本对 Node.js 的最低要求，返回不满足时的提示文字
-/// - 酒馆版本 > 1.17 → Node.js >= v20
-/// - 酒馆版本 >= 1.14 → Node.js > v18（即 >= v18.x）
+/// 检查酒馆版本对 Node.js 的最低要求
 fn check_nodejs_requirement(st_version: &str, nodejs_version: &str) -> Option<String> {
     let st_mm = parse_version_major_minor(st_version)?;
     let node_mm = parse_version_major_minor(nodejs_version)?;
-    
+
     if st_mm.0 > 1 || (st_mm.0 == 1 && st_mm.1 > 17) {
-        // ST > 1.17 → Node >= 20
         if node_mm.0 < 20 {
             return Some(format!("Min Node.js: >= v20 (current: v{})", nodejs_version.trim_start_matches('v')));
         }
     } else if st_mm.0 > 1 || (st_mm.0 == 1 && st_mm.1 >= 14) {
-        // ST >= 1.14 → Node > 18
         if node_mm.0 < 18 {
             return Some(format!("Min Node.js: > v18 (current: v{})", nodejs_version.trim_start_matches('v')));
         }
     }
-    // 要求满足或酒馆版本低于 1.14（无特殊要求）
     None
 }
 
 pub fn render(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut SettingsState) {
     let lang_owned = settings.language.clone();
     let lang = &lang_owned;
-    
+
     // 启动时检测已存在的在线安装
     if state.online_installed_version.is_none() {
-        let mut st_dir = crate::core::env::get_data_dir();
-        st_dir.push("sillytavern");
-        let mut pkg_path = st_dir.clone();
-        pkg_path.push("package.json");
-        
+        let st_dir = utils::app_paths().sillytavern_dir();
+        let pkg_path = st_dir.join("package.json");
+
         if st_dir.exists() && pkg_path.exists() {
             let mut local_ver = "Unknown".to_string();
             if let Ok(content) = fs::read_to_string(&pkg_path) {
@@ -448,10 +475,9 @@ pub fn render(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut 
                 }
             }
             state.online_installed_version = Some(local_ver);
-            // 在线实例不入 local_instances，仅通过 settings.sillytavern 管理
         }
     }
-    
+
     // Process messages
     if let Some(rx) = &state.release_receiver {
         while let Ok(msg) = rx.try_recv() {
@@ -462,7 +488,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut 
                 ReleaseMsg::Recent(releases) => {
                     state.recent_releases = releases;
                     state.is_fetching_releases = false;
-                    
+
                     // Save to cache
                     let cache = ReleasesCache {
                         timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
@@ -470,10 +496,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut 
                         recent: state.recent_releases.clone(),
                     };
                     if let Ok(content) = serde_json::to_string(&cache) {
-                        let path = get_cache_path();
-                        if let Some(parent) = path.parent() {
-                            let _ = fs::create_dir_all(parent);
-                        }
+                        let path = utils::app_paths().caches.join("releases_cache.json");
                         let _ = fs::write(path, content);
                     }
                 }
@@ -488,7 +511,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut 
             }
         }
     }
-    
+
     if let Some(rx) = &state.download_receiver {
         while let Ok(msg) = rx.try_recv() {
             match msg {
@@ -505,12 +528,11 @@ pub fn render(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut 
                     state.online_installed_version = Some(version.clone());
                     state.npm_install_failed = false;
                     state.download_finished_time = Some(std::time::Instant::now());
-                    
-                    // 自动切换到在线版本：清除所有本地实例的 is_current
+
+                    // 清除所有本地实例的 is_current，保存为 builtin 类型
                     for inst in state.local_instances.iter_mut() {
                         inst.is_current = false;
                     }
-                    // 保存为 builtin 类型（在线实例路径固定为 data/sillytavern，不存绝对路径）
                     save_current_to_settings("builtin", None, &version, settings);
                 }
                 DownloadMsg::NpmError { error, version, path: _ } => {
@@ -529,24 +551,31 @@ pub fn render(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut 
         while let Ok(msg) = rx.try_recv() {
             match msg {
                 ScanMsg::Found(instance) => {
-                    let exists = state.local_instances.iter().any(|i| i.path == instance.path);
-                    if !exists {
-                        let has_current = settings.sillytavern.is_some();
-                        let mut inst = instance;
-                        inst.is_current = !has_current;
-                        let inst_version = inst.version.clone();
-                        let inst_path = inst.path.clone();
-                        state.local_instances.push(inst);
-                        save_local_instances(&state.local_instances);
-                        // 仅在没有当前版本时才自动切换
-                        if !has_current {
-                            save_current_to_settings("local", Some(&inst_path), &inst_version, settings);
+                    // 拦截在线下载的酒馆实例路径（自动扫描时也过滤）
+                    let builtin_path = utils::app_paths().sillytavern_dir();
+                    let builtin_str = builtin_path.to_string_lossy().to_string();
+                    let is_builtin = instance.path == builtin_str
+                        || instance.path.starts_with(&format!("{}/", builtin_str));
+                    if is_builtin {
+                        // 跳过，不添加到本地实例列表
+                    } else {
+                        let exists = state.local_instances.iter().any(|i| i.path == instance.path);
+                        if !exists {
+                            let has_current = settings.sillytavern.is_some();
+                            let mut inst = instance;
+                            inst.is_current = !has_current;
+                            let inst_version = inst.version.clone();
+                            let inst_path = inst.path.clone();
+                            state.local_instances.push(inst);
+                            save_local_instances(&state.local_instances);
+                            if !has_current {
+                                save_current_to_settings("local", Some(&inst_path), &inst_version, settings);
+                            }
                         }
                     }
                 }
                 ScanMsg::ScanningPath(path) => {
                     state.show_scan_tips = true;
-                    // 保留最近5条路径
                     if state.scanning_paths.len() >= 5 {
                         state.scanning_paths.remove(0);
                     }
@@ -574,7 +603,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut 
         ui.selectable_value(&mut state.active_tab, VersionTab::Local, lang::t("tab_local_instances", lang));
         ui.selectable_value(&mut state.active_tab, VersionTab::Online, lang::t("tab_online_download", lang));
     });
-    
+
     ui.separator();
 
     match state.active_tab {
@@ -593,94 +622,19 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
     ui.horizontal(|ui| {
         // --- 左侧：按钮组 ---
         if state.is_scanning {
-            // 扫描中 → 显示"取消扫描"按钮 + spinner
             ui.spinner();
             if ui.button(lang::t("btn_cancel_scan", lang)).clicked() {
                 state.show_cancel_scan_confirm = true;
             }
         } else {
             if ui.button(lang::t("btn_auto_scan", lang)).clicked() {
-                state.is_scanning = true;
-                state.scanning_paths.clear();
-                state.show_scan_tips = true;
-                state.scan_finished_time = None;
-                let (tx, rx) = mpsc::channel();
-                state.scan_receiver = Some(rx);
-                
-                let cpu_cores = settings.cpu_cores.clone();
-                let cancel_flag = Arc::new(AtomicBool::new(false));
-                state.cancel_scan_flag = Some(cancel_flag.clone());
-                
-                thread::spawn(move || {
-                    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-                    let threads = match cpu_cores {
-                        crate::pages::settings::CpuCores::Auto => std::cmp::max(1, cores.saturating_sub(2)),
-                        crate::pages::settings::CpuCores::Half => std::cmp::max(1, cores / 2),
-                        crate::pages::settings::CpuCores::All => cores,
-                    };
-                    
-                    let mut drives = Vec::new();
-                    for i in b'A'..=b'Z' {
-                        let drive = format!("{}:\\", i as char);
-                        if std::path::Path::new(&drive).exists() {
-                            drives.push(drive);
-                        }
-                    }
-                    
-                    for drive in drives {
-                        // 每个盘符扫描前检查是否被取消
-                        if cancel_flag.load(Ordering::Relaxed) {
-                            let _ = tx.send(ScanMsg::Finished);
-                            return;
-                        }
-                        // 发送当前正在扫描的盘符，让用户看到进度
-                        let _ = tx.send(ScanMsg::ScanningPath(drive.clone()));
-                        
-                        let walk = jwalk::WalkDir::new(&drive)
-                            .parallelism(jwalk::Parallelism::RayonNewPool(threads))
-                            .skip_hidden(false);
-                            
-                        for entry in walk.into_iter().filter_map(|e| e.ok()) {
-                            // 跳过排除目录中的条目
-                            if is_path_excluded(&entry.path()) {
-                                continue;
-                            }
-                            if entry.file_name() == "package.json" {
-                                let path = entry.path();
-                                // 发送当前扫描到的 package.json 路径
-                                let dir_path = path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string_lossy().to_string());
-                                let _ = tx.send(ScanMsg::ScanningPath(dir_path));
-                                
-                                if let Ok(content) = fs::read_to_string(&path) {
-                                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                                        if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
-                                            if name == "sillytavern" {
-                                                let version = json.get("version").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
-                                                let mut parent_path = path.clone();
-                                                parent_path.pop();
-                                                let path_str = parent_path.to_string_lossy().to_string();
-                                                let _ = tx.send(ScanMsg::Found(LocalInstance {
-                                                    version,
-                                                    path: path_str,
-                                                    is_current: false,
-                                                    is_online: false,
-                                                }));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    let _ = tx.send(ScanMsg::Finished);
-                });
+                state.show_scan_mode_dialog = true;
             }
         }
         if ui.button(lang::t("btn_manual_add", lang)).clicked() {
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("package", &["json"])
-                .set_title("Select SillyTavern package.json")
+                .set_title(lang::t("dialog_select_package_json", lang))
                 .pick_file()
             {
                 if path.file_name().and_then(|n| n.to_str()) == Some("package.json") {
@@ -690,24 +644,34 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                                 if name == "sillytavern" {
                                     let version = json.get("version").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
                                     let mut parent_path = path.clone();
-                                    parent_path.pop(); // remove package.json
-                                    
+                                    parent_path.pop();
+
                                     let path_str = parent_path.to_string_lossy().to_string();
-                                    let exists = state.local_instances.iter().any(|i| i.path == path_str);
-                                    if !exists {
-                                        let is_current = settings.sillytavern.as_ref()
-                                            .map(|s| s.instance_type == "local" && s.path.as_deref() == Some(&path_str))
-                                            .unwrap_or(false);
-                                        state.local_instances.push(LocalInstance {
-                                            version: version.clone(),
-                                            path: path_str.clone(),
-                                            is_current,
-                                            is_online: false,
-                                        });
-                                        save_local_instances(&state.local_instances);
-                                        // 仅在没有当前版本时才自动切换
-                                        if settings.sillytavern.is_none() {
-                                            save_current_to_settings("local", Some(&path_str), &version, settings);
+
+                                    // 拦截在线下载的酒馆实例路径
+                                    let builtin_path = utils::app_paths().sillytavern_dir();
+                                    let builtin_str = builtin_path.to_string_lossy().to_string();
+                                    let is_builtin = path_str == builtin_str
+                                        || path_str.starts_with(&format!("{}/", builtin_str));
+
+                                    if is_builtin {
+                                        state.install_error_alert = Some(lang::t("cannot_add_online_instance", lang).to_string());
+                                    } else {
+                                        let exists = state.local_instances.iter().any(|i| i.path == path_str);
+                                        if !exists {
+                                            let is_current = settings.sillytavern.as_ref()
+                                                .map(|s| s.instance_type == "local" && s.path.as_deref() == Some(&path_str))
+                                                .unwrap_or(false);
+                                            state.local_instances.push(LocalInstance {
+                                                version: version.clone(),
+                                                path: path_str.clone(),
+                                                is_current,
+                                                is_online: false,
+                                            });
+                                            save_local_instances(&state.local_instances);
+                                            if settings.sillytavern.is_none() {
+                                                save_current_to_settings("local", Some(&path_str), &version, settings);
+                                            }
                                         }
                                     }
                                 } else {
@@ -725,8 +689,8 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                 }
             }
         }
-        
-        // --- 右侧：扫描进度提示（单行，占满按钮组右侧剩余宽度）---
+
+        // --- 右侧：扫描进度提示 ---
         if state.show_scan_tips && !state.scanning_paths.is_empty() {
             let latest_path = state.scanning_paths.last().map(|p| truncate_path_mid(p, 60)).unwrap_or_default();
             let header = if state.is_scanning {
@@ -742,23 +706,67 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
             );
         }
     });
-    
-    ui.add_space(10.0);
-    
+
+    // --- 完全磁盘访问权限提示 ---
+    if !state.is_scanning && !crate::core::app_permissions::is_full_disk_access_granted() {
+        ui.add_space(4.0);
+        egui::Frame::NONE
+            .fill(egui::Color32::from_rgb(60, 45, 20))
+            .corner_radius(6)
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(egui_phosphor::regular::WARNING_CIRCLE)
+                                .size(16.0)
+                                .color(egui::Color32::from_rgb(255, 200, 60)),
+                        )
+                        .selectable(false),
+                    );
+                    ui.add_space(4.0);
+                    ui.vertical(|ui| {
+                        ui.add_space(1.0);
+                        ui.label(
+                            egui::RichText::new(lang::t("fda_access_title", lang))
+                                .size(13.0)
+                                .strong()
+                                .color(egui::Color32::from_rgb(255, 220, 120)),
+                        );
+                        ui.label(
+                            egui::RichText::new(lang::t("fda_access_desc", lang))
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(200, 190, 170)),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .small_button(lang::t("fda_access_button", lang))
+                            .clicked()
+                        {
+                            crate::core::app_permissions::open_full_disk_access_settings();
+                        }
+                    });
+                });
+            });
+        ui.add_space(4.0);
+    } else {
+        ui.add_space(10.0);
+    }
+
     egui::ScrollArea::vertical().show(ui, |ui| {
         if state.local_instances.is_empty() {
             ui.label(lang::t("no_local_instances", lang));
         } else {
             let mut remove_idx = None;
             let mut switch_idx = None;
-            
+
             for (i, instance) in state.local_instances.iter().enumerate() {
                 ui.group(|ui| {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
                             ui.label(egui::RichText::new(&instance.version).heading());
                             ui.label(egui::RichText::new(&instance.path).small().color(egui::Color32::GRAY));
-                            // Node.js 版本兼容性检查
                             if !settings.nodejs_version.is_empty() {
                                 if let Some(warning) = check_nodejs_requirement(&instance.version, &settings.nodejs_version) {
                                     ui.label(
@@ -768,7 +776,6 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                                     );
                                 }
                             } else {
-                                // Node.js 未检测到，显示通用警告
                                 ui.label(
                                     egui::RichText::new("Node.js: not detected")
                                         .size(10.0)
@@ -776,9 +783,8 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                                 );
                             }
                         });
-                        
+
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            // 从 settings 判断当前版本是否为此本地实例
                             let is_current = match &settings.sillytavern {
                                 Some(s) if s.instance_type == "local" => s.path.as_deref() == Some(&instance.path),
                                 _ => false,
@@ -790,19 +796,20 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                                     switch_idx = Some(i);
                                 }
                             }
-                            
+
                             if ui.add_enabled(!is_current, egui::Button::new(lang::t("btn_remove_list", lang))).clicked() {
                                 remove_idx = Some(i);
                             }
-                            
+
                             if ui.button(lang::t("btn_view_info", lang)).clicked() {
-                                // View info logic
+                                // View info — open in Finder
+                                let _ = Command::new("open").arg(&instance.path).spawn();
                             }
                         });
                     });
                 });
             }
-            
+
             if let Some(idx) = remove_idx {
                 state.local_instances.remove(idx);
                 save_local_instances(&state.local_instances);
@@ -811,14 +818,13 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                 for (i, inst) in state.local_instances.iter_mut().enumerate() {
                     inst.is_current = i == idx;
                 }
-                // 保存当前本地实例到 settings
                 if let Some(inst) = state.local_instances.get(idx) {
                     save_current_to_settings("local", Some(&inst.path), &inst.version, settings);
                 }
             }
         }
     });
-    
+
     // 取消扫描二次确认弹窗
     if state.show_cancel_scan_confirm {
         let mut confirm_open = true;
@@ -832,11 +838,9 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     if ui.button(lang::t("btn_confirm", lang)).clicked() {
-                        // 设置取消标志 + 丢弃接收端，后台线程检测到后会自行退出
                         if let Some(ref flag) = state.cancel_scan_flag {
                             flag.store(true, Ordering::Relaxed);
                         }
-                        // 立即丢弃接收端，后续 tx.send() 静默失败，线程自行消亡
                         state.scan_receiver = None;
                         state.is_scanning = false;
                         state.show_cancel_scan_confirm = false;
@@ -851,32 +855,277 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
             state.show_cancel_scan_confirm = false;
         }
     }
+
+    // --- 扫描模式选择弹窗 ---
+    if state.show_scan_mode_dialog {
+        let mut open = true;
+        egui::Window::new(lang::t("scan_mode_title", lang))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ui.ctx(), |ui| {
+                ui.label(lang::t("scan_mode_desc", lang));
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button(lang::t("quick_scan", lang))
+                        .on_hover_text(lang::t("quick_scan_desc", lang))
+                        .clicked()
+                    {
+                        state.show_scan_mode_dialog = false;
+                        state.pending_scan = Some(ScanMode::Quick);
+                    }
+                    if ui.button(lang::t("full_scan", lang))
+                        .on_hover_text(lang::t("full_scan_desc", lang))
+                        .clicked()
+                    {
+                        state.show_scan_mode_dialog = false;
+                        let perms = crate::core::app_permissions::probe_scan_permissions();
+                        if perms.all_ok() {
+                            state.pending_scan = Some(ScanMode::Full);
+                        } else {
+                            state.show_fda_dialog = true;
+                        }
+                    }
+                });
+            });
+        if !open {
+            state.show_scan_mode_dialog = false;
+        }
+    }
+
+    // --- FDA 权限弹窗（仅全盘扫描时触发） ---
+    if state.show_fda_dialog {
+        let mut open = true;
+        egui::Window::new(lang::t("fda_access_title", lang))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ui.ctx(), |ui| {
+                ui.label(lang::t("fda_access_dialog_desc", lang));
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button(lang::t("fda_access_button", lang)).clicked() {
+                        crate::core::app_permissions::open_full_disk_access_settings();
+                        state.show_fda_dialog = false;
+                        state.pending_scan = None;
+                    }
+                    if ui.button(lang::t("continue_anyway", lang)).clicked() {
+                        state.show_fda_dialog = false;
+                        state.pending_scan = Some(ScanMode::Full);
+                    }
+                });
+            });
+        if !open {
+            state.show_fda_dialog = false;
+            state.pending_scan = None;
+        }
+    }
+
+    // --- 帧末启动扫描线程 ---
+    if state.pending_scan.is_some() && !state.is_scanning && !state.show_scan_mode_dialog && !state.show_fda_dialog {
+        let mode = state.pending_scan.take().unwrap();
+        match mode {
+            ScanMode::Quick => start_quick_scan(state, settings),
+            ScanMode::Full => start_full_scan(state, settings),
+        }
+    }
 }
 
-        fn render_online_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut SettingsState) {
+/// 全盘扫描：jwalk 多线程遍历 $HOME 下所有非排除目录，匹配 package.json
+fn start_full_scan(state: &mut VersionManageState, settings: &SettingsState) {
+    state.is_scanning = true;
+    state.scanning_paths.clear();
+    state.show_scan_tips = true;
+    state.scan_finished_time = None;
+    let (tx, rx) = mpsc::channel();
+    state.scan_receiver = Some(rx);
+    let cpu_cores = settings.cpu_cores.clone();
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    state.cancel_scan_flag = Some(cancel_flag.clone());
+    thread::spawn(move || {
+        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let threads = match cpu_cores {
+            crate::pages::settings::CpuCores::Auto => std::cmp::max(1, cores.saturating_sub(2)),
+            crate::pages::settings::CpuCores::Half => std::cmp::max(1, cores / 2),
+            crate::pages::settings::CpuCores::All => cores,
+        };
+        let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()));
+        let _ = tx.send(ScanMsg::ScanningPath(home.to_string_lossy().to_string()));
+        // 预过滤顶层目录，直接跳过排除目录
+        let top_dirs: Vec<PathBuf> = match std::fs::read_dir(&home) {
+            Ok(entries) => entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir() && !is_path_excluded(&e.path()))
+                .map(|e| e.path())
+                .collect(),
+            Err(_) => vec![home.clone()],
+        };
+        if top_dirs.is_empty() {
+            let _ = tx.send(ScanMsg::Finished);
+            return;
+        }
+        for dir in &top_dirs {
+            if cancel_flag.load(Ordering::Relaxed) {
+                let _ = tx.send(ScanMsg::Finished);
+                return;
+            }
+            let walk = jwalk::WalkDir::new(dir)
+                .parallelism(jwalk::Parallelism::RayonNewPool(threads))
+                .skip_hidden(false);
+            for entry in walk.into_iter().filter_map(|e| e.ok()) {
+                if cancel_flag.load(Ordering::Relaxed) {
+                    let _ = tx.send(ScanMsg::Finished);
+                    return;
+                }
+                if is_path_excluded(&entry.path()) {
+                    continue;
+                }
+                if entry.file_name() == "package.json" {
+                    let path = entry.path();
+                    let dir_path = path.parent()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.to_string_lossy().to_string());
+                    let _ = tx.send(ScanMsg::ScanningPath(dir_path));
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                            if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
+                                if name == "sillytavern" {
+                                    let version = json.get("version")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("Unknown")
+                                        .to_string();
+                                    let mut parent_path = path.clone();
+                                    parent_path.pop();
+                                    let path_str = parent_path.to_string_lossy().to_string();
+                                    let _ = tx.send(ScanMsg::Found(LocalInstance {
+                                        version,
+                                        path: path_str,
+                                        is_current: false,
+                                        is_online: false,
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let _ = tx.send(ScanMsg::Finished);
+    });
+}
+
+/// 快速扫描：用系统 find 命令定位 package.json，跳过星酿自带酒馆
+fn start_quick_scan(state: &mut VersionManageState, _settings: &SettingsState) {
+    state.is_scanning = true;
+    state.scanning_paths.clear();
+    state.show_scan_tips = true;
+    state.scan_finished_time = None;
+    let (tx, rx) = mpsc::channel();
+    state.scan_receiver = Some(rx);
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    state.cancel_scan_flag = Some(cancel_flag.clone());
+    thread::spawn(move || {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        let _ = tx.send(ScanMsg::ScanningPath(home.clone()));
+        let prune_path = format!(
+            "{}/Library/Application Support/AstraBrew Launcher/sillytavern",
+            home
+        );
+        let mut child = match std::process::Command::new("find")
+            .arg(&home)
+            .arg("-path")
+            .arg(&prune_path)
+            .arg("-prune")
+            .arg("-o")
+            .arg("-type")
+            .arg("f")
+            .arg("-name")
+            .arg("package.json")
+            .arg("-print")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[quick_scan] find spawn failed: {}", e);
+                let _ = tx.send(ScanMsg::Finished);
+                return;
+            }
+        };
+        let stdout = match child.stdout.take() {
+            Some(s) => s,
+            None => {
+                let _ = tx.send(ScanMsg::Finished);
+                return;
+            }
+        };
+        let reader = std::io::BufReader::new(stdout);
+        for line in reader.lines() {
+            if cancel_flag.load(Ordering::Relaxed) {
+                let _ = child.kill();
+                let _ = tx.send(ScanMsg::Finished);
+                return;
+            }
+            let path_str = match line {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+            let path = PathBuf::from(&path_str);
+            let dir_path = path.parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| path_str.clone());
+            let _ = tx.send(ScanMsg::ScanningPath(dir_path.clone()));
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
+                        if name == "sillytavern" {
+                            let version = json.get("version")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown")
+                                .to_string();
+                            let _ = tx.send(ScanMsg::Found(LocalInstance {
+                                version,
+                                path: dir_path,
+                                is_current: false,
+                                is_online: false,
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+        let _ = child.wait();
+        let _ = tx.send(ScanMsg::Finished);
+    });
+}
+
+fn render_online_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut SettingsState) {
     let lang_owned = settings.language.clone();
     let lang = &lang_owned;
     if state.latest_release.is_none() && !state.is_fetching_releases {
         state.fetch_releases(false, settings);
     }
-    
+
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
-        
-        // 中间酒馆 LOGO (使用图标代替)
+
+        // 中间酒馆图标
         ui.label(egui::RichText::new(egui_phosphor::regular::BEER_BOTTLE).size(80.0));
-        
+
         if let Some(ver) = &state.online_installed_version {
             ui.label(egui::RichText::new(format!("{}: {}", lang::t("status_current_version", lang), ver)).size(16.0).color(egui::Color32::GRAY));
         }
         ui.add_space(20.0);
-        
+
         if state.is_fetching_releases {
             ui.spinner();
             ui.label(lang::t("status_fetching_releases", lang));
             return;
         }
-        
+
         if state.fetch_forbidden {
             ui.heading(lang::t("info_fetch_failed", lang));
             ui.label(lang::t("info_fetch_failed_desc", lang));
@@ -886,7 +1135,7 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
             }
             return;
         }
-        
+
         if let Some(err) = &state.fetch_error {
             ui.heading(lang::t("info_fetch_failed", lang));
             ui.colored_label(egui::Color32::RED, err);
@@ -896,15 +1145,15 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
             }
             return;
         }
-        
+
         if !state.is_downloading && !state.download_status.is_empty() {
             ui.label(&state.download_status);
             ui.add_space(10.0);
         }
-        
-        let mut download_target = None;
 
+        let mut download_target = None;
         let mut fetch_now = false;
+
         if let Some(latest) = state.latest_release.clone() {
             egui::Frame::NONE
                 .fill(ui.visuals().faint_bg_color)
@@ -913,15 +1162,14 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                 .show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         ui.horizontal(|ui| {
-                            // 将获取到的最新版本号及刷新按钮组合在一起
                             ui.add_space(ui.available_width() / 2.0 - 120.0);
                             ui.heading(format!("{}: {}", lang::t("latest_version", lang), latest.tag_name));
-                            
+
                             if ui.button(egui_phosphor::regular::ARROWS_CLOCKWISE).on_hover_text(lang::t("btn_refresh", lang)).clicked() {
                                 fetch_now = true;
                             }
                         });
-                        
+
                         ui.add_space(8.0);
                         if let Some(name) = &latest.name {
                             if name != &latest.tag_name {
@@ -929,14 +1177,14 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                             }
                         }
                         ui.label(egui::RichText::new(format!("{}: {}", lang::t("published_at", lang), latest.published_at)).color(egui::Color32::GRAY));
-                        
+
                         ui.add_space(24.0);
-                        
+
                         ui.horizontal(|ui| {
                             let is_installed = state.online_installed_version.is_some();
                             let is_current_online = settings.sillytavern.as_ref().map(|s| s.instance_type == "builtin").unwrap_or(false);
                             let show_switch = is_installed && !is_current_online;
-                            
+
                             let total_width = ui.available_width();
                             let spacing = 8.0;
                             let switch_w = 120.0;
@@ -948,8 +1196,8 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                                 btn1_w + spacing + btn2_w
                             };
                             ui.add_space((total_width - used_width) / 2.0);
-                            
-                            // 切换按钮（已安装但非当前版本时始终显示）
+
+                            // 切换按钮
                             if show_switch {
                                 if ui.add_sized([switch_w, 36.0], egui::Button::new(lang::t("btn_switch_to_online", lang))).clicked() {
                                     for inst in state.local_instances.iter_mut() {
@@ -959,7 +1207,7 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                                     save_current_to_settings("builtin", None, &ver, settings);
                                 }
                             }
-                            
+
                             if state.npm_install_failed {
                                 if ui.add_sized([btn1_w, 36.0], egui::Button::new(lang::t("btn_reinstall_deps", lang))).clicked() {
                                     download_target = Some((latest.zipball_url.clone(), latest.tag_name.clone(), true));
@@ -979,7 +1227,7 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                                         if latest_clean.starts_with('v') {
                                             latest_clean = latest_clean[1..].to_string();
                                         }
-                                        
+
                                         if local_clean == latest_clean {
                                             state.show_already_latest = true;
                                         } else {
@@ -992,7 +1240,7 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                                     }
                                 }
                             }
-                            
+
                             if ui.add_sized([btn2_w, 36.0], egui::Button::new(lang::t("btn_install_other_versions", lang))).clicked() {
                                 state.show_other_versions = true;
                             }
@@ -1000,20 +1248,21 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                     });
                 });
         }
-        
+
         if fetch_now {
             state.fetch_releases(true, settings);
         }
-        
+
         if let Some((url, version, skip_clone)) = download_target {
             start_install(state, &url, &version, settings, skip_clone);
         }
     });
-    
+
+    // 下载进度窗口
     if state.is_downloading {
         let mut show = true;
         let mut close_clicked = false;
-        
+
         if let Some(finish_time) = state.download_finished_time {
             if finish_time.elapsed().as_secs() >= 3 {
                 close_clicked = true;
@@ -1021,7 +1270,7 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                 ui.ctx().request_repaint();
             }
         }
-        
+
         egui::Window::new(lang::t("btn_download_and_install", lang))
             .open(&mut show)
             .collapsible(false)
@@ -1033,9 +1282,9 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                     ui.label(egui::RichText::new(egui_phosphor::regular::BEER_BOTTLE).size(40.0));
                     ui.heading("SillyTavern");
                 });
-                
+
                 ui.add_space(10.0);
-                
+
                 // Logs
                 egui::Frame::NONE
                     .fill(ui.visuals().faint_bg_color)
@@ -1052,12 +1301,12 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                                 }
                             });
                     });
-                
+
                 ui.add_space(10.0);
-                
+
                 // Progress
                 ui.add(egui::ProgressBar::new(state.download_progress).text(&state.download_status));
-                
+
                 if state.download_progress >= 1.0 || state.download_status.contains(lang::t("download_error", lang)) {
                     ui.add_space(10.0);
                     if ui.button(lang::t("btn_confirm", lang)).clicked() {
@@ -1065,7 +1314,7 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                     }
                 }
             });
-            
+
         if !show || close_clicked {
             if state.download_progress < 1.0 && !state.download_status.contains(lang::t("download_error", lang)) {
                 state.show_cancel_confirm = true;
@@ -1075,7 +1324,8 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
             }
         }
     }
-    
+
+    // 取消下载确认
     if state.show_cancel_confirm {
         let mut confirm_open = true;
         egui::Window::new(lang::t("warning", lang))
@@ -1090,11 +1340,10 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                     if ui.button(lang::t("btn_confirm", lang)).clicked() {
                         state.is_downloading = false;
                         state.show_cancel_confirm = false;
+                        // macOS: kill process group
                         if let Some(pid) = *state.active_pid.lock().unwrap() {
-                            use std::os::windows::process::CommandExt;
-                            let _ = std::process::Command::new("taskkill")
-                                .args(&["/F", "/T", "/PID", &pid.to_string()])
-                                .creation_flags(0x08000000)
+                            let _ = Command::new("kill")
+                                .args(&["-9", &pid.to_string()])
                                 .spawn();
                         }
                     }
@@ -1108,6 +1357,7 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
         }
     }
 
+    // 已是最新版本提示
     if state.show_already_latest {
         let mut show = true;
         let mut close_clicked = false;
@@ -1128,6 +1378,7 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
         }
     }
 
+    // 更新确认
     if state.show_update_confirm {
         let mut show = true;
         let mut do_update = false;
@@ -1150,18 +1401,19 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                     }
                 });
             });
-        
+
         if do_update {
             if let Some((url, version)) = state.update_target.take() {
                 start_install(state, &url, &version, settings, false);
             }
         }
-        
+
         if !show || close_clicked {
             state.show_update_confirm = false;
         }
     }
 
+    // 错误弹窗
     if let Some(err) = &state.install_error_alert {
         let mut show = true;
         let mut close_clicked = false;
@@ -1181,7 +1433,8 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
             state.install_error_alert = None;
         }
     }
-    
+
+    // 其他版本窗口
     if state.show_other_versions {
         let mut show = state.show_other_versions;
         egui::Window::new(lang::t("btn_install_other_versions", lang))
@@ -1199,7 +1452,7 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                                 ui.label(egui::RichText::new(&release.tag_name).strong());
                                 ui.label(&release.published_at);
                             });
-                            
+
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let mut is_this_installed = false;
                                 if let Some(installed_ver) = &state.online_installed_version {
@@ -1249,19 +1502,10 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
 }
 
 fn start_install(state: &mut VersionManageState, _url: &str, version: &str, settings: &mut SettingsState, skip_clone: bool) {
-    // 1. Check Env
-    let git_path = match settings.git_env {
-        crate::pages::settings::EnvSource::Builtin => crate::core::env::get_builtin_git_path(),
-        crate::pages::settings::EnvSource::System => crate::core::env::get_system_cmd_path("git"),
-    };
-    let node_path = match settings.nodejs_env {
-        crate::pages::settings::EnvSource::Builtin => crate::core::env::get_builtin_node_path(),
-        crate::pages::settings::EnvSource::System => crate::core::env::get_system_cmd_path("node"),
-    };
-    let npm_path = match settings.nodejs_env {
-        crate::pages::settings::EnvSource::Builtin => crate::core::env::get_builtin_npm_path(),
-        crate::pages::settings::EnvSource::System => crate::core::env::get_system_cmd_path("npm"),
-    };
+    // 1. 检查环境 — 使用系统 PATH 上的命令
+    let git_path = find_command("git");
+    let node_path = find_command("node");
+    let npm_path = find_command("npm");
 
     if git_path.is_none() || node_path.is_none() || npm_path.is_none() {
         state.install_error_alert = Some(lang::t("missing_env_warning", &settings.language).to_string());
@@ -1271,60 +1515,62 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
     let git_path = git_path.unwrap();
     let node_path = node_path.unwrap();
     let npm_path = npm_path.unwrap();
-    
-    let mut st_dir = crate::core::env::get_data_dir();
-    st_dir.push("sillytavern");
-    
+
+    let st_dir = utils::app_paths().sillytavern_dir();
+
     state.is_downloading = true;
     state.download_progress = 0.0;
     state.download_logs.clear();
     state.download_status = lang::t("status_preparing", &settings.language).to_string();
     state.download_finished_time = None;
-    
+
     let (tx, rx) = mpsc::channel();
     state.download_receiver = Some(rx);
-    
+
     let version_str = version.to_string();
     let target_dir = st_dir.clone();
     let active_pid = state.active_pid.clone();
-    
+
     let github_proxy_url = if settings.github_proxy_enabled {
         Some(settings.github_proxy_url.clone())
     } else {
         None
     };
 
-    let npm_registry = crate::core::settings::npm_registry_url(&settings.npm_registry).to_string();
-    
-    let repo_url = if let Some(proxy) = github_proxy_url {
-        format!("{}https://github.com/SillyTavern/SillyTavern.git", proxy)
-    } else {
-        "https://github.com/SillyTavern/SillyTavern.git".to_string()
-    };
-    
+    let npm_registry = npm_registry_url(&settings.npm_registry).to_string();
+
+    let repo_url = github_proxy_url
+        .as_ref()
+        .map(|proxy| format!("{}https://github.com/SillyTavern/SillyTavern.git", proxy))
+        .unwrap_or_else(|| "https://github.com/SillyTavern/SillyTavern.git".to_string());
+
     thread::spawn(move || {
         let _ = tx.send(DownloadMsg::Log("Starting installation...".to_string()));
-        
+
         if !skip_clone {
             let _ = tx.send(DownloadMsg::Progress(0.1, "Cloning repository...".to_string()));
-            
+
             // 1. Git clone / fetch & checkout
-            if !target_dir.exists() {
+            let is_git_repo = target_dir.join(".git").exists();
+            if !target_dir.exists() || (target_dir.exists() && !is_git_repo) {
+                // 目录不存在、或存在但不是 git 仓库 → 清理后重新 clone
+                if target_dir.exists() {
+                    let _ = tx.send(DownloadMsg::Log("Directory exists but not a git repo, removing...".to_string()));
+                    let _ = fs::remove_dir_all(&target_dir);
+                }
                 let _ = fs::create_dir_all(&target_dir);
-                let mut git_cmd = std::process::Command::new(&git_path);
+                let mut git_cmd = Command::new(&git_path);
                 git_cmd.arg("clone")
                        .arg("-b").arg(&version_str)
                        .arg("--depth").arg("1")
                        .arg("--progress")
                        .arg(&repo_url)
                        .arg(&target_dir)
-                       .creation_flags(0x08000000) // CREATE_NO_WINDOW
                        .stdout(std::process::Stdio::piped())
                        .stderr(std::process::Stdio::piped());
-                       
+
                 let _ = tx.send(DownloadMsg::Log(format!("Executing: {:?}", git_cmd)));
-                
-                use std::os::windows::process::CommandExt;
+
                 let mut child = match git_cmd.spawn() {
                     Ok(c) => c,
                     Err(e) => {
@@ -1332,9 +1578,9 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                         return;
                     }
                 };
-                
+
                 *active_pid.lock().unwrap() = Some(child.id());
-                
+
                 if let Some(stderr) = child.stderr.take() {
                     use std::io::{BufRead, BufReader};
                     let reader = BufReader::new(stderr);
@@ -1344,7 +1590,7 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                         }
                     }
                 }
-                
+
                 let status = child.wait().unwrap_or_else(|_| std::process::ExitStatus::default());
                 *active_pid.lock().unwrap() = None;
                 if !status.success() {
@@ -1352,24 +1598,36 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                     return;
                 }
             } else {
-                // Fetch and checkout to the specific version instead of removing dir
+                // 目录已存在，fetch + checkout
                 let _ = tx.send(DownloadMsg::Log("Directory exists, fetching updates...".to_string()));
-                
+
+                // 更新 remote URL，确保走代理加速（如果启用）
+                let remote_url = github_proxy_url
+                    .as_ref()
+                    .map(|p| format!("{}https://github.com/SillyTavern/SillyTavern.git", p))
+                    .unwrap_or_else(|| "https://github.com/SillyTavern/SillyTavern.git".to_string());
+                let _ = tx.send(DownloadMsg::Log(format!("Setting remote origin to: {}", remote_url)));
+                let _ = Command::new(&git_path)
+                    .arg("remote")
+                    .arg("set-url")
+                    .arg("origin")
+                    .arg(&remote_url)
+                    .current_dir(&target_dir)
+                    .output();
+
                 // Fetch
-                let mut git_fetch = std::process::Command::new(&git_path);
+                let mut git_fetch = Command::new(&git_path);
                 git_fetch.arg("fetch")
                          .arg("origin")
                          .arg(&version_str)
                          .arg("--depth").arg("1")
                          .arg("--progress")
                          .current_dir(&target_dir)
-                         .creation_flags(0x08000000)
                          .stdout(std::process::Stdio::piped())
                          .stderr(std::process::Stdio::piped());
-                
+
                 let _ = tx.send(DownloadMsg::Log(format!("Executing: {:?}", git_fetch)));
-                
-                use std::os::windows::process::CommandExt;
+
                 let mut child = match git_fetch.spawn() {
                     Ok(c) => c,
                     Err(e) => {
@@ -1377,7 +1635,7 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                         return;
                     }
                 };
-                
+
                 *active_pid.lock().unwrap() = Some(child.id());
                 if let Some(stderr) = child.stderr.take() {
                     use std::io::{BufRead, BufReader};
@@ -1394,17 +1652,16 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                     let _ = tx.send(DownloadMsg::Error("Git fetch failed.".to_string()));
                     return;
                 }
-                
+
                 // Checkout
-                let mut git_checkout = std::process::Command::new(&git_path);
+                let mut git_checkout = Command::new(&git_path);
                 git_checkout.arg("checkout")
                             .arg("-B").arg(&version_str)
                             .arg("FETCH_HEAD")
                             .current_dir(&target_dir)
-                            .creation_flags(0x08000000)
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped());
-                            
+
                 let _ = tx.send(DownloadMsg::Log(format!("Executing: {:?}", git_checkout)));
                 let mut child = match git_checkout.spawn() {
                     Ok(c) => c,
@@ -1431,18 +1688,20 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                 }
             }
         }
-        
+
         // 2. NPM install
         let _ = tx.send(DownloadMsg::Progress(0.5, "Installing dependencies...".to_string()));
-        
-        let mut npm_cmd = std::process::Command::new(&npm_path);
+
+        let mut npm_cmd = Command::new(&npm_path);
         npm_cmd.env("NODE_ENV", "production");
-        
+
+        // Ensure node is in PATH for npm
         if let Some(node_dir) = node_path.parent() {
-            if let Some(path_val) = std::env::var_os("PATH") {
+            let separator = if cfg!(target_os = "windows") { ";" } else { ":" };
+            if let Ok(path_val) = std::env::var("PATH") {
                 let mut new_path = std::ffi::OsString::new();
                 new_path.push(node_dir);
-                new_path.push(";");
+                new_path.push(separator);
                 new_path.push(path_val);
                 npm_cmd.env("PATH", new_path);
             }
@@ -1459,13 +1718,11 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                .arg("--registry")
                .arg(&npm_registry)
                .current_dir(&target_dir)
-               .creation_flags(0x08000000)
                .stdout(std::process::Stdio::piped())
                .stderr(std::process::Stdio::piped());
-               
+
         let _ = tx.send(DownloadMsg::Log(format!("Executing: {:?}", npm_cmd)));
-        
-        use std::os::windows::process::CommandExt;
+
         let mut child = match npm_cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
@@ -1477,12 +1734,12 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                 return;
             }
         };
-        
+
         *active_pid.lock().unwrap() = Some(child.id());
-        
+
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
-        
+
         let tx_out = tx.clone();
         if let Some(out) = stdout {
             thread::spawn(move || {
@@ -1495,7 +1752,7 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                 }
             });
         }
-        
+
         let tx_err = tx.clone();
         if let Some(err) = stderr {
             thread::spawn(move || {
@@ -1508,7 +1765,7 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                 }
             });
         }
-        
+
         let status = child.wait().unwrap_or_else(|_| std::process::ExitStatus::default());
         *active_pid.lock().unwrap() = None;
         if !status.success() {
@@ -1519,7 +1776,7 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
             });
             return;
         }
-        
+
         let _ = tx.send(DownloadMsg::Progress(1.0, "Finished".to_string()));
         let _ = tx.send(DownloadMsg::Finished {
             version: version_str,

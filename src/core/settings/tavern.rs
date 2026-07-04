@@ -7,7 +7,28 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::Sender;
+use std::time::Duration;
+
+use crate::utils;
+
+// ============================================================================
+// 配置下载消息
+// ============================================================================
+
+/// 模板配置下载进度消息
+pub enum GenConfigMsg {
+    /// 下载进度 (已下载字节, 总字节)
+    Progress(u64, u64),
+    /// 下载完成
+    Done,
+    /// 下载出错
+    Error(String),
+    /// 正在尝试回退到直连
+    FallingBack,
+}
 
 // ============================================================================
 // 子结构体
@@ -608,6 +629,46 @@ fn parse_browser_launch(m: &YamlMap) -> (bool, String) {
 }
 
 impl TavernConfig {
+    /// 所有可能被系统保留的白名单 IP（跨所有模式）
+    /// 匹配这些 IP 的条目由系统管理，模式切换时自动移除旧模式专属条目
+    pub fn all_reserved_whitelist_ips() -> Vec<String> {
+        vec![
+            "::1".into(),
+            "127.0.0.1".into(),
+            "10.0.0.0/8".into(),
+            "172.16.0.0/12".into(),
+            "192.168.0.0/16".into(),
+            "0.0.0.0/0".into(),
+            "::/0".into(),
+        ]
+    }
+
+    /// 获取根据服务器模式/服务模式应写死的白名单 IP 列表
+    /// - 服务器关闭 → 本机回环
+    /// - 局域网模式 → 本机 + 内网段
+    /// - 互联网模式 → 全网放通
+    pub fn fixed_whitelist(server_mode_enabled: bool, service_mode: &str) -> Vec<String> {
+        if !server_mode_enabled {
+            // 服务器关闭：只锁定本机回环
+            return vec!["::1".into(), "127.0.0.1".into()];
+        }
+        match service_mode {
+            "Internet" => vec![
+                "::1".into(),
+                "127.0.0.1".into(),
+                "0.0.0.0/0".into(),
+                "::/0".into(),
+            ],
+            _ => vec![
+                "::1".into(),
+                "127.0.0.1".into(),
+                "10.0.0.0/8".into(),
+                "172.16.0.0/12".into(),
+                "192.168.0.0/16".into(),
+            ],
+        }
+    }
+
     /// 从 YAML 字符串解析
     pub fn from_yaml(yaml_str: &str) -> Option<Self> {
         // serde_yaml 0.9 不支持 !tag:yaml.org,2002:null 写法，预处理替换为 plain null
@@ -839,89 +900,59 @@ pub struct InstanceInfo {
 }
 
 impl TavernConfig {
-    /// 获取数据目录的根路径（项目本地，dev 时即项目 root/data）
-    fn data_dir() -> PathBuf {
-        let mut current_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
-        current_exe.pop();
-        let path_str = current_exe.to_string_lossy();
-        if path_str.contains("target\\debug") || path_str.contains("target\\release") {
-            current_exe.pop(); // target
-            current_exe.pop(); // debug/release
-        }
-        current_exe.push("data");
-        current_exe
-    }
-
-    /// 获取全局数据目录的根路径（%APPDATA%/astrabrew-launcher/data）
-    fn global_data_dir() -> PathBuf {
-        std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| Self::data_dir())
-            .join("astrabrew-launcher")
-            .join("data")
-    }
-
     /// 获取 builtin 酒馆实例路径
+    #[allow(dead_code)]
     pub fn builtin_instance_path() -> PathBuf {
-        let mut p = Self::data_dir();
-        p.push("sillytavern");
-        p
+        utils::app_paths().sillytavern_dir()
     }
 
     /// 根据数据模式和实例信息解析 config.yaml 路径
-    pub fn resolve_path(mode: ConfigMode, instance: Option<&InstanceInfo>) -> PathBuf {
+    pub fn resolve_path(mode: ConfigMode, instance: Option<&InstanceInfo>, global_data_path: Option<&str>) -> PathBuf {
+        let paths = utils::app_paths();
         match mode {
             ConfigMode::Current => {
                 if let Some(inst) = instance {
                     match inst.instance_type.as_str() {
                         "local" => {
                             if let Some(ref p) = inst.path {
-                                let mut path = PathBuf::from(p);
-                                path.push("config.yaml");
-                                return path;
+                                return PathBuf::from(p).join("config.yaml");
                             }
                         }
                         _ => {} // builtin → use default
                     }
                 }
-                let mut p = Self::builtin_instance_path();
-                p.push("config.yaml");
-                p
+                paths.tavern_config_file()
             }
             ConfigMode::Global => {
-                let mut p = Self::global_data_dir();
-                p.push("sillytavern");
-                p.push("data");
-                p.push("config.yaml");
-                p
+                if let Some(custom) = global_data_path {
+                    PathBuf::from(custom).join("config.yaml")
+                } else {
+                    paths.global_tavern_config_file()
+                }
             }
         }
     }
 
     /// 默认模板文件路径（用于生成配置）
     pub fn template_path() -> PathBuf {
-        let mut p = Self::data_dir();
-        p.push("sillytavern");
-        p.push("default");
-        p.push("config.yaml");
-        p
+        utils::app_paths().tavern_template_file()
     }
 
     /// 检查配置文件是否存在
-    pub fn config_exists(mode: ConfigMode, instance: Option<&InstanceInfo>) -> bool {
-        Self::resolve_path(mode, instance).exists()
+    pub fn config_exists(mode: ConfigMode, instance: Option<&InstanceInfo>, global_data_path: Option<&str>) -> bool {
+        Self::resolve_path(mode, instance, global_data_path).exists()
     }
 
     /// 从 YAML 文件加载配置
-    pub fn load_from_yaml(mode: ConfigMode, instance: Option<&InstanceInfo>) -> Option<Self> {
-        let path = Self::resolve_path(mode, instance);
+    pub fn load_from_yaml(mode: ConfigMode, instance: Option<&InstanceInfo>, global_data_path: Option<&str>) -> Option<Self> {
+        let path = Self::resolve_path(mode, instance, global_data_path);
         let content = fs::read_to_string(&path).ok()?;
         Self::from_yaml(&content)
     }
 
     /// 保存配置到 YAML 文件（保留未知字段）
-    pub fn save_to_yaml(&self, mode: ConfigMode, instance: Option<&InstanceInfo>) -> bool {
-        let path = Self::resolve_path(mode, instance);
+    pub fn save_to_yaml(&self, mode: ConfigMode, instance: Option<&InstanceInfo>, global_data_path: Option<&str>) -> bool {
+        let path = Self::resolve_path(mode, instance, global_data_path);
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -952,21 +983,176 @@ impl TavernConfig {
     }
 
     /// 从模板文件生成目标配置文件
+    #[allow(dead_code)]
     pub fn generate_from_template(target_path: &Path) -> bool {
         let template = Self::template_path();
-        if !template.exists() {
-            eprintln!("[tavern_config] 模板文件不存在: {:?}", template);
+        Self::copy_template_to(&template, target_path)
+    }
+
+    /// 从指定模板路径复制配置文件到目标
+    pub fn copy_template_to(template_path: &Path, target_path: &Path) -> bool {
+        if !template_path.exists() {
+            eprintln!("[tavern_config] 模板文件不存在: {:?}", template_path);
             return false;
         }
         if let Some(parent) = target_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        match fs::copy(&template, target_path) {
+        match fs::copy(template_path, target_path) {
             Ok(_) => true,
             Err(e) => {
                 eprintln!("[tavern_config] 复制模板失败: {}", e);
                 false
             }
         }
+    }
+
+    /// 生成配置后自动优化：打开局域网访问 / 启用IPv6 / 端口改为 11451
+    /// 直接操作 YAML 文件，无需经过 TavernConfig 结构体
+    pub fn optimize_after_generate(path: &Path) {
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[tavern_config] optimize: 读取文件失败: {}", e);
+                return;
+            }
+        };
+
+        let mut root: serde_yaml::Value = match serde_yaml::from_str(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[tavern_config] optimize: 解析 YAML 失败: {}", e);
+                return;
+            }
+        };
+
+        let m = match root.as_mapping_mut() {
+            Some(m) => m,
+            None => return,
+        };
+
+        // 端口改为 11451
+        upsert_u16(m, "port", 11451);
+        // 允许局域网访问
+        upsert_bool(m, "listen", true);
+
+        // protocol.ipv6 = true
+        {
+            let p = child_mut(m, "protocol");
+            upsert_bool(p, "ipv6", true);
+        }
+
+        let yaml_str = match serde_yaml::to_string(&root) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[tavern_config] optimize: 序列化 YAML 失败: {}", e);
+                return;
+            }
+        };
+
+        if let Err(e) = fs::write(path, yaml_str) {
+            eprintln!("[tavern_config] optimize: 写入文件失败: {}", e);
+        }
+    }
+
+    /// 在后台线程中下载默认模板配置文件
+    /// target_path: 目标配置文件路径
+    /// template_path: 默认模板缓存路径（下载后同时保存一份到此，供后续"恢复默认"使用）
+    pub fn start_download_template(
+        target_path: PathBuf,
+        template_path: PathBuf,
+        proxy_enabled: bool,
+        proxy_url: String,
+        tx: Sender<GenConfigMsg>,
+    ) {
+        std::thread::spawn(move || {
+            let direct_url = "https://raw.githubusercontent.com/SillyTavern/SillyTavern/refs/heads/release/default/config.yaml";
+
+            // 确保目标目录存在
+            if let Some(parent) = target_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            // 确保模板目录存在
+            if let Some(parent) = template_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+
+            // 构建 URL 列表：代理在前，直连在后
+            let urls: Vec<String> = if proxy_enabled && !proxy_url.is_empty() {
+                let proxy_clean = proxy_url.trim_end_matches('/');
+                vec![
+                    format!("{}/{}", proxy_clean, direct_url),
+                    direct_url.to_string(),
+                ]
+            } else {
+                vec![direct_url.to_string()]
+            };
+
+            for (i, url) in urls.iter().enumerate() {
+                if i > 0 {
+                    let _ = tx.send(GenConfigMsg::FallingBack);
+                }
+                match Self::download_single(&url, &target_path, &tx) {
+                    Ok(()) => {
+                        // 生成后自动优化：打开局域网/IPv6，端口 11451
+                        Self::optimize_after_generate(&target_path);
+                        // 同时保存一份到模板目录，供后续"恢复默认"使用
+                        let _ = fs::copy(&target_path, &template_path);
+                        let _ = tx.send(GenConfigMsg::Done);
+                        return;
+                    }
+                    Err(e) => {
+                        eprintln!("[tavern_config] 下载失败 ({}): {}", url, e);
+                    }
+                }
+            }
+
+            let _ = tx.send(GenConfigMsg::Error("所有下载地址均失败".to_string()));
+        });
+    }
+
+    /// 从单个 URL 下载配置文件，实时报告进度
+    fn download_single(
+        url: &str,
+        target_path: &Path,
+        tx: &Sender<GenConfigMsg>,
+    ) -> Result<(), String> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+        let mut resp = client
+            .get(url)
+            .header("User-Agent", "AstraBrew-Launcher/0.1.0")
+            .send()
+            .map_err(|e| format!("请求失败: {}", e))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!("HTTP {}", status));
+        }
+
+        let total = resp.content_length().unwrap_or(0);
+        let mut downloaded: u64 = 0;
+        let mut data = Vec::new();
+        let mut buf = [0u8; 8192];
+
+        loop {
+            let n = resp
+                .read(&mut buf)
+                .map_err(|e| format!("读取响应失败: {}", e))?;
+            if n == 0 {
+                break;
+            }
+            data.extend_from_slice(&buf[..n]);
+            downloaded += n as u64;
+            let _ = tx.send(GenConfigMsg::Progress(downloaded, total));
+        }
+
+        fs::write(target_path, &data)
+            .map_err(|e| format!("写入文件失败: {}", e))?;
+
+        Ok(())
     }
 }

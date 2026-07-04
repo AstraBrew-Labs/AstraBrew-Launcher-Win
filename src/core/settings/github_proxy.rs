@@ -1,117 +1,18 @@
-use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-// ─── 接口数据结构 ─────────────────────────────────────────────────────────────
+// ─── 节点数据结构 ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProxyNode {
     pub url: String,
-    pub server: String,
-    pub ip: String,
-    pub location: String,
-    pub latency: u64, // 接口返回的 latency（ms），仅供参考
-    pub speed: f64,   // KB/s
     pub tag: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ApiResponse {
-    code: u16,
-    msg: String,
-    total: usize,
-    update_time: String,
-    data: Vec<ProxyNode>,
-}
-
-// ─── 缓存结构 ─────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Serialize, Deserialize)]
-struct CacheFile {
-    /// Unix 时间戳（秒）——写入时间
-    cached_at: u64,
-    nodes: Vec<ProxyNode>,
-}
-
-const CACHE_TTL_SECS: u64 = 3 * 24 * 60 * 60; // 3 天
-const API_URL: &str = "https://api.akams.cn/github";
-
-fn cache_path() -> PathBuf {
-    let mut exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
-    exe.pop();
-    let path_str = exe.to_string_lossy().to_string();
-    let mut root = if path_str.contains("target\\debug") || path_str.contains("target\\release") {
-        let mut p = exe.clone();
-        p.pop();
-        p.pop();
-        p
-    } else {
-        exe
-    };
-    root.push("data");
-    root.push("github_proxy_cache.json");
-    root
-}
-
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
-/// 从磁盘读取缓存，若未过期则返回节点列表
-fn load_cache() -> Option<Vec<ProxyNode>> {
-    let path = cache_path();
-    if !path.exists() {
-        return None;
-    }
-    let content = fs::read_to_string(&path).ok()?;
-    let cache: CacheFile = serde_json::from_str(&content).ok()?;
-    if now_secs().saturating_sub(cache.cached_at) < CACHE_TTL_SECS {
-        Some(cache.nodes)
-    } else {
-        None
-    }
-}
-
-/// 将节点列表写入磁盘缓存
-fn save_cache(nodes: &[ProxyNode]) {
-    let cache = CacheFile {
-        cached_at: now_secs(),
-        nodes: nodes.to_vec(),
-    };
-    let path = cache_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    if let Ok(content) = serde_json::to_string_pretty(&cache) {
-        let _ = fs::write(path, content);
-    }
-}
-
-/// 从接口获取节点列表（阻塞）
-fn fetch_nodes_from_api() -> Result<Vec<ProxyNode>, String> {
-    let response = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?
-        .get(API_URL)
-        .send()
-        .map_err(|e| format!("请求失败: {e}"))?;
-
-    let api_resp: ApiResponse = response.json().map_err(|e| format!("解析响应失败: {e}"))?;
-
-    if api_resp.code == 200 {
-        Ok(api_resp.data)
-    } else {
-        Err(format!("接口错误: {}", api_resp.msg))
-    }
+    /// 节点来源："第三方"
+    pub source: String,
 }
 
 // ─── 延迟测试 ─────────────────────────────────────────────────────────────────
+
 
 /// 测试单个节点 URL 的实测延迟（ms），失败则返回 None
 /// 通过对 {url}/favicon.ico 发起 HEAD 请求来测量
@@ -132,25 +33,19 @@ pub fn measure_latency(url: &str) -> Option<u64> {
 
 // ─── 公开 API ─────────────────────────────────────────────────────────────────
 
-/// 异步状态机，供 UI 层轮询
+/// 节点加载状态（简化版，无 API 获取）
 #[derive(Debug, Clone, PartialEq)]
 pub enum NodeLoadState {
-    Idle,
     Loading,
     Done(Vec<NodeEntry>),
-    Error(String),
 }
 
 /// 带实测延迟的节点条目
 #[derive(Debug, Clone)]
 pub struct NodeEntry {
     pub url: String,
-    pub server: String,
-    pub ip: String,
-    pub location: String,
-    pub speed: f64,       // KB/s
-    pub api_latency: u64,  // 接口返回的参考延迟（ms）
     pub tag: String,
+    pub source: String,   // "第三方"
     /// 实测延迟（ms），None = 测试中或失败
     pub measured_ms: Arc<Mutex<Option<Option<u64>>>>,
 }
@@ -161,67 +56,79 @@ impl PartialEq for NodeEntry {
     }
 }
 
-/// 后台线程：获取节点列表 + 并发测速，通过 channel 回传结果
-pub fn start_fetch_and_test(tx: std::sync::mpsc::Sender<NodeLoadMsg>, force_refresh: bool) {
+/// 后台线程：加载默认节点列表 + 并发测速
+pub fn start_fetch_and_test(tx: std::sync::mpsc::Sender<NodeLoadMsg>, _force_refresh: bool) {
     std::thread::spawn(move || {
-        // 1. 读缓存（除非强制刷新）
-        let nodes = if !force_refresh { load_cache() } else { None };
-
-        let nodes = match nodes {
-            Some(n) => n,
-            None => match fetch_nodes_from_api() {
-                Ok(n) => {
-                    save_cache(&n);
-                    n
-                }
-                Err(e) => {
-                    let _ = tx.send(NodeLoadMsg::Error(e));
-                    return;
-                }
-            },
-        };
-
-        // 2. 构建条目列表（初始 measured_ms = None，表示"测试中"）
-        let entries: Vec<NodeEntry> = nodes
-            .iter()
-            .map(|n| NodeEntry {
-                url: n.url.clone(),
-                server: n.server.clone(),
-                ip: n.ip.clone(),
-                location: n.location.clone(),
-                speed: n.speed,
-                api_latency: n.latency,
-                tag: n.tag.clone(),
-                measured_ms: Arc::new(Mutex::new(None)),
-            })
-            .collect();
-
-        let _ = tx.send(NodeLoadMsg::Nodes(entries.clone()));
-
-        // 3. 多线程并发测速
-        let handles: Vec<_> = entries
-            .iter()
-            .map(|entry| {
-                let url = entry.url.clone();
-                let slot = Arc::clone(&entry.measured_ms);
-                let tx2 = tx.clone();
-                std::thread::spawn(move || {
-                    let result = measure_latency(&url);
-                    // Some(result)：测试完成，result 为 Some(ms) 或 None（超时）
-                    if let Ok(mut guard) = slot.lock() {
-                        *guard = Some(result);
-                    }
-                    let _ = tx2.send(NodeLoadMsg::LatencyUpdate);
-                })
-            })
-            .collect();
-
-        for h in handles {
-            let _ = h.join();
-        }
-
+        let nodes = fallback_nodes();
+        let _entries = build_and_test_nodes(&nodes, &tx);
         let _ = tx.send(NodeLoadMsg::Done);
     });
+}
+
+/// 将 ProxyNode 列表转为 NodeEntry 列表并启动并发测速
+fn build_and_test_nodes(
+    nodes: &[ProxyNode],
+    tx: &std::sync::mpsc::Sender<NodeLoadMsg>,
+) -> Vec<NodeEntry> {
+    let entries: Vec<NodeEntry> = nodes
+        .iter()
+        .map(|n| NodeEntry {
+            url: n.url.clone(),
+            tag: n.tag.clone(),
+            source: n.source.clone(),
+            measured_ms: Arc::new(Mutex::new(None)),
+        })
+        .collect();
+
+    let _ = tx.send(NodeLoadMsg::Nodes(entries.clone()));
+
+    let handles: Vec<_> = entries
+        .iter()
+        .map(|entry| {
+            let url = entry.url.clone();
+            let slot = Arc::clone(&entry.measured_ms);
+            let tx2 = tx.clone();
+            std::thread::spawn(move || {
+                let result = measure_latency(&url);
+                if let Ok(mut guard) = slot.lock() {
+                    *guard = Some(result);
+                }
+                let _ = tx2.send(NodeLoadMsg::LatencyUpdate);
+            })
+        })
+        .collect();
+
+    for h in handles {
+        let _ = h.join();
+    }
+
+    entries
+}
+
+/// 默认节点列表
+fn fallback_nodes() -> Vec<ProxyNode> {
+    vec![
+        ProxyNode {
+            url: "https://gh-proxy.org/".to_string(),
+            tag: "首选".to_string(),
+            source: "第三方".to_string(),
+        },
+        ProxyNode {
+            url: "https://ghfast.top/".to_string(),
+            tag: "备用".to_string(),
+            source: "第三方".to_string(),
+        },
+        ProxyNode {
+            url: "https://github-proxy.memory-echoes.cn/".to_string(),
+            tag: "备用".to_string(),
+            source: "第三方".to_string(),
+        },
+        ProxyNode {
+            url: "https://github.dpik.top/".to_string(),
+            tag: "备用".to_string(),
+            source: "第三方".to_string(),
+        },
+    ]
 }
 
 /// 通道消息
@@ -230,5 +137,4 @@ pub enum NodeLoadMsg {
     Nodes(Vec<NodeEntry>),
     LatencyUpdate,
     Done,
-    Error(String),
 }

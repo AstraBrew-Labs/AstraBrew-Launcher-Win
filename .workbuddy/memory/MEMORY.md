@@ -1,5 +1,11 @@
 # MEMORY.md - 项目长期记忆
 
+## 规范
+不要使用cargo run启动项目，也不要用于测试
+只能使用cargo check检查项目
+代码要严格模式，warning要修复，error要修复。
+仅Windows 10以上的平台，不用考虑其他平台。
+
 ## 项目基础信息
 - **项目名**：AstraBrew Launcher（星酿启动器）
 - **技术栈**：Rust + egui/eframe 0.33，egui-phosphor 图标库
