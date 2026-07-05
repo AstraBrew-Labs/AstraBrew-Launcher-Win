@@ -3,8 +3,8 @@
 //! 写入/删除 HKCU\Software\Microsoft\Windows\CurrentVersion\Run 下的 AstraBrew 键值。
 //! HKCU 级别无需管理员权限。
 
-const REG_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
-const REG_VALUE_NAME: &str = "AstraBrewLauncher";
+pub const REG_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+pub const REG_VALUE_NAME: &str = "AstraBrewLauncher";
 
 /// 启用自启动：将当前 exe 路径写入注册表 Run 键
 pub fn enable() -> Result<(), String> {

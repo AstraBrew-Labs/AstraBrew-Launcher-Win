@@ -1,7 +1,7 @@
 //! 工具函数模块 — Windows 标准路径管理
 //!
 //! ```text
-//! {{软件所在位置}}/    ← 根目录 (root)
+//! %AppData%/AstraBrew Launcher/    ← 根目录 (root)
 //! ├── data/                   ← 软件数据目录
 //! │   ├── default/            ← 默认数据子目录
 //! │   │   └── sillytavern/        ← 酒馆数据子目录
@@ -13,17 +13,13 @@
 //! │   │       └── default-user/
 //! │   │           └── settings.json ← 全局模式酒馆WebUI设置
 //! │   └── local_instances.json
-//! ├── sillytavern/            ← 酒馆核心文件目录 (ST installation) (在线下载实例)
-//! └── config.json             ← 启动器配置文件
+//! ├── logs/                    ← 软件日志目录
+//! ├── sillytavern/             ← 酒馆核心文件目录 (ST installation) (在线下载实例)
+//! └── config.json              ← 启动器配置文件
 //!
-//! %AppData%/AstraBrew Launcher/         ← 日志目录 (logs)
 //!
-//! %LocalAppData%/AstraBrew Launcher/    ← 缓存目录 (caches)
-//!
-//! %Temp%/AstraBrew Launcher/            ← 临时目录 (temp)
+//! %Temp%/AstraBrew Launcher/            ← 临时和缓存目录 (temp)
 //! ```
-//!
-//! 开发调试时设置 `ASTRA_DEV=1`，所有路径切换为项目本地 `data/` 子目录。
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -1185,15 +1181,17 @@ pub const TEMPLATE_TAVERN_SETTINGS_JSON: &str = r#####"{
 // ============================================================================
 
 /// 应用所有标准 Windows 路径的集中管理器
+///
+/// 所有路径统一基于 `%AppData%/AstraBrew Launcher/`，开发与生产模式一致。
 #[derive(Debug, Clone)]
 pub struct AppPaths {
-    /// `{{软件所在位置}}/` — 根目录 (exe 所在目录)
+    /// `%AppData%/AstraBrew Launcher/` — 根目录
     pub root: PathBuf,
-    /// `%AppData%/AstraBrew Launcher/` — 日志目录
+    /// `root/logs/` — 软件日志目录
     pub logs: PathBuf,
-    /// `%LocalAppData%/AstraBrew Launcher/` — 缓存目录
+    /// `root/caches/` — 缓存目录
     pub caches: PathBuf,
-    /// `%Temp%/AstraBrew Launcher/` — 临时目录
+    /// `%Temp%/AstraBrew Launcher/` — 临时和缓存合并目录
     pub temp: PathBuf,
     /// `root/data/` — 软件数据目录
     pub data: PathBuf,
@@ -1217,74 +1215,24 @@ impl AppPaths {
     // -- 初始化 --
 
     fn init() -> Self {
-        let dev = Self::is_dev_mode();
+        let root = PathBuf::from(
+            std::env::var("APPDATA").unwrap_or_else(|_| ".".into()),
+        )
+        .join("AstraBrew Launcher");
 
-        if dev {
-            let base = Self::dev_root();
-            Self {
-                root: base.clone(),
-                data: base.join("data"),
-                logs: base.join("logs"),
-                caches: base.join("caches"),
-                temp: base.join("temp"),
-            }
-        } else {
-            Self {
-                root: Self::prod_root(),
-                data: Self::prod_root().join("data"),
-                logs: Self::logs_root(),
-                caches: Self::cache_root(),
-                temp: Self::temp_root(),
-            }
+        Self {
+            data: root.join("data"),
+            logs: root.join("logs"),
+            caches: root.join("caches"),
+            temp: Self::temp_root(),
+            root,
         }
     }
 
-    fn is_dev_mode() -> bool {
-        std::env::var("ASTRA_DEV").as_deref() == Ok("1")
-    }
-
-    /// 开发模式根目录 → 项目根目录（模拟 exe 所在位置）
-    fn dev_root() -> PathBuf {
-        let mut exe = std::env::current_exe().unwrap_or_default();
-        exe.pop(); // exe name
-        exe.pop(); // debug/release
-        exe.pop(); // target
-        exe
-    }
-
-    // -- 生产模式 Windows 标准路径 --
-
-    /// 生产根目录 = exe 所在目录
-    fn prod_root() -> PathBuf {
-        let mut exe = std::env::current_exe().unwrap_or_default();
-        exe.pop(); // 去掉 exe 文件名，保留目录
-        exe
-    }
-
-    /// 日志目录 = %AppData%/AstraBrew Launcher/
-    fn logs_root() -> PathBuf {
-        Self::win_env_path("APPDATA").join("AstraBrew Launcher")
-    }
-
-    /// 缓存目录 = %LocalAppData%/AstraBrew Launcher/
-    fn cache_root() -> PathBuf {
-        Self::win_env_path("LOCALAPPDATA").join("AstraBrew Launcher")
-    }
-
-    /// 临时目录 = %Temp%/AstraBrew Launcher/
+    /// 临时/缓存目录 = %Temp%/AstraBrew Launcher/
     fn temp_root() -> PathBuf {
-        Self::win_env_path("TEMP").join("AstraBrew Launcher")
-    }
-
-    /// 读取 Windows 环境变量，回退到 exe 所在目录的临时子目录
-    fn win_env_path(var: &str) -> PathBuf {
-        std::env::var(var)
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                let mut fallback = std::env::current_exe().unwrap_or_default();
-                fallback.pop();
-                fallback.join(var)
-            })
+        PathBuf::from(std::env::var("TEMP").unwrap_or_else(|_| ".".into()))
+            .join("AstraBrew Launcher")
     }
 
     /// 创建所有必要的目录

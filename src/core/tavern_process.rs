@@ -423,8 +423,11 @@ impl TavernProcess {
         // 获取 pid
         if let Some(ref child) = self.child {
             let pid = child.id();
-            // 发送 SIGTERM（优雅关闭）
-            let _ = Command::new("kill").arg(pid.to_string()).spawn();
+            // 发送 taskkill（不带 /F = 优雅关闭，等效 SIGTERM）
+            let _ = std::process::Command::new("taskkill")
+                .arg("/PID")
+                .arg(pid.to_string())
+                .spawn();
         }
         self.waiting_exit = true;
     }

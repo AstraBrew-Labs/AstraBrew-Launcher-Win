@@ -23,10 +23,7 @@ use std::process::Command;
 /// PM2 是 Node.js 脚本（shebang `#!/usr/bin/env node`），
 /// 子进程 PATH 必须包含 node 所在目录。
 fn pm2_cmd() -> Command {
-    let mut cmd = Command::new(super::env_detect::resolve_command("pm2"));
-    let current_path = std::env::var("PATH").unwrap_or_default();
-    let new_path = format!("/opt/homebrew/bin:/usr/local/bin:{}", current_path);
-    cmd.env("PATH", new_path);
+    let cmd = Command::new(super::env_detect::resolve_command("pm2"));
     cmd
 }
 
@@ -343,19 +340,25 @@ impl Pm2Manager {
 
     // ---- 日志操作 ----
 
-    /// 获取 PM2 stdout 日志文件路径（`~/.pm2/logs/<name>-out.log`）
+    /// 获取 PM2 stdout 日志文件路径（`%USERPROFILE%\.pm2\logs\<name>-out.log`）
     fn out_log_path(&self) -> Option<std::path::PathBuf> {
-        let home = std::env::var("HOME").ok()?;
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .ok()?;
         Some(std::path::PathBuf::from(home)
-            .join(".pm2/logs")
+            .join(".pm2")
+            .join("logs")
             .join(format!("{}-out.log", self.process_name)))
     }
 
-    /// 获取 PM2 stderr 日志文件路径（`~/.pm2/logs/<name>-error.log`）
+    /// 获取 PM2 stderr 日志文件路径（`%USERPROFILE%\.pm2\logs\<name>-error.log`）
     fn error_log_path(&self) -> Option<std::path::PathBuf> {
-        let home = std::env::var("HOME").ok()?;
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .ok()?;
         Some(std::path::PathBuf::from(home)
-            .join(".pm2/logs")
+            .join(".pm2")
+            .join("logs")
             .join(format!("{}-error.log", self.process_name)))
     }
 

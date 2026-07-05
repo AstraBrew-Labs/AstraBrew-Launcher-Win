@@ -5,6 +5,8 @@
 *.vue
 
 /dist
+/cache
+/temp
 # 更新签名私钥（绝不上传）
 keys/update_key.pem
 .DS_Store

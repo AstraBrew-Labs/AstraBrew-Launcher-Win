@@ -1,90 +1,151 @@
-//! 网络相关功能：macOS 系统代理读取、Github 多节点连接测试
-//! 跨平台兼容（优先 macOS）
+//! 网络相关功能：Windows 系统代理读取、Github 多节点连接测试
 
 use std::io::Read;
 use std::process::Command;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
+use std::os::windows::process::CommandExt;
 
-// ─── macOS 系统代理读取 ──────────────────────────────────────────────────────
+use winreg::enums::*;
 
-/// 通过 `scutil --proxy` 读取 macOS 系统代理设置
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+// ─── Windows 系统代理读取 ─────────────────────────────────────────────────────
+
+/// 读取 Windows 系统代理设置，返回 `Some((代理地址, 是否启用))` 或 `None`。
 ///
-/// 优先 HTTPS 代理，回退到 HTTP 代理。
-/// 返回 `Some((代理地址, 是否启用))` 或 `None`（无代理/读取失败）。
+/// 优先级（从高到低）：
+/// 1. 环境变量 `HTTPS_PROXY` / `HTTP_PROXY`（用户手动覆盖）
+/// 2. Windows 注册表中的 IE/WinINET 代理（用户通过"设置→网络和 Internet→代理"配置）
+/// 3. WinHTTP 代理（`netsh winhttp show proxy`，通常用于系统服务）
 pub fn read_system_proxy() -> Option<(String, bool)> {
-    let output = Command::new("scutil")
-        .arg("--proxy")
+    // 环境变量优先（用户级覆盖）
+    if let Some(result) = read_env_proxy() {
+        return Some(result);
+    }
+
+    // 注册表 IE/WinINET 代理（Windows 系统设置） — 这是绝大多数用户配置代理的地方
+    if let Some(result) = read_registry_proxy() {
+        return Some(result);
+    }
+
+    // WinHTTP 代理（命令行配置）— 最后的回退
+    read_winhttp_proxy()
+}
+
+/// Windows 专用别名：供 process.rs 调用
+pub fn read_windows_system_proxy() -> Option<(String, bool)> {
+    read_system_proxy()
+}
+
+/// 从环境变量读取代理
+fn read_env_proxy() -> Option<(String, bool)> {
+    for var in &["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"] {
+        if let Ok(server) = std::env::var(var) {
+            let trimmed = server.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some((trimmed, true));
+            }
+        }
+    }
+    None
+}
+
+/// 从 Windows 注册表读取 IE/WinINET 代理设置
+///
+/// 注册表路径：
+/// `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`
+///
+/// 读取的键：
+/// - `ProxyEnable` (REG_DWORD): 0 = 禁用, 非 0 = 启用
+/// - `ProxyServer` (REG_SZ): 代理地址，格式如 `127.0.0.1:7890`
+///   或 `http=127.0.0.1:7890;https=127.0.0.1:7890`
+fn read_registry_proxy() -> Option<(String, bool)> {
+    let hkcu = winreg::RegKey::predef(HKEY_CURRENT_USER);
+    let subkey = hkcu
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+        .ok()?;
+
+    // 读取代理是否启用
+    let enabled: u32 = subkey.get_value("ProxyEnable").unwrap_or(0);
+    if enabled == 0 {
+        // 代理已禁用，但仍可能存在 ProxyServer 值（用户之前配置过但关了）
+        return None;
+    }
+
+    // 读取代理服务器地址
+    let server: String = subkey.get_value("ProxyServer").ok()?;
+    let server = server.trim().to_string();
+    if server.is_empty() {
+        return None;
+    }
+
+    // 解析代理地址：支持 `http=host:port;https=host:port` 格式
+    // 优先返回 HTTPS 代理，其次 HTTP，最后取第一个
+    let addr = resolve_proxy_server(&server);
+
+    Some((addr, true))
+}
+
+/// 从 `ProxyServer` 值中解析出可用的代理地址
+///
+/// 支持格式：
+/// - `127.0.0.1:7890` — 单地址
+/// - `http=127.0.0.1:7890;https=127.0.0.1:7890` — 按协议分离
+fn resolve_proxy_server(server: &str) -> String {
+    if server.contains('=') {
+        // 按协议分离的格式，优先取 https，其次 http
+        for proto in &["https=", "http=", "socks="] {
+            if let Some(pos) = server.find(proto) {
+                let start = pos + proto.len();
+                let end = server[start..]
+                    .find(';')
+                    .map(|p| start + p)
+                    .unwrap_or(server.len());
+                let addr = server[start..end].trim();
+                if !addr.is_empty() {
+                    return addr.to_string();
+                }
+            }
+        }
+    }
+    // 单地址格式，直接返回
+    server.to_string()
+}
+
+/// 通过 netsh winhttp 读取 WinHTTP 代理
+fn read_winhttp_proxy() -> Option<(String, bool)> {
+    let output = Command::new("netsh")
+        .args(["winhttp", "show", "proxy"])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
 
     let text = String::from_utf8_lossy(&output.stdout);
-    let text_lower = text.to_lowercase();
 
-    // 检查是否有错误输出（scutil 把错误信息也打到 stdout）
-    if text_lower.contains("not configured") || text_lower.contains("no such") {
+    // 检查是否"直接访问"（即未配置代理）
+    let has_direct = text
+        .lines()
+        .any(|l| l.contains("直接访问") || l.contains("Direct access"));
+    if has_direct {
         return None;
     }
 
-    // 解析 HTTPSProxy / HTTPProxy
-    let mut https_enable = false;
-    let mut https_proxy = String::new();
-    let mut https_port: u16 = 0;
-    let mut http_enable = false;
-    let mut http_proxy = String::new();
-    let mut http_port: u16 = 0;
-
     for line in text.lines() {
         let trimmed = line.trim();
-        if let Some(val) = trimmed.strip_prefix("HTTPSEnable : ") {
-            https_enable = val.trim() == "1";
-        } else if let Some(val) = trimmed.strip_prefix("HTTPSProxy : ") {
-            https_proxy = val.trim().to_string();
-        } else if let Some(val) = trimmed.strip_prefix("HTTPSPort : ") {
-            https_port = val.trim().parse().unwrap_or(0);
-        } else if let Some(val) = trimmed.strip_prefix("HTTPEnable : ") {
-            http_enable = val.trim() == "1";
-        } else if let Some(val) = trimmed.strip_prefix("HTTPProxy : ") {
-            http_proxy = val.trim().to_string();
-        } else if let Some(val) = trimmed.strip_prefix("HTTPPort : ") {
-            http_port = val.trim().parse().unwrap_or(0);
+        if let Some(rest) = trimmed.strip_prefix("代理服务器:") {
+            let server = rest.trim().to_string();
+            if !server.is_empty() {
+                return Some((server, true));
+            }
+        }
+        if let Some(rest) = trimmed.strip_prefix("Proxy Server:") {
+            let server = rest.trim().to_string();
+            if !server.is_empty() {
+                return Some((server, true));
+            }
         }
     }
-
-    // 优先 HTTPS 代理
-    if https_enable && !https_proxy.is_empty() {
-        let addr = if https_port > 0 {
-            format!("{}:{}", https_proxy, https_port)
-        } else {
-            https_proxy
-        };
-        return Some((addr, true));
-    }
-
-    // 回退 HTTP 代理
-    if http_enable && !http_proxy.is_empty() {
-        let addr = if http_port > 0 {
-            format!("{}:{}", http_proxy, http_port)
-        } else {
-            http_proxy
-        };
-        return Some((addr, true));
-    }
-
-    // 再检查环境变量
-    if let Ok(server) = std::env::var("HTTPS_PROXY") {
-        return Some((server, true));
-    }
-    if let Ok(server) = std::env::var("https_proxy") {
-        return Some((server, true));
-    }
-    if let Ok(server) = std::env::var("HTTP_PROXY") {
-        return Some((server, true));
-    }
-    if let Ok(server) = std::env::var("http_proxy") {
-        return Some((server, true));
-    }
-
     None
 }
 
@@ -151,7 +212,7 @@ pub fn test_github_multi(
     // 构建 reqwest client
     let mut builder = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(10))
-        .user_agent("AstraBrew-Launcher-macOS");
+        .user_agent("AstraBrew-Launcher-Win");
 
     match proxy_mode {
         "custom" => {
@@ -285,10 +346,9 @@ pub fn test_github_multi(
         }
     }
 
-    // 下载速度测试
+    // 下载速度测试（使用 GitHub 自动归档下载，稳定可靠）
     let mut speed_test_url =
-        "https://github.com/al01cn/sillyTavern-launcher/releases/download/v0.1.5/SillyTavern.Launcher.GUI_x64.app.tar.gz"
-            .to_string();
+        "https://github.com/SillyTavern/SillyTavern/archive/refs/heads/release.zip".to_string();
     if let Some(ref accel) = accelerate_url {
         let accel_base = accel.trim_end_matches('/');
         speed_test_url = format!("{}/{}", accel_base, speed_test_url);
@@ -345,8 +405,8 @@ pub fn test_github_multi(
                 let mut warning = None;
                 let mut error = None;
 
+                let status_u16 = status.as_u16();
                 if accelerate_url.is_some() {
-                    let status_u16 = status.as_u16();
                     if status_u16 == 403 {
                         success = true;
                         warning = Some("加速地址可用，但该资源无法加速 (403)".to_string());
@@ -364,6 +424,12 @@ pub fn test_github_multi(
                             error = Some(format!("HTTP {}", status));
                         }
                     }
+                } else if status_u16 == 403 {
+                    warning = Some("GitHub 拒绝访问 (403)，可能需要代理或加速地址".to_string());
+                    error = Some("HTTP 403".to_string());
+                } else if status_u16 == 404 {
+                    warning = Some("测速文件未找到 (404)，请检查网络连接".to_string());
+                    error = Some("HTTP 404".to_string());
                 } else {
                     error = Some(format!("HTTP {}", status));
                 }
@@ -518,38 +584,53 @@ pub fn get_github_multi_test_result() -> Option<Vec<GithubMultiTestItem>> {
 
 // ─── 本机 IP 地址检测 ─────────────────────────────────────────────────────────
 
-/// 获取局域网 IPv4 地址（解析 ifconfig，跳过回环和链路本地）
+/// 获取局域网 IPv4 地址（解析 ipconfig）
 pub fn get_lan_ipv4() -> Option<String> {
-    let output = Command::new("ifconfig").output().ok()?;
+    let output = Command::new("ipconfig")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     for line in text.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("inet ") {
-            let ip = rest.split_whitespace().next()?;
-            if ip == "127.0.0.1" || ip.starts_with("169.254.") {
-                continue;
+        // 格式: "IPv4 地址 . . . . . . . . . . . . : 192.168.1.100"
+        if let Some(rest) = trimmed.strip_prefix("IPv4") {
+            if let Some(ip) = rest.split(':').nth(1) {
+                let ip = ip.trim();
+                if ip != "127.0.0.1" && !ip.starts_with("169.254.") {
+                    return Some(ip.to_string());
+                }
             }
-            return Some(ip.to_string());
+        }
+        // 英文格式: "IPv4 Address. . . . . . . . . . . : 192.168.1.100"
+        if trimmed.starts_with("IPv4 Address") || trimmed.starts_with("IP Address") {
+            if let Some(ip) = trimmed.split(':').last() {
+                let ip = ip.trim();
+                if ip != "127.0.0.1" && !ip.starts_with("169.254.") {
+                    return Some(ip.to_string());
+                }
+            }
         }
     }
     None
 }
 
-/// 获取局域网 IPv6 地址（解析 ifconfig，跳过回环和链路本地 fe80::）
-/// 仅返回全局 IPv6 地址（可用于 LAN 跨设备 HTTP 访问）
+/// 获取局域网 IPv6 地址（解析 ipconfig，跳过回环和链路本地 fe80::）
 pub fn get_lan_ipv6() -> Option<String> {
-    let output = Command::new("ifconfig").output().ok()?;
+    let output = Command::new("ipconfig")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     for line in text.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("inet6 ") {
-            let raw = rest.split_whitespace().next()?;
-            // 去掉 zone id 后缀（%en0 等）
-            let ip = raw.split('%').next().unwrap_or(raw);
-            if ip == "::1" || ip.starts_with("fe80:") {
-                continue;
+        if let Some(rest) = trimmed.strip_prefix("IPv6") {
+            if let Some(ip) = rest.split(':').nth(1) {
+                let ip = ip.trim().trim_start_matches(": ").trim();
+                if ip != "::1" && !ip.starts_with("fe80:") && !ip.is_empty() {
+                    return Some(ip.to_string());
+                }
             }
-            return Some(ip.to_string());
         }
     }
     None
@@ -898,29 +979,40 @@ pub fn is_local_ip(ip: &str) -> bool {
     LOCAL_IP_SET.contains(trimmed)
 }
 
-/// 本机所有网卡 IP 的集合（启动时扫描一次后缓存）。
-///
-/// 用 `LazyLock` 实现首次访问时填充。包含：
-/// - 局域网 IPv4（跳过回环和链路本地 169.254.x.x）
-/// - 全局 IPv6（跳过回环 ::1 和链路本地 fe80::）
-/// 同时展开含/不含 zone id（`%en0`）两种形式，方便匹配。
+/// 本机所有网卡 IP 的集合（启动时扫描一次后缓存）
 static LOCAL_IP_SET: LazyLock<std::collections::HashSet<String>> = LazyLock::new(|| {
     let mut set = std::collections::HashSet::new();
-    if let Ok(output) = Command::new("ifconfig").output() {
+    if let Ok(output) = Command::new("ipconfig")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
         let text = String::from_utf8_lossy(&output.stdout);
         for line in text.lines() {
             let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("inet ") {
-                if let Some(ip) = rest.split_whitespace().next() {
+            // 解析 IPv4 地址
+            if let Some(rest) = trimmed.strip_prefix("IPv4") {
+                if let Some(ip) = rest.split(':').nth(1) {
+                    let ip = ip.trim();
                     if ip != "127.0.0.1" && !ip.starts_with("169.254.") {
                         set.insert(ip.to_string());
                     }
                 }
-            } else if let Some(rest) = trimmed.strip_prefix("inet6 ") {
-                if let Some(raw) = rest.split_whitespace().next() {
-                    let base = raw.split('%').next().unwrap_or(raw);
-                    if base != "::1" && !base.starts_with("fe80:") {
-                        set.insert(base.to_string());
+            }
+            // 解析 IPv6 地址
+            if let Some(rest) = trimmed.strip_prefix("IPv6") {
+                if let Some(ip) = rest.split(':').nth(1) {
+                    let ip = ip.trim().trim_start_matches(": ").trim();
+                    if ip != "::1" && !ip.starts_with("fe80:") && !ip.is_empty() {
+                        set.insert(ip.to_string());
+                    }
+                }
+            }
+            // 英文回退
+            if let Some(rest) = trimmed.strip_prefix("IPv4 Address") {
+                if let Some(ip) = rest.split(':').last() {
+                    let ip = ip.trim();
+                    if ip != "127.0.0.1" && !ip.starts_with("169.254.") {
+                        set.insert(ip.to_string());
                     }
                 }
             }

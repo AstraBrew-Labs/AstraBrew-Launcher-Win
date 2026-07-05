@@ -1,70 +1,12 @@
-// objc 0.2 宏内使用旧式 `cargo-clippy` cfg，Rust 2024 默认报 warning
-#![allow(unexpected_cfgs)]
-
 use eframe::egui;
 use egui::{FontData, FontDefinitions, FontFamily};
-
-/// 设置 macOS 进程显示名称（Dock 栏、菜单栏、Cmd+Tab 切换器）
-///
-/// 直接运行二进制时，macOS 默认显示进程名（即 `Cargo.toml` 中的 `package.name`）。
-/// 通过 `NSProcessInfo.setProcessName` 覆盖为正确的中/英文显示名称。
-#[cfg(target_os = "macos")]
-fn set_macos_process_name(lang: &pages::settings::Language) {
-    use objc::{class, msg_send, sel};
-    #[allow(unused_imports)]
-    use objc::sel_impl;
-
-    let effective = lang::effective_language(lang);
-    let name = match effective {
-        pages::settings::Language::Chinese => "星酿启动器",
-        pages::settings::Language::English => "AstraBrew Launcher",
-        pages::settings::Language::System => "AstraBrew Launcher", // 不应到达，安全回退
-    };
-
-    let c_name = std::ffi::CString::new(name).expect("CString::new failed");
-    unsafe {
-        let ns_string: *mut objc::runtime::Object = msg_send![class!(NSString), alloc];
-        let ns_string: *mut objc::runtime::Object =
-            msg_send![ns_string, initWithUTF8String: c_name.as_ptr()];
-        let process_info: *mut objc::runtime::Object = msg_send![class!(NSProcessInfo), processInfo];
-        let _: () = msg_send![process_info, setProcessName: ns_string];
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn set_macos_process_name(_lang: &pages::settings::Language) {}
-
-/// 检测是否运行在 .app bundle 内（即已打包的 macOS 应用）
-#[cfg(target_os = "macos")]
-fn is_running_in_bundle() -> bool {
-    std::env::current_exe()
-        .map(|p| {
-            p.to_string_lossy()
-                .contains(".app/Contents/MacOS/")
-        })
-        .unwrap_or(false)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn is_running_in_bundle() -> bool {
-    false
-}
 
 fn main() -> eframe::Result {
     let settings = pages::settings::SettingsState::load();
 
-    // 必须在创建窗口之前设置，否则 Dock/菜单栏会先显示进程名再切换
-    set_macos_process_name(&settings.language);
-
-    // eframe 0.33 在不提供图标时会用紫色 e 默认图标覆盖 Dock 图标。
-    // - .app bundle：传 IconData::default() 让 eframe 跳过覆盖，系统使用 bundle 内 icon.icns
-    // - cargo run：加载预处理的 icon_eframe.png（从 ICNS 提取 + macOS 标准圆角/留白）
-    let icon = if is_running_in_bundle() {
-        egui::IconData::default()
-    } else {
-        eframe::icon_data::from_png_bytes(include_bytes!("../icons/icon_eframe.png"))
-            .expect("Failed to load icon_eframe.png")
-    };
+    // 窗口图标
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../icons/icon_eframe.png"))
+        .unwrap_or_else(|_| egui::IconData::default());
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1280.0, 720.0])
@@ -142,11 +84,23 @@ mod pages;
 mod ui;
 mod utils;
 
-use core::desktop_webview::DesktopWebView;
 use pages::console::ConsoleState;
 use pages::settings::{SettingsState, SettingsTab, StartMode, Theme};
 use pages::resource_manage::ResourceManageState;
 use pages::tavern_config::TavernConfigUI;
+
+/// 环境安装进度消息（Git/Node.js 下载安装）
+#[derive(Debug, Clone)]
+pub enum EnvInstallProgress {
+    /// 状态消息
+    Status(String),
+    /// 进度 0.0-1.0
+    Progress(f32),
+    /// 错误消息
+    Error(String),
+    /// 安装完成
+    Finished,
+}
 
 struct MyApp {
     current_page: Page,
@@ -166,10 +120,18 @@ struct MyApp {
     console_state: ConsoleState,
     // 资源管理状态
     resource_manage_state: ResourceManageState,
-    // brew 任务状态
+    // 临时占位：桌面模式 WebView（Windows 版本待实现）
+    // desktop_webview 相关功能暂不可用
+    #[allow(dead_code)]
+    desktop_mode_enabled: bool,
+    // brew 安装任务状态（macOS Homebrew → Windows 待替换）
+    #[allow(dead_code)]
     git_install_state: pages::settings::BrewTaskState,
+    #[allow(dead_code)]
     nodejs_install_state: pages::settings::BrewTaskState,
+    #[allow(dead_code)]
     caddy_install_state: pages::settings::BrewTaskState,
+    #[allow(dead_code)]
     pm2_install_state: pages::settings::BrewTaskState,
 
     // Github 节点状态
@@ -183,8 +145,6 @@ struct MyApp {
     // 异步路径检查
     path_check_rx: Option<std::sync::mpsc::Receiver<PathCheckResult>>,
     last_path_check: Option<std::time::Instant>,
-    // 桌面模式 WebView
-    desktop_webview: Option<DesktopWebView>,
     // 自动更新检测通道
     updater_rx: Option<std::sync::mpsc::Receiver<crate::core::updater::UpdateStatus>>,
 }
@@ -228,6 +188,7 @@ impl MyApp {
             ),
             console_state: ConsoleState::new(),
             resource_manage_state: ResourceManageState::new(),
+            desktop_mode_enabled: false,
             git_install_state: pages::settings::BrewTaskState::new(),
             nodejs_install_state: pages::settings::BrewTaskState::new(),
             caddy_install_state: pages::settings::BrewTaskState::new(),
@@ -239,7 +200,6 @@ impl MyApp {
             export_path_picker_rx: None,
             path_check_rx: None,
             last_path_check: None,
-            desktop_webview: None,
             updater_rx: None,
         }
     }
@@ -399,31 +359,6 @@ impl eframe::App for MyApp {
 
         // 右侧页面区域
         let mut old_state = self.settings_state.clone();
-
-        // 轮询 brew 任务日志
-        if let Some(new_ver) = self.git_install_state.poll() {
-            self.settings_state.git_version = Some(new_ver);
-        }
-        if let Some(new_ver) = self.nodejs_install_state.poll() {
-            self.settings_state.nodejs_version = new_ver;
-        }
-        if let Some(new_ver) = self.caddy_install_state.poll() {
-            self.settings_state.caddy_version = Some(new_ver);
-        }
-        if let Some(new_ver) = self.pm2_install_state.poll() {
-            self.settings_state.pm2_version = Some(new_ver);
-        }
-        if self.git_install_state.running
-            || self.nodejs_install_state.running
-            || self.caddy_install_state.running
-            || self.pm2_install_state.running
-            || self.git_install_state.done_at.is_some()
-            || self.nodejs_install_state.done_at.is_some()
-            || self.caddy_install_state.done_at.is_some()
-            || self.pm2_install_state.done_at.is_some()
-        {
-            ctx.request_repaint();
-        }
 
         // 轮询 Github 节点加载消息
         {
@@ -621,100 +556,8 @@ impl eframe::App for MyApp {
         // 每帧轮询酒馆进程状态
         self.console_state.poll(&self.settings_state.language);
 
-        // ---- 桌面模式 WebView 管理 ----
-        if self.settings_state.start_mode == StartMode::Desktop {
-            // 每帧同步导出路径设置到 WebView（用户在设置页修改后即时生效）
-            DesktopWebView::set_export_path(&self.settings_state.tavern_export_path);
-
-            // 日志中出现 "Go to: http://..." → 首次自动打开 WebView
-            if let Some(ref url) = self.console_state.tavern_url {
-                if self.desktop_webview.is_none() && !self.console_state.webview_auto_opened {
-                    let title = format!(
-                        "SillyTavern - v{}",
-                        self.console_state.instance_version
-                    );
-                    match DesktopWebView::open(url, &title, self.settings_state.tavern_export_path.clone()) {
-                        Ok(wv) => {
-                            self.console_state.add_log(&format!(
-                                "[系统] 桌面模式 WebView 已打开: {}",
-                                url
-                            ));
-                            self.desktop_webview = Some(wv);
-                            self.console_state.webview_auto_opened = true;
-                        }
-                        Err(e) => {
-                            self.console_state.add_log(&format!(
-                                "[错误] 桌面模式 WebView 启动失败: {}",
-                                e
-                            ));
-                        }
-                    }
-                }
-            }
-
-            // 用户关闭 WebView → 根据设置决定是否停止酒馆
-            if let Some(ref mut wv) = self.desktop_webview {
-                if wv.is_closed() {
-                    self.desktop_webview = None;
-                    if self.settings_state.auto_stop_tavern_on_webview_close {
-                        self.console_state.add_log("[系统] 桌面模式 WebView 已关闭，正在停止酒馆...");
-                        if self.console_state.status == pages::console::ConsoleStatus::Running {
-                            self.console_state.stop(&self.settings_state.language);
-                        }
-                    } else {
-                        self.console_state.add_log("[系统] 桌面模式 WebView 已关闭（服务继续运行）");
-                    }
-                }
-            }
-
-            // 重新打开 WebView（控制台"打开酒馆"按钮触发）
-            if self.console_state.reopen_webview_triggered {
-                self.console_state.reopen_webview_triggered = false;
-                if let Some(ref mut wv) = self.desktop_webview {
-                    // WebView 已存在 → 唤回前台，不重复打开
-                    wv.bring_to_front();
-                } else if let Some(ref url) = self.console_state.tavern_url {
-                    // WebView 不存在 → 新建
-                    let title = format!(
-                        "SillyTavern - v{}",
-                        self.console_state.instance_version
-                    );
-                    match DesktopWebView::open(url, &title, self.settings_state.tavern_export_path.clone()) {
-                        Ok(wv) => {
-                            self.console_state.add_log(&format!(
-                                "[系统] 桌面模式 WebView 已打开: {}",
-                                url
-                            ));
-                            self.desktop_webview = Some(wv);
-                        }
-                        Err(e) => {
-                            self.console_state.add_log(&format!(
-                                "[错误] 桌面模式 WebView 启动失败: {}",
-                                e
-                            ));
-                        }
-                    }
-                }
-            }
-
-            // 酒馆停止/停止中 → 关闭 WebView（从控制台手动停止时）
-            if self.console_state.status != pages::console::ConsoleStatus::Running
-                && self.console_state.status != pages::console::ConsoleStatus::Starting
-            {
-                if let Some(ref mut wv) = self.desktop_webview {
-                    wv.close();
-                    self.desktop_webview = None;
-                }
-            }
-        } else {
-            // 非桌面模式 → 确保 WebView 已关闭
-            if let Some(ref mut wv) = self.desktop_webview {
-                wv.close();
-                self.desktop_webview = None;
-            }
-        }
-
-        // 酒馆进程运行中持续重绘（确保日志实时更新）
+        // ---- 每帧轮询酒馆进程状态 ----
+        self.console_state.poll(&self.settings_state.language);
         if self.console_state.status == pages::console::ConsoleStatus::Running
             || self.console_state.status == pages::console::ConsoleStatus::Starting
             || self.console_state.status == pages::console::ConsoleStatus::Stopping
@@ -950,17 +793,6 @@ impl eframe::App for MyApp {
             };
             let toast_text = lang::t(toast_key, &self.settings_state.language).to_string();
             self.toast_stack.push(toast_text, ctx);
-        }
-
-        // blob 下载结果通知（来自桌面模式 WebView）
-        {
-            let mut notifications =
-                crate::core::desktop_webview::DOWNLOAD_NOTIFICATIONS
-                    .lock()
-                    .unwrap();
-            for msg in notifications.drain(..) {
-                self.toast_stack.push(msg, ctx);
-            }
         }
 
         // 渲染 toast 堆叠

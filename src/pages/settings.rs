@@ -73,6 +73,13 @@ pub enum ProxyType {
     Custom,
 }
 
+#[derive(PartialEq, Clone, Serialize, Deserialize, Default)]
+pub enum EnvSource {
+    #[default]
+    Builtin,
+    System,
+}
+
 /// Github 测试弹窗状态
 struct GithubTestPopupState {
     show: bool,
@@ -119,6 +126,12 @@ pub struct SettingsState {
     // 基本设置
     pub cpu_cores: CpuCores,
     pub start_mode: StartMode,
+    /// Node.js 环境来源
+    #[serde(default)]
+    pub nodejs_env: EnvSource,
+    /// Git 环境来源
+    #[serde(default)]
+    pub git_env: EnvSource,
     pub server_mode_enabled: bool,
     pub server_service_mode: ServerServiceMode,
     pub data_mode: TavernDataMode,
@@ -228,8 +241,9 @@ fn default_auto_stop() -> bool {
 
 /// tavern_export_path 默认值 → ~/Downloads
 fn default_export_path() -> String {
-    std::env::var("HOME")
-        .map(|h| format!("{}/Downloads", h))
+    std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(|h| format!("{}\\Downloads", h))
         .unwrap_or_default()
 }
 
@@ -250,6 +264,8 @@ impl Default for SettingsState {
             window_position: None,
             cpu_cores: CpuCores::default(),
             start_mode: StartMode::default(),
+            nodejs_env: EnvSource::default(),
+            git_env: EnvSource::default(),
             server_mode_enabled: false,
             server_service_mode: ServerServiceMode::default(),
             data_mode: TavernDataMode::default(),
@@ -398,6 +414,7 @@ impl BrewTaskState {
     }
 
     /// 轮询日志，返回完成后的新版本号
+    #[allow(dead_code)]
     pub fn poll(&mut self) -> Option<String> {
         let mut new_version = None;
         if let Some(ref rx) = self.receiver {
@@ -1535,28 +1552,22 @@ pub fn render(
                             let mut proxy_desc =
                                 lang::t("proxy_settings_desc", &state.language).to_string();
                             if state.proxy_type == ProxyType::System {
-                                if let Some((_, enabled)) =
-                                    crate::core::network::read_system_proxy()
+                                let status_text = match crate::core::network::read_system_proxy()
                                 {
-                                    let status_text = if enabled {
+                                    Some((_, true)) => {
                                         lang::t("on", &state.language)
-                                    } else {
+                                    }
+                                    _ => {
+                                        // None 或无代理配置 = 关闭
                                         lang::t("off", &state.language)
-                                    };
-                                    proxy_desc = format!(
-                                        "{} ({} {})",
-                                        proxy_desc,
-                                        lang::t("system_proxy_status", &state.language),
-                                        status_text
-                                    );
-                                } else {
-                                    proxy_desc = format!(
-                                        "{} ({} {})",
-                                        proxy_desc,
-                                        lang::t("system_proxy_status", &state.language),
-                                        lang::t("unknown", &state.language)
-                                    );
-                                }
+                                    }
+                                };
+                                proxy_desc = format!(
+                                    "{} ({} {})",
+                                    proxy_desc,
+                                    lang::t("system_proxy_status", &state.language),
+                                    status_text
+                                );
                             }
 
                             setting_row(
