@@ -130,7 +130,11 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         
         // Environment Dependencies
         "env_dependencies" => "Environment Dependencies",
-        "homebrew_purpose" => "Package manager for macOS (Required)",
+        "env_mode" => "Environment Mode",
+        "env_mode_desc" => "Switch to 'Built-in' to use bundled tools, or 'System' to use global system environment",
+        "env_mode_system" => "System",
+        "env_mode_builtin" => "Built-in",
+        "not_installed" => "Not installed",
         "update_btn" => "Update",
         "upgrade_btn" => "Upgrade",
         "version_too_low" => "Low Version",
@@ -139,9 +143,9 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
 
         // Install Popups
         "git_install_title" => "Git Installation",
-        "git_install_desc" => "Running brew install git, please wait...",
+        "git_install_desc" => "Preparing Git installation, please wait...",
         "nodejs_install_title" => "NodeJs Installation",
-        "nodejs_install_desc" => "Running brew install node@24, please wait...",
+        "nodejs_install_desc" => "Preparing Node.js installation, please wait...",
         "brew_install_waiting" => "Waiting for output...",
         "brew_install_running" => "Installing...",
 
@@ -171,7 +175,7 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "caddy_purpose" => "Reverse proxy for Tavern (Optional)",
         "caddy_purpose_required" => "Reverse proxy for Tavern (Required)",
         "caddy_install_title" => "Caddy Installation",
-        "caddy_install_desc" => "Running brew install caddy, please wait...",
+        "caddy_install_desc" => "Preparing Caddy installation, please wait...",
         
         // Github Settings
         "github_settings" => "Github Settings",

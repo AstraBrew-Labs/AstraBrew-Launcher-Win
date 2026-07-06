@@ -7,62 +7,39 @@ use std::os::windows::process::CommandExt;
 // 隐藏控制台窗口的标志
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+/// 获取应用根目录：`%AppData%/AstraBrew Launcher/`
 pub fn get_data_dir() -> PathBuf {
-    let mut current_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
-    current_exe.pop();
-    let path_str = current_exe.to_string_lossy();
-    let mut root = if path_str.contains("target\\debug") || path_str.contains("target\\release") {
-        let mut p = current_exe.clone();
-        p.pop();
-        p.pop();
-        p
-    } else {
-        current_exe
-    };
-    root.push("data");
-    root
+    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
+    PathBuf::from(appdata).join("AstraBrew Launcher")
 }
 
+/// 内置 Git 路径：`<root>/lib/git/cmd/git.exe` 或 `<root>/lib/git/bin/git.exe`
 pub fn get_builtin_git_path() -> Option<PathBuf> {
-    let mut base = get_data_dir();
-    base.push("lib");
-    base.push("git");
-    
+    let base = get_data_dir().join("lib").join("git");
+
     let cmd_path = base.join("cmd").join("git.exe");
     if cmd_path.exists() {
         return Some(cmd_path);
     }
-    
+
     let bin_path = base.join("bin").join("git.exe");
     if bin_path.exists() {
         return Some(bin_path);
     }
-    
+
     None
 }
 
+/// 内置 Node.js 路径：`<root>/lib/nodejs/node.exe`
 pub fn get_builtin_node_path() -> Option<PathBuf> {
-    let mut path = get_data_dir();
-    path.push("lib");
-    path.push("nodejs");
-    path.push("node.exe");
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
+    let path = get_data_dir().join("lib").join("nodejs").join("node.exe");
+    if path.exists() { Some(path) } else { None }
 }
 
+/// 内置 npm 路径：`<root>/lib/nodejs/npm.cmd`
 pub fn get_builtin_npm_path() -> Option<PathBuf> {
-    let mut path = get_data_dir();
-    path.push("lib");
-    path.push("nodejs");
-    path.push("npm.cmd");
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
+    let path = get_data_dir().join("lib").join("nodejs").join("npm.cmd");
+    if path.exists() { Some(path) } else { None }
 }
 
 pub fn get_pm2_path() -> Option<PathBuf> {

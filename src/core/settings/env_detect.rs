@@ -4,9 +4,9 @@ use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-/// 解析命令的完整路径：
-/// 1. 在软件内置 data/lib 目录中查找
-/// 2. 回退到系统 PATH（where 命令）
+// ─── 路径解析 ─────────────────────────────────────────────────────────────────
+
+/// 解析命令的完整路径（内置优先，回退系统 PATH）
 pub fn resolve_command(name: &str) -> String {
     // 先检查内置路径
     let builtin_dir = crate::core::env::get_data_dir().join("lib");
@@ -28,33 +28,133 @@ pub fn resolve_command(name: &str) -> String {
     name.to_string()
 }
 
-/// 创建 Command，应用 CREATE_NO_WINDOW 标志
-fn cmd(name: &str) -> Command {
-    let mut cmd = Command::new(resolve_command(name));
+/// 仅在系统 PATH 中查找命令（`where` 命令）
+fn resolve_command_system(name: &str) -> String {
+    if let Some(p) = crate::core::env::get_system_cmd_path(name) {
+        return p.to_string_lossy().to_string();
+    }
+    name.to_string()
+}
+
+/// 仅在软件内置 lib 目录中查找命令
+fn resolve_command_builtin(name: &str, sub_dirs: &[&str]) -> Option<String> {
+    let builtin_dir = crate::core::env::get_data_dir().join("lib");
+    for sub_dir in sub_dirs {
+        let exe_name = if *sub_dir == "nodejs" {
+            "node.exe"
+        } else {
+            &format!("{}.exe", name)
+        };
+        let full = builtin_dir.join(sub_dir).join(exe_name);
+        if full.exists() {
+            return Some(full.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
+/// 创建 Command（系统 PATH 查找）
+fn cmd_system(name: &str) -> Command {
+    let mut cmd = Command::new(resolve_command_system(name));
     cmd.creation_flags(CREATE_NO_WINDOW);
     cmd
 }
 
-/// 检测 Node.js 版本，返回版本号字符串，如 "v22.1.0"
-pub fn detect_nodejs() -> Option<String> {
-    let output = cmd("node").arg("--version").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
+/// 创建 Command（仅内置路径）
+fn cmd_builtin(_name: &str, path: &str) -> Command {
+    let mut cmd = Command::new(path);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
+// ─── 系统环境检测（仅查系统 PATH）─────────────────────────────────────────────
+
+/// 检测 Git 版本（系统 PATH）
+pub fn detect_git_system() -> Option<String> {
+    let output = cmd_system("git").arg("--version").output().ok()?;
+    if !output.status.success() { return None; }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_git_version(&stdout)
+}
+
+/// 检测 Node.js 版本（系统 PATH）
+pub fn detect_nodejs_system() -> Option<String> {
+    let output = cmd_system("node").arg("--version").output().ok()?;
+    if !output.status.success() { return None; }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let version = stdout.trim().to_string();
     if version.is_empty() { None } else { Some(version) }
 }
 
-/// 检测 Git 版本
-pub fn detect_git() -> Option<String> {
-    let output = cmd("git").arg("--version").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
+/// 检测 Caddy 版本（系统 PATH）
+pub fn detect_caddy_system() -> Option<String> {
+    let output = cmd_system("caddy").arg("version").output().ok()?;
+    if !output.status.success() { return None; }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let version = stdout.trim().split_whitespace().next()?;
+    if version.is_empty() { None } else { Some(version.to_string()) }
+}
+
+/// 检测 PM2 版本（系统 PATH）
+pub fn detect_pm2_system() -> Option<String> {
+    let output = cmd_system("pm2").arg("-v").output().ok()?;
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    extract_semver(&combined)
+}
+
+// ─── 内置环境检测（仅查 lib/ 目录）────────────────────────────────────────────
+
+/// 检测 Git 版本（内置 lib/git/）
+pub fn detect_git_builtin() -> Option<String> {
+    let path = resolve_command_builtin("git", &["git/cmd", "git/bin"])?;
+    let output = cmd_builtin("git", &path).arg("--version").output().ok()?;
+    if !output.status.success() { return None; }
     let stdout = String::from_utf8_lossy(&output.stdout);
     parse_git_version(&stdout)
 }
+
+/// 检测 Node.js 版本（内置 lib/nodejs/）
+pub fn detect_nodejs_builtin() -> Option<String> {
+    let path = resolve_command_builtin("node", &["nodejs"])?;
+    let output = cmd_builtin("node", &path).arg("--version").output().ok()?;
+    if !output.status.success() { return None; }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let version = stdout.trim().to_string();
+    if version.is_empty() { None } else { Some(version) }
+}
+
+/// 检测 Caddy 版本（内置 lib/caddy/）
+pub fn detect_caddy_builtin() -> Option<String> {
+    let path = resolve_command_builtin("caddy", &["caddy"])?;
+    let output = cmd_builtin("caddy", &path).arg("version").output().ok()?;
+    if !output.status.success() { return None; }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let version = stdout.trim().split_whitespace().next()?;
+    if version.is_empty() { None } else { Some(version.to_string()) }
+}
+
+/// 检测 PM2 版本（通过内置 npx）
+pub fn detect_pm2_builtin() -> Option<String> {
+    let builtin_dir = crate::core::env::get_data_dir().join("lib").join("nodejs");
+    let npx = builtin_dir.join("npx.cmd");
+    if !npx.exists() { return None; }
+    let output = cmd_builtin("pm2", &npx.to_string_lossy())
+        .arg("pm2")
+        .arg("-v")
+        .output().ok()?;
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    extract_semver(&combined)
+}
+
+// ─── 版本解析 ─────────────────────────────────────────────────────────────────
 
 fn parse_git_version(output: &str) -> Option<String> {
     let prefix = "git version ";
@@ -65,39 +165,6 @@ fn parse_git_version(output: &str) -> Option<String> {
     } else {
         None
     }
-}
-
-/// Homebrew 检测（Windows 不可用，保留兼容）
-pub fn detect_homebrew() -> Option<String> {
-    None
-}
-
-/// Homebrew 版本是否过时（Windows 不可用）
-pub fn is_homebrew_outdated(_version: &str) -> bool {
-    false
-}
-
-/// 检测 Caddy 版本（Windows 占位）
-pub fn detect_caddy() -> Option<String> {
-    // 尝试系统 PATH 中的 caddy
-    let output = cmd("caddy").arg("version").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let version = stdout.trim().split_whitespace().next()?;
-    if version.is_empty() { None } else { Some(version.to_string()) }
-}
-
-/// 检测 PM2 版本
-pub fn detect_pm2() -> Option<String> {
-    let output = cmd("pm2").arg("-v").output().ok()?;
-    let combined = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    extract_semver(&combined)
 }
 
 /// 从文本中提取第一个符合 X.Y.Z 模式的版本号
@@ -138,15 +205,9 @@ fn extract_semver(text: &str) -> Option<String> {
     None
 }
 
-/// 运行 brew install <package>（Windows 不可用，占位）
-pub fn run_brew_install(_package: &str, sender: std::sync::mpsc::Sender<String>) {
-    let _ = sender.send("当前平台不支持 Homebrew 安装，请手动安装依赖".to_string());
-    let _ = sender.send("__DONE__".to_string());
-}
-
 /// 运行 npm install -g <package>（用于 PM2 等全局 npm 包）
 pub fn run_npm_install_global(package: &str, sender: std::sync::mpsc::Sender<String>) {
-    let mut cmd = cmd("npm");
+    let mut cmd = cmd_system("npm");
     cmd.args(["install", "-g", package]);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
@@ -213,7 +274,7 @@ pub fn run_npm_install_global(package: &str, sender: std::sync::mpsc::Sender<Str
     let _ = done_rx.recv();
     let _ = done_rx.recv();
 
-    if let Some(ver) = detect_pm2() {
+    if let Some(ver) = detect_pm2_system() {
         let _ = tx_final.send(format!("__VERSION__:{}", ver));
     }
 

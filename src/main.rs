@@ -124,15 +124,15 @@ struct MyApp {
     // desktop_webview 相关功能暂不可用
     #[allow(dead_code)]
     desktop_mode_enabled: bool,
-    // brew 安装任务状态（macOS Homebrew → Windows 待替换）
+    // 安装任务状态（Git/Node.js/Caddy/PM2 安装弹窗）
     #[allow(dead_code)]
-    git_install_state: pages::settings::BrewTaskState,
+    git_install_state: pages::settings::InstallTaskState,
     #[allow(dead_code)]
-    nodejs_install_state: pages::settings::BrewTaskState,
+    nodejs_install_state: pages::settings::InstallTaskState,
     #[allow(dead_code)]
-    caddy_install_state: pages::settings::BrewTaskState,
+    caddy_install_state: pages::settings::InstallTaskState,
     #[allow(dead_code)]
-    pm2_install_state: pages::settings::BrewTaskState,
+    pm2_install_state: pages::settings::InstallTaskState,
 
     // Github 节点状态
     github_node_rx: Option<
@@ -189,10 +189,10 @@ impl MyApp {
             console_state: ConsoleState::new(),
             resource_manage_state: ResourceManageState::new(),
             desktop_mode_enabled: false,
-            git_install_state: pages::settings::BrewTaskState::new(),
-            nodejs_install_state: pages::settings::BrewTaskState::new(),
-            caddy_install_state: pages::settings::BrewTaskState::new(),
-            pm2_install_state: pages::settings::BrewTaskState::new(),
+            git_install_state: pages::settings::InstallTaskState::new(),
+            nodejs_install_state: pages::settings::InstallTaskState::new(),
+            caddy_install_state: pages::settings::InstallTaskState::new(),
+            pm2_install_state: pages::settings::InstallTaskState::new(),
             github_node_rx: None,
             github_node_state: crate::core::settings::github_proxy::NodeLoadState::Done(vec![]),
             on_refresh_nodes: false,

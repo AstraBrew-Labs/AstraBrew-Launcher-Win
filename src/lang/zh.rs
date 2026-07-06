@@ -130,7 +130,11 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         
         // 环境依赖
         "env_dependencies" => "环境依赖",
-        "homebrew_purpose" => "MacOS下的环境安装工具（必装）",
+        "env_mode" => "环境模式",
+        "env_mode_desc" => "切换到「内置」将优先使用内置的环境工具，切换到「系统」则使用系统全局环境",
+        "env_mode_system" => "系统",
+        "env_mode_builtin" => "内置",
+        "not_installed" => "未安装",
         "update_btn" => "更新",
         "upgrade_btn" => "升级",
         "version_too_low" => "版本过低",
@@ -139,9 +143,9 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
 
         // 安装弹窗
         "git_install_title" => "Git 安装",
-        "git_install_desc" => "正在执行 brew install git，请稍候...",
+        "git_install_desc" => "正在准备 Git 安装，请稍候...",
         "nodejs_install_title" => "NodeJs 安装",
-        "nodejs_install_desc" => "正在执行 brew install node@24，请稍候...",
+        "nodejs_install_desc" => "正在准备 Node.js 安装，请稍候...",
         "brew_install_waiting" => "等待输出...",
         "brew_install_running" => "安装中...",
 
@@ -171,7 +175,7 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "caddy_purpose" => "用于给酒馆添加反向代理（可选）",
         "caddy_purpose_required" => "用于给酒馆添加反向代理（必装）",
         "caddy_install_title" => "Caddy 安装",
-        "caddy_install_desc" => "正在执行 brew install caddy，请稍候...",
+        "caddy_install_desc" => "正在准备 Caddy 安装，请稍候...",
         
         // Github Settings
         "github_settings" => "Github 设置",

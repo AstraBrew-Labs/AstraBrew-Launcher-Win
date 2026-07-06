@@ -40,6 +40,11 @@
 - UI：明确数值约束，无滚动条（或 max_height 限制）
 - 语言：中文沟通
 
+## 环境模式（2025-07-05）
+- `SettingsState.env_mode: EnvSource` — 统一环境模式：系统 / 内置
+- 内置模式：优先使用 `%AppData%/AstraBrew Launcher/lib/` 下的 Node.js、MinGit、Caddy、PM2
+- 系统模式：使用系统 PATH 中的全局环境
+
 ## 酒馆配置页面（2026-06-03）
 - 从 `.docs/Tavern.vue` 转换为 Rust egui 页面
 - 9 个折叠分区：网络与访问、安全与白名单、SSL、CORS、代理与备份、缩略图、性能、日志、会话安全

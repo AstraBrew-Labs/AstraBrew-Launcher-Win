@@ -187,15 +187,27 @@ pub struct SettingsState {
     #[serde(skip)]
     pub nodejs_version: String,
 
-    // 环境依赖检测结果（不持久化）
-    #[serde(skip)]
-    pub homebrew_version: Option<String>,
+    /// 统一环境模式：系统 / 内置
+    #[serde(default)]
+    pub env_mode: EnvSource,
+
+    // 环境依赖检测结果 — 系统环境（不持久化）
     #[serde(skip)]
     pub git_version: Option<String>,
     #[serde(skip)]
     pub caddy_version: Option<String>,
     #[serde(skip)]
     pub pm2_version: Option<String>,
+
+    // 环境依赖检测结果 — 内置环境（不持久化）
+    #[serde(skip)]
+    pub git_version_builtin: Option<String>,
+    #[serde(skip)]
+    pub nodejs_version_builtin: String,
+    #[serde(skip)]
+    pub caddy_version_builtin: Option<String>,
+    #[serde(skip)]
+    pub pm2_version_builtin: Option<String>,
 
     // 恢复默认触发标记（不持久化）
     #[serde(skip)]
@@ -291,10 +303,14 @@ impl Default for SettingsState {
             reverse_proxy_ssl_key: String::new(),
             sillytavern: None,
             nodejs_version: String::new(),
-            homebrew_version: None,
+            env_mode: EnvSource::default(),
             git_version: None,
             caddy_version: None,
             pm2_version: None,
+            git_version_builtin: None,
+            nodejs_version_builtin: String::new(),
+            caddy_version_builtin: None,
+            pm2_version_builtin: None,
             restore_defaults_triggered: false,
             trigger_folder_picker: false,
             trigger_export_path_picker: false,
@@ -335,22 +351,30 @@ impl SettingsState {
         }
     }
 
-    /// 检测所有环境依赖版本
+    /// 检测所有环境依赖版本（系统 + 内置）
     pub fn detect_all_env(&mut self) {
         use crate::core::settings::env_detect;
-        self.homebrew_version = env_detect::detect_homebrew();
-        self.git_version = env_detect::detect_git();
-        let node_ver = env_detect::detect_nodejs();
+        // 系统环境
+        self.git_version = env_detect::detect_git_system();
+        let node_ver = env_detect::detect_nodejs_system();
         if let Some(v) = node_ver {
             self.nodejs_version = v;
         }
-        self.caddy_version = env_detect::detect_caddy();
-        self.pm2_version = env_detect::detect_pm2();
+        self.caddy_version = env_detect::detect_caddy_system();
+        self.pm2_version = env_detect::detect_pm2_system();
+        // 内置环境
+        self.git_version_builtin = env_detect::detect_git_builtin();
+        let node_ver_b = env_detect::detect_nodejs_builtin();
+        if let Some(v) = node_ver_b {
+            self.nodejs_version_builtin = v;
+        }
+        self.caddy_version_builtin = env_detect::detect_caddy_builtin();
+        self.pm2_version_builtin = env_detect::detect_pm2_builtin();
     }
 }
 
-/// brew 任务弹窗状态（更新/安装通用）
-pub struct BrewTaskState {
+/// 安装任务弹窗状态（更新/安装通用）
+pub struct InstallTaskState {
     pub show: bool,
     pub log: String,
     pub running: bool,
@@ -366,7 +390,7 @@ pub struct BrewTaskState {
 /// 安装/更新任务的超时时间（5 分钟）
 const BREW_TASK_TIMEOUT_SECS: u64 = 300;
 
-impl BrewTaskState {
+impl InstallTaskState {
     pub fn new() -> Self {
         Self {
             show: false,
@@ -379,9 +403,8 @@ impl BrewTaskState {
         }
     }
 
-    /// 启动 brew install <package>
+    /// 启动安装 <package>（Windows 平台使用内置下载机制替代 brew）
     pub fn start_install(&mut self, package: &str) {
-        use crate::core::settings::env_detect;
         let package = package.to_string();
         let (tx, rx) = std::sync::mpsc::channel();
         self.receiver = Some(rx);
@@ -392,7 +415,9 @@ impl BrewTaskState {
         self.timed_out = false;
         self.started_at = Some(std::time::Instant::now());
         std::thread::spawn(move || {
-            env_detect::run_brew_install(&package, tx);
+            // Windows: 显示提示，实际安装请通过内置下载机制完成
+            let _ = tx.send(format!("Windows 平台不支持 brew install，请使用内置环境下载功能安装 {}", package));
+            let _ = tx.send("__DONE__".to_string());
         });
     }
 
@@ -444,7 +469,7 @@ use crate::lang;
 
 fn render_brew_task_window(
     ctx: &egui::Context,
-    task: &mut BrewTaskState,
+    task: &mut InstallTaskState,
     title: &str,
     desc: &str,
     waiting: &str,
@@ -585,10 +610,10 @@ pub fn render(
     ui: &mut egui::Ui,
     tab: &mut SettingsTab,
     state: &mut SettingsState,
-    git_install: &mut BrewTaskState,
-    nodejs_install: &mut BrewTaskState,
-    caddy_install: &mut BrewTaskState,
-    pm2_install: &mut BrewTaskState,
+    git_install: &mut InstallTaskState,
+    nodejs_install: &mut InstallTaskState,
+    caddy_install: &mut InstallTaskState,
+    pm2_install: &mut InstallTaskState,
     github_node_state: &crate::core::settings::github_proxy::NodeLoadState,
     on_refresh_nodes: &mut bool,
 ) {
@@ -599,16 +624,22 @@ pub fn render(
             if ui.small_button(lang::t("restore_defaults", &state.language)).clicked() {
                 // 保留环境依赖检测结果，避免误显示安装按钮
                 let nodejs_version = state.nodejs_version.clone();
-                let homebrew_version = state.homebrew_version.clone();
                 let git_version = state.git_version.clone();
                 let caddy_version = state.caddy_version.clone();
                 let pm2_version = state.pm2_version.clone();
+                let nodejs_version_builtin = state.nodejs_version_builtin.clone();
+                let git_version_builtin = state.git_version_builtin.clone();
+                let caddy_version_builtin = state.caddy_version_builtin.clone();
+                let pm2_version_builtin = state.pm2_version_builtin.clone();
                 *state = SettingsState::default();
                 state.nodejs_version = nodejs_version;
-                state.homebrew_version = homebrew_version;
                 state.git_version = git_version;
                 state.caddy_version = caddy_version;
                 state.pm2_version = pm2_version;
+                state.nodejs_version_builtin = nodejs_version_builtin;
+                state.git_version_builtin = git_version_builtin;
+                state.caddy_version_builtin = caddy_version_builtin;
+                state.pm2_version_builtin = pm2_version_builtin;
                 state.restore_defaults_triggered = true;
             }
         });
@@ -993,43 +1024,32 @@ pub fn render(
 
                     // 环境依赖
                     {
-                        let brew_installed = state.homebrew_version.is_some();
+                        let is_system = state.env_mode == EnvSource::System;
+                        let is_builtin = state.env_mode == EnvSource::Builtin;
 
                         setting_section(ui, egui_phosphor::regular::PACKAGE, lang::t("env_dependencies", &state.language), |ui| {
-                        // Homebrew
-                        {
-                            let hv = state.homebrew_version.clone();
-                            let hv_outdated = hv.as_ref().map_or(false, |v| {
-                                crate::core::settings::env_detect::is_homebrew_outdated(v)
-                            });
-                            let title = if hv_outdated {
-                                format!("Homebrew  ⚠ {}", lang::t("version_too_low", &state.language))
-                            } else {
-                                "Homebrew".to_string()
-                            };
-                            setting_row(
-                                ui,
-                                egui_phosphor::regular::BEER_BOTTLE,
-                                &title,
-                                lang::t("homebrew_purpose", &state.language),
-                                |ui| {
-                                    match hv {
-                                        Some(ref ver) => {
-                                            ui.label(egui::RichText::new(ver.as_str()).size(14.0));
-                                        }
-                                        None => {
-                                            if ui.button(lang::t("install", &state.language)).clicked() {
-                                                // TODO: 触发 Homebrew 安装逻辑
-                                            }
-                                        }
-                                    }
-                                },
-                            );
-                        }
+                        // 环境模式
+                        setting_row(
+                            ui,
+                            egui_phosphor::regular::WRENCH,
+                            lang::t("env_mode", &state.language),
+                            lang::t("env_mode_desc", &state.language),
+                            |ui| {
+                                egui::ComboBox::from_id_salt("env_mode_combo")
+                                    .selected_text(match state.env_mode {
+                                        EnvSource::System => lang::t("env_mode_system", &state.language),
+                                        EnvSource::Builtin => lang::t("env_mode_builtin", &state.language),
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut state.env_mode, EnvSource::System, lang::t("env_mode_system", &state.language));
+                                        ui.selectable_value(&mut state.env_mode, EnvSource::Builtin, lang::t("env_mode_builtin", &state.language));
+                                    });
+                            },
+                        );
                         ui.add_space(10.0);
                         // Git
                         {
-                            let gv = state.git_version.clone();
+                            let gv = if is_builtin { state.git_version_builtin.clone() } else { state.git_version.clone() };
                             setting_row(
                                 ui,
                                 egui_phosphor::regular::GIT_BRANCH,
@@ -1041,13 +1061,9 @@ pub fn render(
                                             ui.label(egui::RichText::new(ver.as_str()).size(14.0));
                                         }
                                         None => {
-                                            let btn = egui::Button::new(lang::t("install", &state.language));
-                                            let resp = if brew_installed {
-                                                ui.add_enabled(true, btn)
-                                            } else {
-                                                ui.add_enabled(false, btn)
-                                            };
-                                            if resp.clicked() {
+                                            if is_system {
+                                                ui.label(egui::RichText::new(lang::t("not_installed", &state.language)).size(14.0).color(egui::Color32::GRAY));
+                                            } else if ui.button(lang::t("install", &state.language)).clicked() {
                                                 git_install.start_install("git");
                                             }
                                         }
@@ -1058,7 +1074,11 @@ pub fn render(
                         ui.add_space(10.0);
                         // NodeJs
                         {
-                            let nv = if state.nodejs_version.is_empty() { None } else { Some(state.nodejs_version.clone()) };
+                            let nv = if is_builtin {
+                                if state.nodejs_version_builtin.is_empty() { None } else { Some(state.nodejs_version_builtin.clone()) }
+                            } else {
+                                if state.nodejs_version.is_empty() { None } else { Some(state.nodejs_version.clone()) }
+                            };
                             let nv_outdated = nv.as_ref().map_or(false, |v| {
                                 crate::core::settings::env_detect::is_nodejs_outdated(v)
                             });
@@ -1074,15 +1094,8 @@ pub fn render(
                                 lang::t("nodejs_purpose", &state.language),
                                 |ui| {
                                     match nv {
-                                        Some(ref ver) if nv_outdated => {
-                                            // 版本过低时直接用安装命令升级覆盖，不先 brew update
-                                            let btn = egui::Button::new(lang::t("upgrade_btn", &state.language));
-                                            let resp = if brew_installed {
-                                                ui.add_enabled(true, btn)
-                                            } else {
-                                                ui.add_enabled(false, btn)
-                                            };
-                                            if resp.clicked() {
+                                        Some(ref ver) if nv_outdated && is_builtin => {
+                                            if ui.button(lang::t("upgrade_btn", &state.language)).clicked() {
                                                 nodejs_install.start_install("node@24");
                                             }
                                         }
@@ -1090,13 +1103,9 @@ pub fn render(
                                             ui.label(egui::RichText::new(ver.as_str()).size(14.0));
                                         }
                                         None => {
-                                            let btn = egui::Button::new(lang::t("install", &state.language));
-                                            let resp = if brew_installed {
-                                                ui.add_enabled(true, btn)
-                                            } else {
-                                                ui.add_enabled(false, btn)
-                                            };
-                                            if resp.clicked() {
+                                            if is_system {
+                                                ui.label(egui::RichText::new(lang::t("not_installed", &state.language)).size(14.0).color(egui::Color32::GRAY));
+                                            } else if ui.button(lang::t("install", &state.language)).clicked() {
                                                 nodejs_install.start_install("node@24");
                                             }
                                         }
@@ -1128,7 +1137,7 @@ pub fn render(
                         ui.add_space(10.0);
                         // Caddy
                         {
-                            let cv = state.caddy_version.clone();
+                            let cv = if is_builtin { state.caddy_version_builtin.clone() } else { state.caddy_version.clone() };
                             setting_row(
                                 ui,
                                 egui_phosphor::regular::SHIELD_CHECK,
@@ -1140,13 +1149,9 @@ pub fn render(
                                             ui.label(egui::RichText::new(ver.as_str()).size(14.0));
                                         }
                                         None => {
-                                            let btn = egui::Button::new(lang::t("install", &state.language));
-                                            let resp = if brew_installed {
-                                                ui.add_enabled(true, btn)
-                                            } else {
-                                                ui.add_enabled(false, btn)
-                                            };
-                                            if resp.clicked() {
+                                            if is_system {
+                                                ui.label(egui::RichText::new(lang::t("not_installed", &state.language)).size(14.0).color(egui::Color32::GRAY));
+                                            } else if ui.button(lang::t("install", &state.language)).clicked() {
                                                 caddy_install.start_install("caddy");
                                             }
                                         }
@@ -1157,8 +1162,12 @@ pub fn render(
                         ui.add_space(10.0);
                         // PM2
                         {
-                            let pv = state.pm2_version.clone();
-                            let nodejs_installed = !state.nodejs_version.is_empty();
+                            let pv = if is_builtin { state.pm2_version_builtin.clone() } else { state.pm2_version.clone() };
+                            let nodejs_installed = if is_builtin {
+                                !state.nodejs_version_builtin.is_empty()
+                            } else {
+                                !state.nodejs_version.is_empty()
+                            };
                             setting_row(
                                 ui,
                                 egui_phosphor::regular::CLOUD_ARROW_DOWN,
@@ -1170,15 +1179,19 @@ pub fn render(
                                             ui.label(egui::RichText::new(ver.as_str()).size(14.0));
                                         }
                                         None => {
-                                            let btn = egui::Button::new(lang::t("install", &state.language));
-                                            let resp = if nodejs_installed {
-                                                ui.add_enabled(true, btn)
+                                            if is_system {
+                                                ui.label(egui::RichText::new(lang::t("not_installed", &state.language)).size(14.0).color(egui::Color32::GRAY));
                                             } else {
-                                                ui.add_enabled(false, btn)
-                                                    .on_disabled_hover_text(lang::t("pm2_need_nodejs", &state.language))
-                                            };
-                                            if resp.clicked() {
-                                                pm2_install.start_npm_install("pm2");
+                                                let btn = egui::Button::new(lang::t("install", &state.language));
+                                                let resp = if nodejs_installed {
+                                                    ui.add_enabled(true, btn)
+                                                } else {
+                                                    ui.add_enabled(false, btn)
+                                                        .on_disabled_hover_text(lang::t("pm2_need_nodejs", &state.language))
+                                                };
+                                                if resp.clicked() {
+                                                    pm2_install.start_npm_install("pm2");
+                                                }
                                             }
                                         }
                                     }

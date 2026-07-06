@@ -5,7 +5,7 @@
 //! ├── data/                   ← 软件数据目录
 //! │   ├── default/            ← 默认数据子目录
 //! │   │   └── sillytavern/        ← 酒馆数据子目录
-//! │   │       └── config.yaml     ← 全局统一酒馆配置文件
+//! │   │       ├── config.yaml     ← 全局统一酒馆配置文件
 //! │   │       └── settings.json   ← 全局统一酒馆WebUI配置文件
 //! │   ├── sillytavern/        ← 酒馆数据子目录
 //! │   │   └── data/           ← 默认全局酒馆数据目录
@@ -15,10 +15,15 @@
 //! │   └── local_instances.json
 //! ├── logs/                    ← 软件日志目录
 //! ├── sillytavern/             ← 酒馆核心文件目录 (ST installation) (在线下载实例)
+//! ├── lib/                     ← 内置环境目录 (内置 NodeJS、MinGit 等)
+//! │   ├── nodejs/              ← 内置 NodeJS 目录
+//! │   ├── git/                 ← 内置 MinGit 目录
+//! │   ├── pm2/                 ← 内置 PM2 目录
+//! │   └── caddy/               ← 内置 Caddy 目录
 //! └── config.json              ← 启动器配置文件
 //!
 //!
-//! %Temp%/AstraBrew Launcher/            ← 临时和缓存目录 (temp)
+//! %Temp%/astrabrew-launcher/            ← 临时和缓存目录 (temp)
 //! ```
 
 use std::path::PathBuf;
@@ -1195,6 +1200,8 @@ pub struct AppPaths {
     pub temp: PathBuf,
     /// `root/data/` — 软件数据目录
     pub data: PathBuf,
+    /// `root/lib/` — 内置环境目录
+    pub lib: PathBuf,
 }
 
 /// 全局单例
@@ -1225,6 +1232,7 @@ impl AppPaths {
             logs: root.join("logs"),
             caches: root.join("caches"),
             temp: Self::temp_root(),
+            lib: root.join("lib"),
             root,
         }
     }
@@ -1237,7 +1245,7 @@ impl AppPaths {
 
     /// 创建所有必要的目录
     fn ensure_dirs(&self) {
-        for dir in [&self.root, &self.logs, &self.caches, &self.temp, &self.data] {
+        for dir in [&self.root, &self.logs, &self.caches, &self.temp, &self.data, &self.lib] {
             let _ = std::fs::create_dir_all(dir);
         }
         // 确保子目录
@@ -1246,6 +1254,10 @@ impl AppPaths {
             self.data.join("default").join("sillytavern"),
             self.data.join("sillytavern"),
             self.data.join("sillytavern").join("data"),
+            self.lib.join("nodejs"),
+            self.lib.join("git"),
+            self.lib.join("caddy"),
+            self.lib.join("pm2"),
         ] {
             let _ = std::fs::create_dir_all(&sub);
         }
