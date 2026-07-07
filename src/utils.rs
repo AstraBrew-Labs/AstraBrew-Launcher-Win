@@ -23,7 +23,7 @@
 //! └── config.json              ← 启动器配置文件
 //!
 //!
-//! %Temp%/astrabrew-launcher/            ← 临时和缓存目录 (temp)
+//! %Temp%/astrabrew-launcher/   ← 临时和缓存目录 (temp)
 //! ```
 
 use std::path::PathBuf;
@@ -1196,7 +1196,7 @@ pub struct AppPaths {
     pub logs: PathBuf,
     /// `root/caches/` — 缓存目录
     pub caches: PathBuf,
-    /// `%Temp%/AstraBrew Launcher/` — 临时和缓存合并目录
+    /// `%Temp%/astrabrew-launcher/` — 临时和缓存合并目录
     pub temp: PathBuf,
     /// `root/data/` — 软件数据目录
     pub data: PathBuf,
@@ -1237,10 +1237,10 @@ impl AppPaths {
         }
     }
 
-    /// 临时/缓存目录 = %Temp%/AstraBrew Launcher/
+    /// 临时/缓存目录 = %Temp%/astrabrew-launcher/
     fn temp_root() -> PathBuf {
         PathBuf::from(std::env::var("TEMP").unwrap_or_else(|_| ".".into()))
-            .join("AstraBrew Launcher")
+            .join("astrabrew-launcher")
     }
 
     /// 创建所有必要的目录

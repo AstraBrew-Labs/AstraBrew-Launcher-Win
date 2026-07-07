@@ -20,6 +20,33 @@
 - `data/settings.json`：运行时持久化配置
 - `data/github_proxy_cache.json`：GitHub 节点列表缓存（TTL 3天）
 
+## 目录规范
+`utils.ts` ← 路径辅助函数，以下路径统一用这个文件里函数，不要重复或写死路径在其他rs文件里。
+```text
+%AppData%/AstraBrew Launcher/    ← 根目录 (root)
+├── data/                       ← 软件数据目录
+│   ├── default/                ← 默认数据子目录
+│   │   └── sillytavern/        ← 酒馆数据子目录
+│   │       ├── config.yaml     ← 全局统一酒馆配置文件
+│   │       └── settings.json   ← 全局统一酒馆WebUI配置文件
+│   ├── sillytavern/            ← 酒馆数据子目录
+│   │   └── data/               ← 默认全局酒馆数据目录
+│   │       ├── config.yaml     ← 全局统一酒馆配置文件
+│   │       └── default-user/
+│   │           └── settings.json ← 全局模式酒馆WebUI设置
+│   └── local_instances.json
+├── logs/                    ← 软件日志目录
+├── sillytavern/             ← 酒馆核心文件目录 (ST installation) (在线下载实例)
+├── lib/                     ← 内置环境目录 (内置 NodeJS、MinGit 等)
+│   ├── nodejs/              ← 内置 NodeJS 目录
+│   ├── git/                 ← 内置 MinGit 目录
+│   ├── pm2/                 ← 内置 PM2 目录
+│   └── caddy/               ← 内置 Caddy 目录
+└── config.json              ← 启动器配置文件
+
+%Temp%/astrabrew-launcher/   ← 临时和缓存目录 (temp)
+```
+
 ## 开发规范
 - UI 设计：无滚动条完整显示（特殊场景用 max_height 限制的 ScrollArea）
 - 工作流：先分析根因、参考现有模式、再编码
@@ -92,3 +119,12 @@
   - `stop_tavern_process(force)` → **异步**：spawn 线程执行停止，完成后通过 channel 回传结果
   - `update()` 中轮询 ProcessMsg（Log → add_log, StateChange → 更新状态）
   - Disconnected 时检查 pending_restart → 自动重启
+
+## Git 节点选择安装功能（2026-07-07）
+- 内置 Git 未安装时点击"安装"→ 弹出节点选择弹窗（8 个镜像源）
+- 背景线程 HEAD 测速（5s 超时）→ 按延迟排序 → 3 秒倒计时自动选最快
+- 手动选择或自动选择 → `InstallTaskState::start_git_install(url)` → 进度弹窗
+- `GitNodeSelectState` 存于 `MyApp.git_node_select`，接收 `GitNodeSelectMsg`（TestingProgress / LatencyResults）
+- `GitMirrorNode` 存储于 `src/core/settings/git.rs`
+- `download_and_install_git_from_url(url, tx)` 安装到 `{APPDATA}/AstraBrew Launcher/lib/git/`
+- 翻译 key：`git_node_select_title/desc`、`git_node_auto_select`、`git_install_progress_title/desc`

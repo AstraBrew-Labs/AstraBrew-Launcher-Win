@@ -152,6 +152,11 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         // Git Settings
         "git_settings" => "Git 设置",
         "git_purpose" => "用于管理酒馆与下载酒馆（必装）",
+        "git_node_select_title" => "选择 Git 下载节点",
+        "git_node_select_desc" => "请选择一个下载节点，3秒后将自动选择延迟最低的节点",
+        "git_node_auto_select" => "自动选择倒计时:",
+        "git_install_progress_title" => "Git 安装进度",
+        "git_install_progress_desc" => "正在下载并安装 Git，请稍候...",
         
         // NodeJs Settings
         "nodejs_settings" => "NodeJs 设置",

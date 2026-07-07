@@ -2,6 +2,9 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
+
+use crate::core::settings::git::{GitMirrorNode, GitNodeSelectMsg};
 
 use crate::utils;
 
@@ -385,6 +388,16 @@ pub struct InstallTaskState {
     pub started_at: Option<std::time::Instant>,
     /// 是否已超时
     pub timed_out: bool,
+    /// 进度条模式：进度值 0.0-1.0
+    pub progress: f32,
+    /// 进度条模式：当前阶段文字
+    pub progress_text: String,
+    /// 进度条模式：下载速度文字（如 "3.2 MB/s"）
+    pub speed_text: String,
+    /// 是否为进度条模式（Git 安装等下载场景）
+    pub progress_mode: bool,
+    /// 安装成功后检测到的版本号（用于验证 + 自动刷新设置页）
+    pub installed_version: Option<String>,
 }
 
 /// 安装/更新任务的超时时间（5 分钟）
@@ -400,6 +413,11 @@ impl InstallTaskState {
             done_at: None,
             started_at: None,
             timed_out: false,
+            progress: 0.0,
+            progress_text: String::new(),
+            speed_text: String::new(),
+            progress_mode: false,
+            installed_version: None,
         }
     }
 
@@ -438,6 +456,100 @@ impl InstallTaskState {
         });
     }
 
+    /// 启动 Git 下载安装（使用指定 URL）- 进度条模式
+    pub fn start_git_install(&mut self, url: &str) {
+        use crate::EnvInstallProgress;
+        let url = url.to_string();
+        let temp_dir = std::env::temp_dir().join("astrabrew-launcher");
+        let temp_path = temp_dir.join("MinGit-2.55.0.2-64-bit.zip");
+        let install_dir = crate::core::env::get_data_dir().join("lib").join("git");
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.receiver = Some(rx);
+        self.log = String::new();
+        self.running = true;
+        self.show = true;
+        self.done_at = None;
+        self.timed_out = false;
+        self.progress = 0.0;
+        self.progress_text = String::new();
+        self.speed_text = String::new();
+        self.installed_version = None;
+        self.progress_mode = true;
+        self.started_at = Some(std::time::Instant::now());
+
+        // 先发送初始信息到日志
+        let _ = tx.send(format!("__LOG__:下载地址: {}", url));
+        let _ = tx.send(format!("__LOG__:临时文件: {}", temp_path.display()));
+        let _ = tx.send(format!("__LOG__:安装目录: {}", install_dir.display()));
+
+        std::thread::spawn(move || {
+            let (prog_tx, prog_rx) = std::sync::mpsc::channel();
+
+            let download_thread = std::thread::spawn(move || {
+                crate::core::settings::git::download_and_install_git_from_url(
+                    &url,
+                    Some(prog_tx),
+                )
+                .map_err(|e| e.to_string())
+            });
+
+            let mut last_sent_pct: i32 = -1;
+            let mut is_download_phase = true;
+            for msg in prog_rx {
+                match msg {
+                    EnvInstallProgress::Progress(p) => {
+                        let display_pct = (p * 100.0) as i32;
+                        if display_pct != last_sent_pct {
+                            last_sent_pct = display_pct;
+                            let _ = tx.send(format!("__PROGRESS__:{}", p));
+
+                            // 0.5 作为下载/解压分界线
+                            let phase_text = if p < 0.5 {
+                                "下载中..."
+                            } else {
+                                if is_download_phase {
+                                    is_download_phase = false;
+                                }
+                                "安装中..."
+                            };
+                            let _ = tx.send(format!("__STATUS__:{}", phase_text));
+                        }
+                    }
+                    EnvInstallProgress::Speed(speed) => {
+                        let _ = tx.send(format!("__SPEED__:{}", speed));
+                    }
+                    EnvInstallProgress::Status(s) => {
+                        // 所有状态消息都转发到日志
+                        let _ = tx.send(format!("__LOG__:{}", s));
+                        // 顺便更新状态文字
+                        if s.contains("下载完成") {
+                            let _ = tx.send("__STATUS__:安装中...".to_string());
+                            let _ = tx.send("__SPEED__:0.0".to_string());
+                        }
+                    }
+                    EnvInstallProgress::Error(e) => {
+                        let _ = tx.send(format!("__LOG__:错误: {}", e));
+                        let _ = tx.send(format!("__STATUS__:错误"));
+                    }
+                    EnvInstallProgress::Version(ver) => {
+                        let _ = tx.send(format!("__VERSION__:{}", ver));
+                        let _ = tx.send(format!("__LOG__:检测到版本: {}", ver));
+                    }
+                    EnvInstallProgress::Finished => {}
+                }
+            }
+
+            match download_thread.join().unwrap_or_else(|_| Err("线程异常".to_string())) {
+                Ok(()) => {}
+                Err(e) => {
+                    let _ = tx.send(format!("__LOG__:错误: {}", e));
+                    let _ = tx.send(format!("__STATUS__:错误"));
+                }
+            }
+            let _ = tx.send("__DONE__".to_string());
+        });
+    }
+
     /// 轮询日志，返回完成后的新版本号
     #[allow(dead_code)]
     pub fn poll(&mut self) -> Option<String> {
@@ -446,14 +558,52 @@ impl InstallTaskState {
             while let Ok(line) = rx.try_recv() {
                 if line == "__DONE__" {
                     self.running = false;
-                    self.log.push_str("\n✅ 安装完成，3秒后自动关闭");
+                    if self.progress_mode {
+                        self.progress = 1.0;
+                        // 只有收到版本号才算安装成功
+                        if self.installed_version.is_some() {
+                            self.progress_text = "安装完成".to_string();
+                        } else if !self.timed_out {
+                            // DONE 了但没有版本号 → 安装失败
+                            self.progress_text = "安装失败，请检查网络".to_string();
+                        }
+                    }
                     self.done_at = Some(std::time::Instant::now());
                     self.receiver = None;
                     break;
                 }
                 if let Some(ver) = line.strip_prefix("__VERSION__:") {
                     new_version = Some(ver.to_string());
+                    // 进度条模式下也存版本号
+                    if self.progress_mode {
+                        self.installed_version = Some(ver.to_string());
+                    }
                     continue;
+                }
+                if self.progress_mode {
+                    if let Some(p_str) = line.strip_prefix("__PROGRESS__:") {
+                        if let Ok(p) = p_str.parse::<f32>() {
+                            self.progress = p;
+                        }
+                        continue;
+                    }
+                    if let Some(status) = line.strip_prefix("__STATUS__:") {
+                        self.progress_text = status.to_string();
+                        continue;
+                    }
+                    if let Some(speed_str) = line.strip_prefix("__SPEED__:") {
+                        if let Ok(bytes_per_sec) = speed_str.parse::<f32>() {
+                            self.speed_text = format_speed(bytes_per_sec);
+                        }
+                        continue;
+                    }
+                    if let Some(log_line) = line.strip_prefix("__LOG__:") {
+                        if !self.log.is_empty() {
+                            self.log.push('\n');
+                        }
+                        self.log.push_str(log_line);
+                        continue;
+                    }
                 }
                 if !self.log.is_empty() {
                     self.log.push('\n');
@@ -462,6 +612,126 @@ impl InstallTaskState {
             }
         }
         new_version
+    }
+}
+
+/// Git 节点选择弹窗状态
+pub struct GitNodeSelectState {
+    /// 是否显示弹窗
+    pub show: bool,
+    /// 所有节点列表（含延迟信息）
+    pub nodes: Vec<GitMirrorNode>,
+    /// 是否正在测速
+    pub loading: bool,
+    /// 测速进度文字
+    pub testing_info: String,
+    /// 已选中的节点索引，None 表示未选
+    pub selected_index: Option<usize>,
+    /// 3 秒倒计时开始时间
+    pub countdown_start: Option<Instant>,
+    /// 是否已自动选择
+    pub auto_selected: bool,
+    /// 接收后台测速结果的 channel
+    pub receiver: Option<std::sync::mpsc::Receiver<GitNodeSelectMsg>>,
+    /// 是否已触发安装（用于传递给 InstallTaskState）
+    pub install_triggered_url: Option<String>,
+}
+
+impl GitNodeSelectState {
+    pub fn new() -> Self {
+        Self {
+            show: false,
+            nodes: Vec::new(),
+            loading: false,
+            testing_info: String::new(),
+            selected_index: None,
+            countdown_start: None,
+            auto_selected: false,
+            receiver: None,
+            install_triggered_url: None,
+        }
+    }
+
+    /// 打开弹窗并启动后台测速
+    pub fn open(&mut self) {
+        self.show = true;
+        self.loading = true;
+        self.nodes = crate::core::settings::git::get_git_mirror_nodes();
+        self.testing_info = String::new();
+        self.selected_index = None;
+        self.countdown_start = None;
+        self.auto_selected = false;
+        self.install_triggered_url = None;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.receiver = Some(rx);
+        std::thread::spawn(move || {
+            crate::core::settings::git::test_mirror_latency(tx);
+        });
+    }
+
+    /// 轮询后台测速结果，更新节点状态
+    pub fn poll(&mut self) {
+        let mut done = false;
+        if let Some(ref rx) = self.receiver {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    GitNodeSelectMsg::TestingProgress(info) => {
+                        self.testing_info = info;
+                    }
+                    GitNodeSelectMsg::LatencyResults(nodes) => {
+                        self.nodes = nodes;
+                        self.loading = false;
+                        done = true;
+                        // 测速完成后开始 3 秒倒计时
+                        self.countdown_start = Some(Instant::now());
+                    }
+                }
+            }
+        }
+        if done {
+            self.receiver = None;
+        }
+    }
+
+    /// 手动选择一个节点
+    pub fn select(&mut self, index: usize) {
+        if let Some(node) = self.nodes.get(index) {
+            self.selected_index = Some(index);
+            self.countdown_start = None; // 用户手动选，取消倒计时
+            self.install_triggered_url = Some(node.url.clone());
+            self.show = false; // 立即关闭弹窗
+        }
+    }
+
+    /// 检查是否应该自动选择（3 秒后）
+    pub fn check_auto_select(&mut self) -> bool {
+        if self.loading || self.selected_index.is_some() || self.nodes.is_empty() {
+            return false;
+        }
+        if let Some(start) = self.countdown_start {
+            if start.elapsed().as_secs() >= 3 {
+                let url = self.nodes[0].url.clone();
+                self.selected_index = Some(0);
+                self.auto_selected = true;
+                self.countdown_start = None;
+                self.install_triggered_url = Some(url);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 获取倒计时剩余秒数
+    pub fn countdown_remaining(&self) -> Option<u64> {
+        self.countdown_start.map(|start| {
+            let elapsed = start.elapsed().as_secs();
+            if elapsed >= 3 {
+                0
+            } else {
+                3 - elapsed
+            }
+        })
     }
 }
 
@@ -553,6 +823,332 @@ fn render_brew_task_window(
         });
 }
 
+/// 渲染 Git 安装进度弹窗（仅进度条 + 状态文字，无日志区）
+/// 返回 true 表示安装成功且弹窗已关闭，调用方应刷新环境检测
+fn render_git_install_window(
+    ctx: &egui::Context,
+    task: &mut InstallTaskState,
+    title: &str,
+    desc: &str,
+    close_label: &str,
+    timeout_msg: &str,
+) -> bool {
+    let mut should_refresh = false;
+
+    // 先轮询消息更新进度
+    task.poll();
+    // 完成后 3 秒自动关闭（仅安装成功时）
+    if let Some(done_at) = task.done_at {
+        if done_at.elapsed().as_secs() >= 3 {
+            if task.installed_version.is_some() {
+                should_refresh = true;
+            }
+            task.show = false;
+            task.done_at = None;
+            task.progress_mode = false;
+            task.installed_version = None;
+            task.speed_text.clear();
+            return should_refresh;
+        }
+        ctx.request_repaint();
+    }
+
+    // 超时检测
+    if task.running && !task.timed_out {
+        if let Some(started_at) = task.started_at {
+            if started_at.elapsed().as_secs() >= BREW_TASK_TIMEOUT_SECS {
+                task.timed_out = true;
+                task.running = false;
+                task.receiver = None;
+                task.done_at = None;
+                task.progress_text = timeout_msg.to_string();
+            } else {
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    if !task.show {
+        return false;
+    }
+    egui::Window::new(title)
+        .collapsible(false)
+        .resizable(false)
+        .min_width(500.0)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ctx, |ui| {
+            ui.label(desc);
+            ui.add_space(8.0);
+
+            // 日志区域
+            egui::ScrollArea::vertical()
+                .max_height(200.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if task.log.is_empty() {
+                        ui.label(
+                            egui::RichText::new("准备下载...")
+                                .color(egui::Color32::GRAY),
+                        );
+                    } else {
+                        ui.label(&task.log);
+                    }
+                });
+            ui.add_space(10.0);
+
+            // 进度条
+            let progress_bar = egui::ProgressBar::new(task.progress)
+                .show_percentage()
+                .animate(task.running);
+            ui.add(progress_bar);
+            ui.add_space(6.0);
+
+            // 下载速度 + 状态文字
+            ui.horizontal(|ui| {
+                if task.running {
+                    ui.spinner();
+                    let status_text = if task.progress_text.is_empty() {
+                        "准备中..."
+                    } else {
+                        &task.progress_text
+                    };
+                    ui.label(
+                        egui::RichText::new(status_text)
+                            .size(14.0)
+                            .color(egui::Color32::from_rgb(120, 200, 255)),
+                    );
+                } else if task.timed_out {
+                    ui.label(
+                        egui::RichText::new(timeout_msg)
+                            .color(egui::Color32::from_rgb(220, 80, 80))
+                            .strong(),
+                    );
+                } else {
+                    ui.label(
+                        egui::RichText::new(&task.progress_text)
+                            .size(14.0)
+                            .color(if task.installed_version.is_some() {
+                                egui::Color32::GREEN
+                            } else {
+                                egui::Color32::from_rgb(220, 80, 80)
+                            }),
+                    );
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if task.running && !task.speed_text.is_empty() {
+                        ui.label(
+                            egui::RichText::new(&task.speed_text)
+                                .size(13.0)
+                                .color(egui::Color32::from_rgb(160, 210, 255)),
+                        );
+                    }
+                });
+            });
+
+            ui.add_space(10.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if !task.running {
+                    if ui.button(close_label).clicked() {
+                        task.show = false;
+                        task.timed_out = false;
+                        task.started_at = None;
+                        task.progress_mode = false;
+                        task.installed_version = None;
+                        task.speed_text.clear();
+                    }
+                }
+            });
+        });
+    should_refresh
+}
+
+/// 格式化速度为易读字符串
+fn format_speed(bytes_per_sec: f32) -> String {
+    if bytes_per_sec >= 1_048_576.0 {
+        format!("{:.1} MB/s", bytes_per_sec / 1_048_576.0)
+    } else if bytes_per_sec >= 1024.0 {
+        format!("{:.0} KB/s", bytes_per_sec / 1024.0)
+    } else {
+        format!("{:.0} B/s", bytes_per_sec)
+    }
+}
+
+/// 渲染 Git 节点选择弹窗
+fn render_git_node_select_popup(
+    ctx: &egui::Context,
+    state: &mut GitNodeSelectState,
+    lang: &Language,
+) {
+    if !state.show {
+        return;
+    }
+
+    // 先轮询测速结果
+    state.poll();
+    // 检查是否应该自动选择
+    state.check_auto_select();
+
+    let mut open = true;
+
+    // 如果已有选中触发（auto-select 或手动选），隐藏弹窗
+    if state.install_triggered_url.is_some() {
+        open = false;
+    }
+
+    egui::Window::new(lang::t("git_node_select_title", lang))
+        .collapsible(false)
+        .resizable(false)
+        .min_width(500.0)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label(egui::RichText::new(lang::t("git_node_select_desc", lang)).strong());
+            ui.add_space(8.0);
+
+            if state.loading {
+                // 测速中
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(state.testing_info.as_str());
+                });
+                ui.add_space(8.0);
+
+                // 显示节点占位
+                for node in &state.nodes {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("  {}", node.name));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.spinner();
+                            ui.label(lang::t("testing", lang));
+                        });
+                    });
+                    ui.separator();
+                }
+            } else {
+                // 测速完成，显示结果和倒计时
+                let remaining = state.countdown_remaining().unwrap_or(0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} {}s",
+                        lang::t("git_node_auto_select", lang),
+                        remaining
+                    ))
+                    .color(egui::Color32::from_rgb(255, 180, 50)),
+                );
+                ui.add_space(8.0);
+
+                egui::ScrollArea::vertical()
+                    .max_height(350.0)
+                    .show(ui, |ui| {
+                        let mut clicked_index: Option<usize> = None;
+                        for (i, node) in state.nodes.iter().enumerate() {
+                            let is_selected = state.selected_index == Some(i);
+                            let row_bg = if is_selected {
+                                egui::Color32::from_rgb(30, 80, 160)
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            };
+
+                            egui::Frame::NONE
+                                .fill(row_bg)
+                                .inner_margin(egui::vec2(8.0, 4.0))
+                                .show(ui, |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        // 序号
+                                        if is_selected {
+                                            ui.label(
+                                                egui::RichText::new("●")
+                                                    .color(egui::Color32::GREEN),
+                                            );
+                                        } else {
+                                            ui.label(format!("{}", i + 1));
+                                        }
+                                        ui.add_space(6.0);
+                                        // 节点名称
+                                        ui.label(
+                                            egui::RichText::new(&node.name).size(14.0),
+                                        );
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                // 延迟显示
+                                                if node.blocked {
+                                                    ui.label(
+                                                        egui::RichText::new("403/404")
+                                                            .color(egui::Color32::RED),
+                                                    ).on_hover_text("节点已阻止此文件访问");
+                                                } else if node.timed_out {
+                                                    ui.label(
+                                                        egui::RichText::new(
+                                                            lang::t("timeout", lang),
+                                                        )
+                                                        .color(egui::Color32::RED),
+                                                    );
+                                                } else if let Some(ms) = node.latency_ms {
+                                                    let color = if ms < 100 {
+                                                        egui::Color32::GREEN
+                                                    } else if ms < 300 {
+                                                        egui::Color32::YELLOW
+                                                    } else {
+                                                        egui::Color32::from_rgb(
+                                                            255, 150, 50,
+                                                        )
+                                                    };
+                                                    ui.label(
+                                                        egui::RichText::new(format!(
+                                                            "{}ms",
+                                                            ms
+                                                        ))
+                                                        .color(color),
+                                                    );
+                                                } else {
+                                                    ui.label(
+                                                        egui::RichText::new("--")
+                                                            .color(egui::Color32::GRAY),
+                                                    );
+                                                }
+                                                ui.add_space(8.0);
+                                                // 选择按钮
+                                                if node.timed_out || node.blocked {
+                                                    ui.add_enabled(false, egui::Button::new(
+                                                        lang::t("install", lang),
+                                                    ));
+                                                } else if is_selected {
+                                                    ui.label(
+                                                        egui::RichText::new("已选")
+                                                            .color(egui::Color32::GREEN),
+                                                    );
+                                                } else {
+                                                    if ui.small_button(
+                                                        lang::t("install", lang),
+                                                    ).clicked() {
+                                                        clicked_index = Some(i);
+                                                    }
+                                                }
+                                            },
+                                        );
+                                    });
+                                });
+
+                            ui.separator();
+                        }
+                        // 在循环外处理点击，避免同时借用
+                        if let Some(i) = clicked_index {
+                            state.select(i);
+                        }
+                    });
+            }
+            ctx.request_repaint();
+        });
+
+    // 弹窗关闭（open=false、手动选中、或安装触发）
+    if !open || !state.show || state.install_triggered_url.is_some() {
+        state.show = false;
+        state.receiver = None;
+    }
+}
+
 fn setting_section(
     ui: &mut egui::Ui,
     icon: &str,
@@ -616,6 +1212,7 @@ pub fn render(
     pm2_install: &mut InstallTaskState,
     github_node_state: &crate::core::settings::github_proxy::NodeLoadState,
     on_refresh_nodes: &mut bool,
+    git_node_select: &mut GitNodeSelectState,
 ) {
     ui.horizontal(|ui| {
         ui.selectable_value(tab, SettingsTab::General, lang::t("general_settings", &state.language));
@@ -1064,7 +1661,7 @@ pub fn render(
                                             if is_system {
                                                 ui.label(egui::RichText::new(lang::t("not_installed", &state.language)).size(14.0).color(egui::Color32::GRAY));
                                             } else if ui.button(lang::t("install", &state.language)).clicked() {
-                                                git_install.start_install("git");
+                                                git_node_select.open();
                                             }
                                         }
                                     }
@@ -1200,17 +1797,32 @@ pub fn render(
                         }
                     });
 
-                    // Git 安装弹窗
-                    render_brew_task_window(
+                    // Git 节点选择弹窗（安装前选择下载源）
+                    {
+                        render_git_node_select_popup(
+                            ui.ctx(),
+                            git_node_select,
+                            &state.language,
+                        );
+                        // 检查节点选中后的安装触发
+                        if let Some(url) = git_node_select.install_triggered_url.take() {
+                            git_install.start_git_install(&url);
+                        }
+                    }
+
+                    // Git 安装弹窗（进度条模式）
+                    if render_git_install_window(
                         ui.ctx(),
                         git_install,
                         lang::t("git_install_title", &state.language),
                         lang::t("git_install_desc", &state.language),
-                        lang::t("brew_install_waiting", &state.language),
-                        lang::t("brew_install_running", &state.language),
                         lang::t("close", &state.language),
                         lang::t("install_timeout", &state.language),
-                    );
+                    ) {
+                        // 安装成功后自动刷新环境检测
+                        state.detect_all_env();
+                        state.save();
+                    }
 
                     // NodeJs 安装弹窗
                     render_brew_task_window(

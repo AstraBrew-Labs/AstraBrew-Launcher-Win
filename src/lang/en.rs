@@ -152,6 +152,11 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         // Git Settings
         "git_settings" => "Git Settings",
         "git_purpose" => "For managing & downloading Tavern (Required)",
+        "git_node_select_title" => "Select Git Download Node",
+        "git_node_select_desc" => "Choose a download node, the fastest will be auto-selected after 3 seconds",
+        "git_node_auto_select" => "Auto-selecting in:",
+        "git_install_progress_title" => "Git Installation Progress",
+        "git_install_progress_desc" => "Downloading and installing Git, please wait...",
         
         // NodeJs Settings
         "nodejs_settings" => "NodeJs Settings",
