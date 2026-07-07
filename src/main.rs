@@ -85,7 +85,7 @@ mod ui;
 mod utils;
 
 use pages::console::ConsoleState;
-use pages::settings::{SettingsState, SettingsTab, StartMode, Theme, GitNodeSelectState};
+use pages::settings::{SettingsState, SettingsTab, StartMode, Theme, GitNodeSelectState, NodejsNodeSelectState};
 use pages::resource_manage::ResourceManageState;
 use pages::tavern_config::TavernConfigUI;
 
@@ -140,6 +140,9 @@ struct MyApp {
 
     // Git 节点选择弹窗状态
     git_node_select: GitNodeSelectState,
+
+    // Node.js 节点选择弹窗状态
+    nodejs_node_select: NodejsNodeSelectState,
 
     // Github 节点状态
     github_node_rx: Option<
@@ -201,6 +204,7 @@ impl MyApp {
             caddy_install_state: pages::settings::InstallTaskState::new(),
             pm2_install_state: pages::settings::InstallTaskState::new(),
             git_node_select: GitNodeSelectState::new(),
+            nodejs_node_select: NodejsNodeSelectState::new(),
             github_node_rx: None,
             github_node_state: crate::core::settings::github_proxy::NodeLoadState::Done(vec![]),
             on_refresh_nodes: false,
@@ -776,6 +780,7 @@ impl eframe::App for MyApp {
                         &self.github_node_state,
                         &mut self.on_refresh_nodes,
                         &mut self.git_node_select,
+                        &mut self.nodejs_node_select,
                     );
                 }
             }

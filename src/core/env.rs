@@ -43,7 +43,13 @@ pub fn get_builtin_npm_path() -> Option<PathBuf> {
 }
 
 pub fn get_pm2_path() -> Option<PathBuf> {
-    // 先尝试系统 PATH 中的 pm2
+    // 内置安装：lib/pm2/pm2.cmd（包装脚本）
+    let builtin_pm2 = get_data_dir().join("lib").join("pm2").join("pm2.cmd");
+    if builtin_pm2.exists() {
+        return Some(builtin_pm2);
+    }
+
+    // 系统 PATH 中的 pm2
     if let Some(p) = get_system_cmd_path("pm2") {
         return Some(p);
     }
@@ -57,15 +63,6 @@ pub fn get_pm2_path() -> Option<PathBuf> {
         let npm_global_ps = PathBuf::from(&appdata).join("npm").join("pm2.ps1");
         if npm_global_ps.exists() {
             return Some(npm_global_ps);
-        }
-    }
-
-    // 检查 node_modules/.bin 下
-    let builtin_node = get_builtin_node_path();
-    if let Some(node_exe) = builtin_node {
-        let pm2_path = node_exe.parent().unwrap_or(&PathBuf::from(".")).join("pm2.cmd");
-        if pm2_path.exists() {
-            return Some(pm2_path);
         }
     }
 

@@ -139,13 +139,17 @@ pub fn detect_caddy_builtin() -> Option<String> {
 
 /// 检测 PM2 版本（通过内置 npx）
 pub fn detect_pm2_builtin() -> Option<String> {
-    let builtin_dir = crate::core::env::get_data_dir().join("lib").join("nodejs");
-    let npx = builtin_dir.join("npx.cmd");
-    if !npx.exists() { return None; }
-    let output = cmd_builtin("pm2", &npx.to_string_lossy())
-        .arg("pm2")
+    let pm2_cmd = crate::core::env::get_data_dir()
+        .join("lib")
+        .join("pm2")
+        .join("pm2.cmd");
+    if !pm2_cmd.exists() {
+        return None;
+    }
+    let output = cmd_builtin("pm2", &pm2_cmd.to_string_lossy())
         .arg("-v")
-        .output().ok()?;
+        .output()
+        .ok()?;
     let combined = format!(
         "{}\n{}",
         String::from_utf8_lossy(&output.stdout),
@@ -206,6 +210,7 @@ fn extract_semver(text: &str) -> Option<String> {
 }
 
 /// 运行 npm install -g <package>（用于 PM2 等全局 npm 包）
+#[allow(dead_code)]
 pub fn run_npm_install_global(package: &str, sender: std::sync::mpsc::Sender<String>) {
     let mut cmd = cmd_system("npm");
     cmd.args(["install", "-g", package]);

@@ -5,6 +5,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
 use crate::core::settings::git::{GitMirrorNode, GitNodeSelectMsg};
+use crate::core::settings::nodejs::{NodejsMirrorNode, NodejsNodeSelectMsg};
 
 use crate::utils;
 
@@ -366,6 +367,12 @@ impl SettingsState {
         self.caddy_version = env_detect::detect_caddy_system();
         self.pm2_version = env_detect::detect_pm2_system();
         // 内置环境
+        self.detect_builtin_env();
+    }
+
+    /// 仅刷新内置环境版本（轻量，UI 线程安全）
+    fn detect_builtin_env(&mut self) {
+        use crate::core::settings::env_detect;
         self.git_version_builtin = env_detect::detect_git_builtin();
         let node_ver_b = env_detect::detect_nodejs_builtin();
         if let Some(v) = node_ver_b {
@@ -440,6 +447,7 @@ impl InstallTaskState {
     }
 
     /// 启动 npm install -g <package>（用于 PM2 等全局 npm 包安装）
+    #[allow(dead_code)]
     pub fn start_npm_install(&mut self, package: &str) {
         use crate::core::settings::env_detect;
         let package = package.to_string();
@@ -550,6 +558,145 @@ impl InstallTaskState {
         });
     }
 
+    /// 启动 Node.js 下载安装（使用指定 URL）- 进度条模式
+    pub fn start_nodejs_install(&mut self, url: &str) {
+        use crate::EnvInstallProgress;
+        let url = url.to_string();
+        let temp_dir = std::env::temp_dir().join("astrabrew-launcher");
+        let temp_path = temp_dir.join("node-v24.14.0-win-x64.zip");
+        let install_dir = crate::core::env::get_data_dir().join("lib").join("nodejs");
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.receiver = Some(rx);
+        self.log = String::new();
+        self.running = true;
+        self.show = true;
+        self.done_at = None;
+        self.timed_out = false;
+        self.progress = 0.0;
+        self.progress_text = String::new();
+        self.speed_text = String::new();
+        self.installed_version = None;
+        self.progress_mode = true;
+        self.started_at = Some(std::time::Instant::now());
+
+        let _ = tx.send(format!("__LOG__:下载地址: {}", url));
+        let _ = tx.send(format!("__LOG__:临时文件: {}", temp_path.display()));
+        let _ = tx.send(format!("__LOG__:安装目录: {}", install_dir.display()));
+
+        std::thread::spawn(move || {
+            let (prog_tx, prog_rx) = std::sync::mpsc::channel();
+
+            let download_thread = std::thread::spawn(move || {
+                crate::core::settings::nodejs::download_and_install_nodejs_from_url(
+                    &url,
+                    Some(prog_tx),
+                )
+                .map_err(|e| e.to_string())
+            });
+
+            let mut last_sent_pct: i32 = -1;
+            let mut is_download_phase = true;
+            for msg in prog_rx {
+                match msg {
+                    EnvInstallProgress::Progress(p) => {
+                        let display_pct = (p * 100.0) as i32;
+                        if display_pct != last_sent_pct {
+                            last_sent_pct = display_pct;
+                            let _ = tx.send(format!("__PROGRESS__:{}", p));
+                            let phase_text = if p < 0.5 {
+                                "下载中..."
+                            } else {
+                                if is_download_phase {
+                                    is_download_phase = false;
+                                }
+                                "安装中..."
+                            };
+                            let _ = tx.send(format!("__STATUS__:{}", phase_text));
+                        }
+                    }
+                    EnvInstallProgress::Speed(speed) => {
+                        let _ = tx.send(format!("__SPEED__:{}", speed));
+                    }
+                    EnvInstallProgress::Status(s) => {
+                        let _ = tx.send(format!("__LOG__:{}", s));
+                        if s.contains("下载完成") {
+                            let _ = tx.send("__STATUS__:安装中...".to_string());
+                            let _ = tx.send("__SPEED__:0.0".to_string());
+                        }
+                    }
+                    EnvInstallProgress::Error(e) => {
+                        let _ = tx.send(format!("__LOG__:错误: {}", e));
+                        let _ = tx.send(format!("__STATUS__:错误"));
+                    }
+                    EnvInstallProgress::Version(ver) => {
+                        let _ = tx.send(format!("__VERSION__:{}", ver));
+                        let _ = tx.send(format!("__LOG__:检测到版本: {}", ver));
+                    }
+                    EnvInstallProgress::Finished => {}
+                }
+            }
+
+            match download_thread.join().unwrap_or_else(|_| Err("线程异常".to_string())) {
+                Ok(()) => {}
+                Err(e) => {
+                    let _ = tx.send(format!("__LOG__:错误: {}", e));
+                    let _ = tx.send(format!("__STATUS__:错误"));
+                }
+            }
+            let _ = tx.send("__DONE__".to_string());
+        });
+    }
+
+    /// 启动 PM2 安装（npm install pm2 --prefix lib/pm2）
+    pub fn start_pm2_install(&mut self, registry: Option<String>) {
+        use crate::EnvInstallProgress;
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.receiver = Some(rx);
+        self.log = String::new();
+        self.running = true;
+        self.show = true;
+        self.done_at = None;
+        self.timed_out = false;
+        self.progress_mode = false;
+        self.started_at = Some(std::time::Instant::now());
+
+        let install_dir = crate::core::env::get_data_dir().join("lib").join("pm2");
+        let _ = tx.send(format!("安装目录: {}", install_dir.display()));
+
+        std::thread::spawn(move || {
+            let (prog_tx, prog_rx) = std::sync::mpsc::channel();
+
+            let install_result = std::thread::spawn(move || {
+                crate::core::settings::pm2::install_pm2(Some(prog_tx), registry)
+                    .map_err(|e| e.to_string())
+            });
+
+            for msg in prog_rx {
+                match msg {
+                    EnvInstallProgress::Status(s) => {
+                        let _ = tx.send(s);
+                    }
+                    EnvInstallProgress::Version(ver) => {
+                        let _ = tx.send(format!("检测到版本: {}", ver));
+                        let _ = tx.send(format!("__VERSION__:{}", ver));
+                    }
+                    EnvInstallProgress::Error(e) => {
+                        let _ = tx.send(e);
+                    }
+                    _ => {}
+                }
+            }
+
+            match install_result.join().unwrap_or_else(|_| Err("线程异常".to_string())) {
+                Ok(()) => {}
+                Err(e) => {
+                    let _ = tx.send(e);
+                }
+            }
+            let _ = tx.send("__DONE__".to_string());
+        });
+    }
+
     /// 轮询日志，返回完成后的新版本号
     #[allow(dead_code)]
     pub fn poll(&mut self) -> Option<String> {
@@ -574,10 +721,7 @@ impl InstallTaskState {
                 }
                 if let Some(ver) = line.strip_prefix("__VERSION__:") {
                     new_version = Some(ver.to_string());
-                    // 进度条模式下也存版本号
-                    if self.progress_mode {
-                        self.installed_version = Some(ver.to_string());
-                    }
+                    self.installed_version = Some(ver.to_string());
                     continue;
                 }
                 if self.progress_mode {
@@ -735,6 +879,107 @@ impl GitNodeSelectState {
     }
 }
 
+/// Node.js 节点选择弹窗状态
+pub struct NodejsNodeSelectState {
+    pub show: bool,
+    pub nodes: Vec<NodejsMirrorNode>,
+    pub loading: bool,
+    pub testing_info: String,
+    pub selected_index: Option<usize>,
+    pub countdown_start: Option<Instant>,
+    pub auto_selected: bool,
+    pub receiver: Option<std::sync::mpsc::Receiver<NodejsNodeSelectMsg>>,
+    pub install_triggered_url: Option<String>,
+}
+
+impl NodejsNodeSelectState {
+    pub fn new() -> Self {
+        Self {
+            show: false,
+            nodes: Vec::new(),
+            loading: false,
+            testing_info: String::new(),
+            selected_index: None,
+            countdown_start: None,
+            auto_selected: false,
+            receiver: None,
+            install_triggered_url: None,
+        }
+    }
+
+    pub fn open(&mut self) {
+        self.show = true;
+        self.loading = true;
+        self.nodes = crate::core::settings::nodejs::get_nodejs_mirror_nodes();
+        self.testing_info = String::new();
+        self.selected_index = None;
+        self.countdown_start = None;
+        self.auto_selected = false;
+        self.install_triggered_url = None;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.receiver = Some(rx);
+        std::thread::spawn(move || {
+            crate::core::settings::nodejs::test_mirror_latency(tx);
+        });
+    }
+
+    pub fn poll(&mut self) {
+        let mut done = false;
+        if let Some(ref rx) = self.receiver {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    NodejsNodeSelectMsg::TestingProgress(info) => {
+                        self.testing_info = info;
+                    }
+                    NodejsNodeSelectMsg::LatencyResults(nodes) => {
+                        self.nodes = nodes;
+                        self.loading = false;
+                        done = true;
+                        self.countdown_start = Some(Instant::now());
+                    }
+                }
+            }
+        }
+        if done {
+            self.receiver = None;
+        }
+    }
+
+    pub fn select(&mut self, index: usize) {
+        if let Some(node) = self.nodes.get(index) {
+            self.selected_index = Some(index);
+            self.countdown_start = None;
+            self.install_triggered_url = Some(node.url.clone());
+            self.show = false;
+        }
+    }
+
+    pub fn check_auto_select(&mut self) -> bool {
+        if self.loading || self.selected_index.is_some() || self.nodes.is_empty() {
+            return false;
+        }
+        if let Some(start) = self.countdown_start {
+            if start.elapsed().as_secs() >= 3 {
+                let url = self.nodes[0].url.clone();
+                self.selected_index = Some(0);
+                self.auto_selected = true;
+                self.countdown_start = None;
+                self.install_triggered_url = Some(url);
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn countdown_remaining(&self) -> Option<u64> {
+        self.countdown_start.map(|start| {
+            let elapsed = start.elapsed().as_secs();
+            if elapsed >= 3 { 0 } else { 3 - elapsed }
+        })
+    }
+}
+
 use crate::lang;
 
 fn render_brew_task_window(
@@ -746,13 +991,18 @@ fn render_brew_task_window(
     running_label: &str,
     close_label: &str,
     timeout_msg: &str,
-) {
+) -> bool {
+    task.poll();
+
+    let mut succeeded = false;
     // 完成后 3 秒自动关闭
     if let Some(done_at) = task.done_at {
         if done_at.elapsed().as_secs() >= 3 {
+            succeeded = task.installed_version.is_some();
             task.show = false;
             task.done_at = None;
-            return;
+            task.installed_version = None;
+            return succeeded;
         }
         ctx.request_repaint();
     }
@@ -778,7 +1028,7 @@ fn render_brew_task_window(
     }
 
     if !task.show {
-        return;
+        return false;
     }
     egui::Window::new(title)
         .collapsible(false)
@@ -821,6 +1071,7 @@ fn render_brew_task_window(
                 });
             });
         });
+    succeeded
 }
 
 /// 渲染 Git 安装进度弹窗（仅进度条 + 状态文字，无日志区）
@@ -1149,6 +1400,167 @@ fn render_git_node_select_popup(
     }
 }
 
+/// 渲染 Node.js 节点选择弹窗
+fn render_nodejs_node_select_popup(
+    ctx: &egui::Context,
+    state: &mut NodejsNodeSelectState,
+    lang: &Language,
+) {
+    if !state.show {
+        return;
+    }
+
+    state.poll();
+    state.check_auto_select();
+
+    let mut open = true;
+
+    if state.install_triggered_url.is_some() {
+        open = false;
+    }
+
+    egui::Window::new(lang::t("nodejs_node_select_title", lang))
+        .collapsible(false)
+        .resizable(false)
+        .min_width(500.0)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label(egui::RichText::new(lang::t("nodejs_node_select_desc", lang)).strong());
+            ui.add_space(8.0);
+
+            if state.loading {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(state.testing_info.as_str());
+                });
+                ui.add_space(8.0);
+
+                for node in &state.nodes {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("  {}", node.name));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.spinner();
+                            ui.label(lang::t("testing", lang));
+                        });
+                    });
+                    ui.separator();
+                }
+            } else {
+                let remaining = state.countdown_remaining().unwrap_or(0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} {}s",
+                        lang::t("git_node_auto_select", lang),
+                        remaining
+                    ))
+                    .color(egui::Color32::from_rgb(255, 180, 50)),
+                );
+                ui.add_space(8.0);
+
+                egui::ScrollArea::vertical()
+                    .max_height(350.0)
+                    .show(ui, |ui| {
+                        let mut clicked_index: Option<usize> = None;
+                        for (i, node) in state.nodes.iter().enumerate() {
+                            let is_selected = state.selected_index == Some(i);
+                            let row_bg = if is_selected {
+                                egui::Color32::from_rgb(30, 80, 160)
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            };
+
+                            egui::Frame::NONE
+                                .fill(row_bg)
+                                .inner_margin(egui::vec2(8.0, 4.0))
+                                .show(ui, |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        if is_selected {
+                                            ui.label(
+                                                egui::RichText::new("●")
+                                                    .color(egui::Color32::GREEN),
+                                            );
+                                        } else {
+                                            ui.label(format!("{}", i + 1));
+                                        }
+                                        ui.add_space(6.0);
+                                        ui.label(
+                                            egui::RichText::new(&node.name).size(14.0),
+                                        );
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if node.blocked {
+                                                    ui.label(
+                                                        egui::RichText::new("403/404")
+                                                            .color(egui::Color32::RED),
+                                                    ).on_hover_text("节点已阻止此文件访问");
+                                                } else if node.timed_out {
+                                                    ui.label(
+                                                        egui::RichText::new(
+                                                            lang::t("timeout", lang),
+                                                        )
+                                                        .color(egui::Color32::RED),
+                                                    );
+                                                } else if let Some(ms) = node.latency_ms {
+                                                    let color = if ms < 100 {
+                                                        egui::Color32::GREEN
+                                                    } else if ms < 300 {
+                                                        egui::Color32::YELLOW
+                                                    } else {
+                                                        egui::Color32::from_rgb(
+                                                            255, 150, 50,
+                                                        )
+                                                    };
+                                                    ui.label(
+                                                        egui::RichText::new(format!("{}ms", ms))
+                                                            .color(color),
+                                                    );
+                                                } else {
+                                                    ui.label(
+                                                        egui::RichText::new("--")
+                                                            .color(egui::Color32::GRAY),
+                                                    );
+                                                }
+                                                ui.add_space(8.0);
+                                                if node.timed_out || node.blocked {
+                                                    ui.add_enabled(false, egui::Button::new(
+                                                        lang::t("install", lang),
+                                                    ));
+                                                } else if is_selected {
+                                                    ui.label(
+                                                        egui::RichText::new("已选")
+                                                            .color(egui::Color32::GREEN),
+                                                    );
+                                                } else {
+                                                    if ui.small_button(
+                                                        lang::t("install", lang),
+                                                    ).clicked() {
+                                                        clicked_index = Some(i);
+                                                    }
+                                                }
+                                            },
+                                        );
+                                    });
+                                });
+
+                            ui.separator();
+                        }
+                        if let Some(i) = clicked_index {
+                            state.select(i);
+                        }
+                    });
+            }
+            ctx.request_repaint();
+        });
+
+    if !open || !state.show || state.install_triggered_url.is_some() {
+        state.show = false;
+        state.receiver = None;
+    }
+}
+
 fn setting_section(
     ui: &mut egui::Ui,
     icon: &str,
@@ -1213,6 +1625,7 @@ pub fn render(
     github_node_state: &crate::core::settings::github_proxy::NodeLoadState,
     on_refresh_nodes: &mut bool,
     git_node_select: &mut GitNodeSelectState,
+    nodejs_node_select: &mut NodejsNodeSelectState,
 ) {
     ui.horizontal(|ui| {
         ui.selectable_value(tab, SettingsTab::General, lang::t("general_settings", &state.language));
@@ -1693,7 +2106,7 @@ pub fn render(
                                     match nv {
                                         Some(ref ver) if nv_outdated && is_builtin => {
                                             if ui.button(lang::t("upgrade_btn", &state.language)).clicked() {
-                                                nodejs_install.start_install("node@24");
+                                                nodejs_node_select.open();
                                             }
                                         }
                                         Some(ref ver) => {
@@ -1703,7 +2116,7 @@ pub fn render(
                                             if is_system {
                                                 ui.label(egui::RichText::new(lang::t("not_installed", &state.language)).size(14.0).color(egui::Color32::GRAY));
                                             } else if ui.button(lang::t("install", &state.language)).clicked() {
-                                                nodejs_install.start_install("node@24");
+                                                nodejs_node_select.open();
                                             }
                                         }
                                     }
@@ -1787,7 +2200,8 @@ pub fn render(
                                                         .on_disabled_hover_text(lang::t("pm2_need_nodejs", &state.language))
                                                 };
                                                 if resp.clicked() {
-                                                    pm2_install.start_npm_install("pm2");
+                                                    let registry = crate::core::settings::pm2::npm_registry_url(&state.npm_registry);
+                                                    pm2_install.start_pm2_install(registry);
                                                 }
                                             }
                                         }
@@ -1819,25 +2233,38 @@ pub fn render(
                         lang::t("close", &state.language),
                         lang::t("install_timeout", &state.language),
                     ) {
-                        // 安装成功后自动刷新环境检测
-                        state.detect_all_env();
+                        // 安装成功后自动刷新内置环境检测
+                        state.detect_builtin_env();
                         state.save();
                     }
 
-                    // NodeJs 安装弹窗
-                    render_brew_task_window(
+                    // Node.js 节点选择弹窗
+                    {
+                        render_nodejs_node_select_popup(
+                            ui.ctx(),
+                            nodejs_node_select,
+                            &state.language,
+                        );
+                        if let Some(url) = nodejs_node_select.install_triggered_url.take() {
+                            nodejs_install.start_nodejs_install(&url);
+                        }
+                    }
+
+                    // NodeJs 安装弹窗（进度条模式）
+                    if render_git_install_window(
                         ui.ctx(),
                         nodejs_install,
                         lang::t("nodejs_install_title", &state.language),
                         lang::t("nodejs_install_desc", &state.language),
-                        lang::t("brew_install_waiting", &state.language),
-                        lang::t("brew_install_running", &state.language),
                         lang::t("close", &state.language),
                         lang::t("install_timeout", &state.language),
-                    );
+                    ) {
+                        state.detect_builtin_env();
+                        state.save();
+                    }
 
                     // Caddy 安装弹窗
-                    render_brew_task_window(
+                    let _ = render_brew_task_window(
                         ui.ctx(),
                         caddy_install,
                         lang::t("caddy_install_title", &state.language),
@@ -1849,7 +2276,7 @@ pub fn render(
                     );
 
                     // PM2 安装弹窗
-                    render_brew_task_window(
+                    if render_brew_task_window(
                         ui.ctx(),
                         pm2_install,
                         lang::t("pm2_install_title", &state.language),
@@ -1858,7 +2285,10 @@ pub fn render(
                         lang::t("brew_install_running", &state.language),
                         lang::t("close", &state.language),
                         lang::t("install_timeout", &state.language),
-                    );
+                    ) {
+                        state.detect_builtin_env();
+                        state.save();
+                    }
                     }
 
                     // Github 设置

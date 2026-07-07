@@ -161,6 +161,10 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         // NodeJs Settings
         "nodejs_settings" => "NodeJs 设置",
         "nodejs_purpose" => "用于运行酒馆（必装）",
+        "nodejs_node_select_title" => "选择 Node.js 下载节点",
+        "nodejs_node_select_desc" => "请选择一个下载节点，3秒后将自动选择延迟最低的节点",
+        "nodejs_install_progress_title" => "Node.js 安装进度",
+        "nodejs_install_progress_desc" => "正在下载并安装 Node.js，请稍候...",
         "npm_env_info" => "NPM 环境信息",
         "npm_env_info_desc" => "查看当前使用的 NPM 版本和路径\n版本：{version}\n路径：{path}",
         "npm_registry" => "NPM 源设置",

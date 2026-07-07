@@ -161,6 +161,10 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         // NodeJs Settings
         "nodejs_settings" => "NodeJs Settings",
         "nodejs_purpose" => "For running Tavern (Required)",
+        "nodejs_node_select_title" => "Select Node.js Download Node",
+        "nodejs_node_select_desc" => "Choose a download node, the fastest will be auto-selected after 3 seconds",
+        "nodejs_install_progress_title" => "Node.js Installation Progress",
+        "nodejs_install_progress_desc" => "Downloading and installing Node.js, please wait...",
         "npm_env_info" => "NPM Environment Info",
         "npm_env_info_desc" => "View current NPM version and path\nVersion: {version}\nPath: {path}",
         "npm_registry" => "NPM Registry",

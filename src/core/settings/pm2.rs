@@ -1,29 +1,207 @@
 //! PM2 进程管理器
 //!
-//! 封装 PM2 CLI，提供酒馆进程的完整生命周期管理：
-//! - start: pm2 start server.js --name astrabrew-launcher-sillytavern
-//! - stop: pm2 stop astrabrew-launcher-sillytavern
-//! - restart: pm2 restart astrabrew-launcher-sillytavern
-//! - force_kill: pm2 delete astrabrew-launcher-sillytavern
-//! - get_status: pm2 jlist → 解析状态
-//! - get_logs: 直接读取 ~/.pm2/logs/<name>-out.log（字节偏移追踪）
-//! - clear_logs: pm2 flush + 直接删除日志文件
-//!
-//! 设计要点：
-//! - 所有操作都是同步阻塞的（PM2 CLI 执行很快）
-//! - 状态通过 pm2 jlist JSON 解析获取
-//! - PM2 进程名固定为 "astrabrew-launcher-sillytavern"，避免与用户自行安装的冲突
+//! 封装 PM2 CLI，提供酒馆进程的完整生命周期管理。
+
+use crate::EnvInstallProgress;
+use std::fs;
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::sync::mpsc::Sender;
 
 use crate::pages::settings::TavernDataMode;
 use std::process::Command;
 
-/// 构建 PM2 命令，自动解析 pm2 路径并补全子进程 PATH。
-///
-/// 打包后的 .app 中 PATH 不含 Homebrew 路径，
-/// PM2 是 Node.js 脚本（shebang `#!/usr/bin/env node`），
-/// 子进程 PATH 必须包含 node 所在目录。
+/// PM2 安装函数：通过 npm 安装到内置目录，生成包装脚本
+/// `registry` 可选：None 使用默认源，Some(url) 使用指定 registry
+pub fn install_pm2(
+    progress_sender: Option<Sender<EnvInstallProgress>>,
+    registry: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data_dir = crate::core::env::get_data_dir();
+    let lib_dir = data_dir.join("lib");
+    let pm2_dir = lib_dir.join("pm2");
+    let nodejs_dir = lib_dir.join("nodejs");
+    let npm_cmd = nodejs_dir.join("npm.cmd");
+
+    if !npm_cmd.exists() {
+        let err = "Node.js 未安装，PM2 安装需要 Node.js 环境".to_string();
+        if let Some(tx) = &progress_sender {
+            let _ = tx.send(EnvInstallProgress::Error(err.clone()));
+        }
+        return Err(err.into());
+    }
+
+    if let Some(tx) = &progress_sender {
+        let _ = tx.send(EnvInstallProgress::Status(format!(
+            "安装目录: {}",
+            pm2_dir.display()
+        )));
+    }
+
+    // 清理旧安装
+    if pm2_dir.exists() {
+        if let Some(tx) = &progress_sender {
+            let _ = tx.send(EnvInstallProgress::Status("清理旧安装...".to_string()));
+        }
+        let _ = fs::remove_dir_all(&pm2_dir);
+    }
+    fs::create_dir_all(&pm2_dir)?;
+
+    // npm install pm2 --prefix <pm2_dir> [--registry <url>]
+    if let Some(ref url) = registry {
+        if let Some(tx) = &progress_sender {
+            let _ = tx.send(EnvInstallProgress::Status(format!(
+                "正在安装 PM2 (npm --registry {})...",
+                url
+            )));
+        }
+    } else {
+        if let Some(tx) = &progress_sender {
+            let _ = tx.send(EnvInstallProgress::Status("正在安装 PM2 (npm)...".to_string()));
+        }
+    }
+
+    let mut cmd = Command::new(&npm_cmd);
+    cmd.args(["install", "pm2", "--prefix"]);
+    cmd.arg(&pm2_dir);
+    // 不生成 package-lock.json（不需要锁版本）
+    cmd.arg("--no-package-lock");
+    // 关闭 npm 的 spinner/进度条（输出更干净）
+    cmd.arg("--no-progress");
+    // 关闭审计
+    cmd.arg("--no-audit");
+    // 关闭 funding 消息
+    cmd.arg("--no-fund");
+    // 自定义 registry
+    if let Some(ref url) = registry {
+        cmd.arg("--registry");
+        cmd.arg(url);
+    }
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| format!("无法执行 npm install: {}", e))?;
+
+    // 实时读取 stdout 发到日志
+    if let Some(stdout) = child.stdout.take() {
+        let tx_clone = progress_sender.clone();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && !is_npm_noise(trimmed) {
+                    if let Some(tx) = &tx_clone {
+                        let _ = tx.send(EnvInstallProgress::Status(trimmed.to_string()));
+                    }
+                }
+            }
+        });
+    }
+
+    // 实时读取 stderr（只保留有用的错误日志）
+    if let Some(stderr) = child.stderr.take() {
+        let tx_clone = progress_sender.clone();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && !is_npm_noise(trimmed) {
+                    if let Some(tx) = &tx_clone {
+                        let _ = tx.send(EnvInstallProgress::Status(format!("[npm] {}", trimmed)));
+                    }
+                }
+            }
+        });
+    }
+
+    let status = child.wait().map_err(|e| format!("npm install 异常: {}", e))?;
+
+    if !status.success() {
+        let err = format!("PM2 安装失败 (exit code: {})", status);
+        if let Some(tx) = &progress_sender {
+            let _ = tx.send(EnvInstallProgress::Error(err.clone()));
+        }
+        return Err(err.into());
+    }
+
+    if let Some(tx) = &progress_sender {
+        let _ = tx.send(EnvInstallProgress::Status("生成包装脚本...".to_string()));
+    }
+
+    // 生成 pm2.cmd 包装脚本（通过内置 node.exe 执行 pm2/p2-runtime JS 脚本）
+    let pm2_cmd_path = pm2_dir.join("pm2.cmd");
+
+    let wrapper_content = "\
+@echo off\r\n\
+set PM2_HOME=%~dp0runtime\\pm2\r\n\
+\"%~dp0..\\nodejs\\node.exe\" \"%~dp0node_modules\\pm2\\bin\\pm2\" %*\r\n";
+
+    let mut f = fs::File::create(&pm2_cmd_path)?;
+    f.write_all(wrapper_content.as_bytes())?;
+
+    // 生成 pm2-runtime.cmd
+    let wrapper_runtime = "\
+@echo off\r\n\
+set PM2_HOME=%~dp0runtime\\pm2\r\n\
+\"%~dp0..\\nodejs\\node.exe\" \"%~dp0node_modules\\pm2\\bin\\pm2-runtime\" %*\r\n";
+    let mut f2 = fs::File::create(pm2_dir.join("pm2-runtime.cmd"))?;
+    f2.write_all(wrapper_runtime.as_bytes())?;
+
+    // 创建运行时目录
+    let runtime_dir = pm2_dir.join("runtime").join("pm2");
+    fs::create_dir_all(&runtime_dir)?;
+
+    if let Some(tx) = &progress_sender {
+        let _ = tx.send(EnvInstallProgress::Status(format!(
+            "PM2_HOME: {}",
+            runtime_dir.display()
+        )));
+    }
+
+    // 验证安装
+    if let Some(tx) = &progress_sender {
+        let _ = tx.send(EnvInstallProgress::Status("验证安装...".to_string()));
+    }
+
+    let verify_output = Command::new(&pm2_cmd_path)
+        .arg("-v")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("PM2 验证失败: {}", e))?;
+
+    if verify_output.status.success() {
+        let stdout = String::from_utf8_lossy(&verify_output.stdout);
+        let version = stdout.trim().to_string();
+        if let Some(tx) = &progress_sender {
+            let _ = tx.send(EnvInstallProgress::Version(version));
+            let _ = tx.send(EnvInstallProgress::Finished);
+        }
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&verify_output.stderr);
+        let err = format!("PM2 安装验证失败: {}", stderr.trim());
+        if let Some(tx) = &progress_sender {
+            let _ = tx.send(EnvInstallProgress::Error(err.clone()));
+        }
+        Err(err.into())
+    }
+}
+
+/// 构建 PM2 命令（使用内置包装脚本，自动设置 PM2_HOME）
 fn pm2_cmd() -> Command {
-    let cmd = Command::new(super::env_detect::resolve_command("pm2"));
+    let pm2_path = crate::core::env::get_pm2_path()
+        .unwrap_or_else(|| PathBuf::from("pm2"));
+    let mut cmd = Command::new(&pm2_path);
+
+    // 确保 PM2_HOME 指向内置运行时目录
+    let runtime_dir = crate::core::env::get_data_dir()
+        .join("lib")
+        .join("pm2")
+        .join("runtime")
+        .join("pm2");
+    cmd.env("PM2_HOME", &runtime_dir);
+
     cmd
 }
 
@@ -340,26 +518,26 @@ impl Pm2Manager {
 
     // ---- 日志操作 ----
 
-    /// 获取 PM2 stdout 日志文件路径（`%USERPROFILE%\.pm2\logs\<name>-out.log`）
-    fn out_log_path(&self) -> Option<std::path::PathBuf> {
-        let home = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .ok()?;
-        Some(std::path::PathBuf::from(home)
-            .join(".pm2")
-            .join("logs")
-            .join(format!("{}-out.log", self.process_name)))
+    /// 获取 PM2 运行时目录下的日志路径
+    fn pm2_home_dir(&self) -> Option<PathBuf> {
+        let dir = crate::core::env::get_data_dir()
+            .join("lib")
+            .join("pm2")
+            .join("runtime")
+            .join("pm2");
+        Some(dir)
     }
 
-    /// 获取 PM2 stderr 日志文件路径（`%USERPROFILE%\.pm2\logs\<name>-error.log`）
-    fn error_log_path(&self) -> Option<std::path::PathBuf> {
-        let home = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .ok()?;
-        Some(std::path::PathBuf::from(home)
-            .join(".pm2")
-            .join("logs")
-            .join(format!("{}-error.log", self.process_name)))
+    /// 获取 PM2 stdout 日志文件路径（`lib/pm2/runtime/pm2/logs/<name>-out.log`）
+    fn out_log_path(&self) -> Option<PathBuf> {
+        self.pm2_home_dir()
+            .map(|d| d.join("logs").join(format!("{}-out.log", self.process_name)))
+    }
+
+    /// 获取 PM2 stderr 日志文件路径（`lib/pm2/runtime/pm2/logs/<name>-error.log`）
+    fn error_log_path(&self) -> Option<PathBuf> {
+        self.pm2_home_dir()
+            .map(|d| d.join("logs").join(format!("{}-error.log", self.process_name)))
     }
 
     /// 读取 stdout 日志文件从指定字节偏移开始的新内容。
@@ -447,5 +625,48 @@ impl Pm2Manager {
     #[allow(dead_code)]
     pub fn update_config(&self) -> Result<(), String> {
         self.restart()
+    }
+}
+
+/// 过滤 npm 输出的噪音日志
+fn is_npm_noise(line: &str) -> bool {
+    let s = line.trim().to_lowercase();
+    // npm 审计消息
+    if s.contains("found 0 vulnerabilities") || s.contains("npm audit") || s.contains("run `npm audit fix`") {
+        return true;
+    }
+    // funding 提示
+    if s.contains("for funding") || s.contains("type `npm fund`") {
+        return true;
+    }
+    // 废弃警告（Deprecated）
+    if s.contains("npm warn deprecated") {
+        return true;
+    }
+    // 可选依赖跳过（optional dep skipped）
+    if s.contains("npm warn optional") && s.contains("skipping") {
+        return true;
+    }
+    // 空包/元数据信息
+    if s.starts_with("npm notice") || s.starts_with("npm http") {
+        return true;
+    }
+    // package-lock 相关（我们禁用了 lock 文件）
+    if s.contains("package-lock.json") || s.contains("created a lockfile") {
+        return true;
+    }
+    // 空行和纯空格
+    if s.trim().is_empty() {
+        return true;
+    }
+    false
+}
+
+/// 根据 NpmRegistry 枚举获取 registry URL
+pub fn npm_registry_url(reg: &crate::pages::settings::NpmRegistry) -> Option<String> {
+    match reg {
+        crate::pages::settings::NpmRegistry::Official => None, // 使用 npm 默认源
+        crate::pages::settings::NpmRegistry::Taobao => Some("https://registry.npmmirror.com/".to_string()),
+        crate::pages::settings::NpmRegistry::Tencent => Some("https://mirrors.cloud.tencent.com/npm/".to_string()),
     }
 }
