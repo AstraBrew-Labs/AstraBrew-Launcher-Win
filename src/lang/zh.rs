@@ -180,6 +180,11 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "pm2_need_nodejs" => "请先安装 Node.js",
         "pm2_install_title" => "PM2 安装",
         "pm2_install_desc" => "正在执行 npm install -g pm2，请稍候...",
+
+        // Caddy 下载
+        "caddy_node_select_title" => "选择 Caddy 下载方式",
+        "caddy_node_select_desc" => "选择一个 GitHub 加速节点来下载 Caddy，或使用直连",
+        "direct_connect" => "直连（不使用代理）",
         "install" => "安装",
         "caddy_purpose" => "用于给酒馆添加反向代理（可选）",
         "caddy_purpose_required" => "用于给酒馆添加反向代理（必装）",

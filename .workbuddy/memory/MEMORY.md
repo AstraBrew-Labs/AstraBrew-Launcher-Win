@@ -18,7 +18,7 @@
 - `src/core/settings/`：各子系统核心逻辑（git/nodejs/pm2/github_proxy）
 - `src/lang/zh.rs` + `src/lang/en.rs`：双语翻译文件
 - `data/settings.json`：运行时持久化配置
-- `data/github_proxy_cache.json`：GitHub 节点列表缓存（TTL 3天）
+- `%Temp%/astrabrew-launcher/github_proxy_cache.json`：GitHub 节点列表缓存（TTL 3天）
 
 ## 目录规范
 `utils.ts` ← 路径辅助函数，以下路径统一用这个文件里函数，不要重复或写死路径在其他rs文件里。

@@ -1,4 +1,5 @@
 pub mod autostart;
+pub mod caddy;
 pub mod env_detect;
 pub mod git;
 pub mod github_proxy;

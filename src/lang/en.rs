@@ -180,6 +180,11 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "pm2_need_nodejs" => "Please install Node.js first",
         "pm2_install_title" => "PM2 Installation",
         "pm2_install_desc" => "Running npm install -g pm2, please wait...",
+
+        // Caddy
+        "caddy_node_select_title" => "Select Caddy Download Mode",
+        "caddy_node_select_desc" => "Choose a GitHub proxy node to download Caddy, or use direct connection",
+        "direct_connect" => "Direct (no proxy)",
         "install" => "Install",
         "caddy_purpose" => "Reverse proxy for Tavern (Optional)",
         "caddy_purpose_required" => "Reverse proxy for Tavern (Required)",

@@ -429,6 +429,7 @@ impl InstallTaskState {
     }
 
     /// 启动安装 <package>（Windows 平台使用内置下载机制替代 brew）
+    #[allow(dead_code)]
     pub fn start_install(&mut self, package: &str) {
         let package = package.to_string();
         let (tx, rx) = std::sync::mpsc::channel();
@@ -691,6 +692,91 @@ impl InstallTaskState {
                 Ok(()) => {}
                 Err(e) => {
                     let _ = tx.send(e);
+                }
+            }
+            let _ = tx.send("__DONE__".to_string());
+        });
+    }
+
+    /// 启动 Caddy 下载安装（使用指定 URL）
+    pub fn start_caddy_install(&mut self, url: &str) {
+        use crate::EnvInstallProgress;
+        let url = url.to_string();
+        let temp_dir = std::env::temp_dir().join("astrabrew-launcher");
+        let _temp_path = temp_dir.join("caddy_2.11.4_windows_amd64.zip");
+        let install_dir = crate::core::env::get_data_dir().join("lib").join("caddy");
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.receiver = Some(rx);
+        self.log = String::new();
+        self.running = true;
+        self.show = true;
+        self.done_at = None;
+        self.timed_out = false;
+        self.progress = 0.0;
+        self.progress_text = String::new();
+        self.speed_text = String::new();
+        self.installed_version = None;
+        self.progress_mode = true;
+        self.started_at = Some(std::time::Instant::now());
+
+        let _ = tx.send(format!("__LOG__:下载地址: {}", url));
+        let _ = tx.send(format!("__LOG__:安装目录: {}", install_dir.display()));
+
+        std::thread::spawn(move || {
+            let (prog_tx, prog_rx) = std::sync::mpsc::channel();
+
+            let download_thread = std::thread::spawn(move || {
+                crate::core::settings::caddy::install_caddy(&url, Some(prog_tx))
+                    .map_err(|e| e.to_string())
+            });
+
+            let mut last_sent_pct: i32 = -1;
+            let mut is_download_phase = true;
+            for msg in prog_rx {
+                match msg {
+                    EnvInstallProgress::Progress(p) => {
+                        let display_pct = (p * 100.0) as i32;
+                        if display_pct != last_sent_pct {
+                            last_sent_pct = display_pct;
+                            let _ = tx.send(format!("__PROGRESS__:{}", p));
+                            let phase_text = if p < 0.5 {
+                                "下载中..."
+                            } else {
+                                if is_download_phase {
+                                    is_download_phase = false;
+                                }
+                                "安装中..."
+                            };
+                            let _ = tx.send(format!("__STATUS__:{}", phase_text));
+                        }
+                    }
+                    EnvInstallProgress::Speed(speed) => {
+                        let _ = tx.send(format!("__SPEED__:{}", speed));
+                    }
+                    EnvInstallProgress::Status(s) => {
+                        let _ = tx.send(format!("__LOG__:{}", s));
+                        if s.contains("下载完成") {
+                            let _ = tx.send("__STATUS__:安装中...".to_string());
+                            let _ = tx.send("__SPEED__:0.0".to_string());
+                        }
+                    }
+                    EnvInstallProgress::Error(e) => {
+                        let _ = tx.send(format!("__LOG__:错误: {}", e));
+                        let _ = tx.send(format!("__STATUS__:错误"));
+                    }
+                    EnvInstallProgress::Version(ver) => {
+                        let _ = tx.send(format!("__VERSION__:{}", ver));
+                        let _ = tx.send(format!("__LOG__:检测到版本: {}", ver));
+                    }
+                    EnvInstallProgress::Finished => {}
+                }
+            }
+
+            match download_thread.join().unwrap_or_else(|_| Err("线程异常".to_string())) {
+                Ok(()) => {}
+                Err(e) => {
+                    let _ = tx.send(format!("__LOG__:错误: {}", e));
+                    let _ = tx.send(format!("__STATUS__:错误"));
                 }
             }
             let _ = tx.send("__DONE__".to_string());
@@ -970,6 +1056,115 @@ impl NodejsNodeSelectState {
             }
         }
         false
+    }
+
+    pub fn countdown_remaining(&self) -> Option<u64> {
+        self.countdown_start.map(|start| {
+            let elapsed = start.elapsed().as_secs();
+            if elapsed >= 3 { 0 } else { 3 - elapsed }
+        })
+    }
+}
+
+/// Caddy 节点选择弹窗状态（单选 + 3 秒倒计时）
+pub struct CaddyNodeSelectState {
+    pub show: bool,
+    /// 选中的索引（0 = 直连, 1.. = 代理节点）
+    pub selected_index: Option<usize>,
+    /// 3 秒倒计时开始时间
+    pub countdown_start: Option<Instant>,
+    /// 是否已触发安装
+    pub install_triggered_url: Option<String>,
+    /// 默认代理 URL（打开时保存）
+    default_proxy: Option<String>,
+    /// 倒计时是否已启动
+    countdown_initiated: bool,
+}
+
+impl CaddyNodeSelectState {
+    pub fn new() -> Self {
+        Self {
+            show: false,
+            selected_index: None,
+            countdown_start: None,
+            install_triggered_url: None,
+            default_proxy: None,
+            countdown_initiated: false,
+        }
+    }
+
+    pub fn open(&mut self, default_proxy: Option<String>) {
+        self.show = true;
+        self.selected_index = None;
+        self.countdown_start = None;
+        self.install_triggered_url = None;
+        self.default_proxy = default_proxy;
+        self.countdown_initiated = false;
+    }
+
+    /// 供 render 函数通知节点列表已加载，开始倒计时
+    pub fn on_nodes_ready(&mut self, entries: &[crate::core::settings::github_proxy::NodeEntry]) {
+        if self.countdown_initiated {
+            return;
+        }
+        self.countdown_initiated = true;
+        self.countdown_start = Some(Instant::now());
+
+        // 预选匹配当前代理设置的节点
+        for (i, entry) in entries.iter().enumerate() {
+            if self.default_proxy.as_deref() == Some(&entry.url) {
+                self.selected_index = Some(i + 1); // +1 因为 [0] 是直连
+                return;
+            }
+        }
+        // 没匹配到 → 预选直连
+        self.selected_index = Some(0);
+    }
+
+    /// 检查是否自动选择（3 秒后），返回选中的 URL
+    pub fn check_auto_select(
+        &mut self,
+        entries: &[crate::core::settings::github_proxy::NodeEntry],
+    ) -> Option<String> {
+        if self.install_triggered_url.is_some() {
+            return None;
+        }
+        if let Some(start) = self.countdown_start {
+            if start.elapsed().as_secs() >= 3 {
+                let url = match self.selected_index {
+                    Some(0) | None => {
+                        // 直连
+                        crate::core::settings::caddy::build_caddy_url(None)
+                    }
+                    Some(i) if i > 0 => {
+                        let proxy = entries.get(i - 1).map(|e| e.url.as_str());
+                        crate::core::settings::caddy::build_caddy_url(proxy)
+                    }
+                    _ => crate::core::settings::caddy::build_caddy_url(None),
+                };
+                self.install_triggered_url = Some(url.clone());
+                return Some(url);
+            }
+        }
+        None
+    }
+
+    pub fn select(
+        &mut self,
+        index: usize,
+        entries: &[crate::core::settings::github_proxy::NodeEntry],
+    ) {
+        self.selected_index = Some(index);
+        self.countdown_start = None;
+        let url = if index == 0 {
+            crate::core::settings::caddy::build_caddy_url(None)
+        } else if let Some(entry) = entries.get(index - 1) {
+            crate::core::settings::caddy::build_caddy_url(Some(&entry.url))
+        } else {
+            crate::core::settings::caddy::build_caddy_url(None)
+        };
+        self.install_triggered_url = Some(url);
+        self.show = false;
     }
 
     pub fn countdown_remaining(&self) -> Option<u64> {
@@ -1561,6 +1756,218 @@ fn render_nodejs_node_select_popup(
     }
 }
 
+/// 渲染 Caddy 节点选择弹窗（单选 + 3 秒倒计时，匹配 Git 风格）
+fn render_caddy_node_select_popup(
+    ctx: &egui::Context,
+    state: &mut CaddyNodeSelectState,
+    lang: &Language,
+    github_nodes: &crate::core::settings::github_proxy::NodeLoadState,
+    on_refresh_nodes: &mut bool,
+) {
+    if !state.show {
+        return;
+    }
+
+    // 自动选择触发 → 立即关闭（Git 风格）
+    if state.install_triggered_url.is_some() {
+        state.show = false;
+        return;
+    }
+
+    // 节点列表为空且不在加载中 → 触发刷新
+    match github_nodes {
+        crate::core::settings::github_proxy::NodeLoadState::Done(entries) if entries.is_empty() => {
+            *on_refresh_nodes = true;
+        }
+        _ => {}
+    }
+
+    let mut open = true;
+
+    egui::Window::new(lang::t("caddy_node_select_title", lang))
+        .collapsible(false)
+        .resizable(false)
+        .min_width(500.0)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label(egui::RichText::new(lang::t("caddy_node_select_desc", lang)).strong());
+            ui.add_space(8.0);
+
+            match github_nodes {
+                crate::core::settings::github_proxy::NodeLoadState::Loading => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(lang::t("loading_nodes", lang));
+                    });
+                }
+                crate::core::settings::github_proxy::NodeLoadState::Done(entries) => {
+                    // 节点就绪 → 启动倒计时
+                    state.on_nodes_ready(entries);
+                    // 检查 3 秒自动选择
+                    state.check_auto_select(entries);
+
+                    let remaining = state.countdown_remaining().unwrap_or(0);
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} {}s",
+                            lang::t("git_node_auto_select", lang),
+                            remaining
+                        ))
+                        .color(egui::Color32::from_rgb(255, 180, 50)),
+                    );
+                    ui.add_space(8.0);
+
+                    egui::ScrollArea::vertical()
+                        .max_height(350.0)
+                        .show(ui, |ui| {
+                            let mut clicked_index: Option<usize> = None;
+
+                            // "直连" 选项（index 0）
+                            let is_selected = state.selected_index == Some(0);
+                            let row_bg = if is_selected {
+                                egui::Color32::from_rgb(30, 80, 160)
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            };
+
+                            egui::Frame::NONE
+                                .fill(row_bg)
+                                .inner_margin(egui::vec2(8.0, 4.0))
+                                .show(ui, |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    ui.horizontal(|ui| {
+                                        if is_selected {
+                                            ui.label(
+                                                egui::RichText::new("●")
+                                                    .color(egui::Color32::GREEN),
+                                            );
+                                        } else {
+                                            ui.label("○");
+                                        }
+                                        ui.add_space(6.0);
+                                        ui.label(
+                                            egui::RichText::new(lang::t("direct_connect", lang))
+                                                .size(14.0),
+                                        );
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if ui
+                                                    .small_button(lang::t("install", lang))
+                                                    .clicked()
+                                                {
+                                                    clicked_index = Some(0);
+                                                }
+                                            },
+                                        );
+                                    });
+                                });
+                            ui.separator();
+
+                            // 代理节点（index = i + 1）
+                            for (i, entry) in entries.iter().enumerate() {
+                                let idx = i + 1;
+                                let is_selected = state.selected_index == Some(idx);
+                                let row_bg = if is_selected {
+                                    egui::Color32::from_rgb(30, 80, 160)
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                };
+
+                                egui::Frame::NONE
+                                    .fill(row_bg)
+                                    .inner_margin(egui::vec2(8.0, 4.0))
+                                    .show(ui, |ui| {
+                                        ui.set_min_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            if is_selected {
+                                                ui.label(
+                                                    egui::RichText::new("●")
+                                                        .color(egui::Color32::GREEN),
+                                                );
+                                            } else {
+                                                ui.label(format!("{}", idx));
+                                            }
+                                            ui.add_space(6.0);
+                                            let display_name = extract_domain(&entry.url);
+                                            ui.label(
+                                                egui::RichText::new(&display_name).size(14.0),
+                                            );
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(
+                                                    egui::Align::Center,
+                                                ),
+                                                |ui| {
+                                                    // 延迟显示
+                                                    let ms = entry
+                                                        .measured_ms
+                                                        .lock()
+                                                        .ok()
+                                                        .and_then(|g| *g);
+                                                    match ms {
+                                                        Some(Some(ms)) => {
+                                                            let color = if ms < 100 {
+                                                                egui::Color32::GREEN
+                                                            } else if ms < 300 {
+                                                                egui::Color32::YELLOW
+                                                            } else {
+                                                                egui::Color32::from_rgb(
+                                                                    255, 150, 50,
+                                                                )
+                                                            };
+                                                            ui.label(
+                                                                egui::RichText::new(
+                                                                    format!("{}ms", ms),
+                                                                )
+                                                                .color(color),
+                                                            );
+                                                        }
+                                                        _ => {
+                                                            ui.label(
+                                                                egui::RichText::new("--")
+                                                                    .color(egui::Color32::GRAY),
+                                                            );
+                                                        }
+                                                    }
+                                                    ui.add_space(8.0);
+                                                    if ui
+                                                        .small_button(lang::t("install", lang))
+                                                        .clicked()
+                                                    {
+                                                        clicked_index = Some(idx);
+                                                    }
+                                                },
+                                            );
+                                        });
+                                    });
+
+                                ui.separator();
+                            }
+
+                            if let Some(i) = clicked_index {
+                                state.select(i, entries);
+                            }
+                        });
+                }
+            }
+            ctx.request_repaint();
+        });
+
+    if !open || state.install_triggered_url.is_some() {
+        state.show = false;
+    }
+}
+
+/// 从 URL 提取域名用于显示
+fn extract_domain(url: &str) -> String {
+    let s = url.trim_end_matches('/');
+    s.strip_prefix("https://")
+        .or_else(|| s.strip_prefix("http://"))
+        .unwrap_or(s)
+        .to_string()
+}
+
 fn setting_section(
     ui: &mut egui::Ui,
     icon: &str,
@@ -1626,6 +2033,7 @@ pub fn render(
     on_refresh_nodes: &mut bool,
     git_node_select: &mut GitNodeSelectState,
     nodejs_node_select: &mut NodejsNodeSelectState,
+    caddy_node_select: &mut CaddyNodeSelectState,
 ) {
     ui.horizontal(|ui| {
         ui.selectable_value(tab, SettingsTab::General, lang::t("general_settings", &state.language));
@@ -2162,7 +2570,13 @@ pub fn render(
                                             if is_system {
                                                 ui.label(egui::RichText::new(lang::t("not_installed", &state.language)).size(14.0).color(egui::Color32::GRAY));
                                             } else if ui.button(lang::t("install", &state.language)).clicked() {
-                                                caddy_install.start_install("caddy");
+                                                let default_proxy =
+                                                    if state.github_proxy_url.is_empty() {
+                                                        None
+                                                    } else {
+                                                        Some(state.github_proxy_url.clone())
+                                                    };
+                                                caddy_node_select.open(default_proxy);
                                             }
                                         }
                                     }
@@ -2263,17 +2677,32 @@ pub fn render(
                         state.save();
                     }
 
-                    // Caddy 安装弹窗
-                    let _ = render_brew_task_window(
+                    // Caddy 节点选择弹窗
+                    {
+                        render_caddy_node_select_popup(
+                            ui.ctx(),
+                            caddy_node_select,
+                            &state.language,
+                            github_node_state,
+                            on_refresh_nodes,
+                        );
+                        if let Some(url) = caddy_node_select.install_triggered_url.take() {
+                            caddy_install.start_caddy_install(&url);
+                        }
+                    }
+
+                    // Caddy 安装弹窗（进度条模式）
+                    if render_git_install_window(
                         ui.ctx(),
                         caddy_install,
                         lang::t("caddy_install_title", &state.language),
                         lang::t("caddy_install_desc", &state.language),
-                        lang::t("brew_install_waiting", &state.language),
-                        lang::t("brew_install_running", &state.language),
                         lang::t("close", &state.language),
                         lang::t("install_timeout", &state.language),
-                    );
+                    ) {
+                        state.detect_builtin_env();
+                        state.save();
+                    }
 
                     // PM2 安装弹窗
                     if render_brew_task_window(
