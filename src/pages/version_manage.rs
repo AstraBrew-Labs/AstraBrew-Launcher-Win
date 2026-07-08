@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::lang;
-use crate::pages::settings::SettingsState;
+use crate::pages::settings::{EnvSource, SettingsState};
 use crate::utils;
 
 #[derive(PartialEq, Clone, Copy)]
@@ -767,8 +767,13 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
                         ui.vertical(|ui| {
                             ui.label(egui::RichText::new(&instance.version).heading());
                             ui.label(egui::RichText::new(&instance.path).small().color(egui::Color32::GRAY));
-                            if !settings.nodejs_version.is_empty() {
-                                if let Some(warning) = check_nodejs_requirement(&instance.version, &settings.nodejs_version) {
+                            let nodejs_ver = if settings.env_mode == EnvSource::Builtin {
+                                &settings.nodejs_version_builtin
+                            } else {
+                                &settings.nodejs_version
+                            };
+                            if !nodejs_ver.is_empty() {
+                                if let Some(warning) = check_nodejs_requirement(&instance.version, nodejs_ver) {
                                     ui.label(
                                         egui::RichText::new(warning)
                                             .size(10.0)
@@ -1502,10 +1507,23 @@ fn render_online_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings
 }
 
 fn start_install(state: &mut VersionManageState, _url: &str, version: &str, settings: &mut SettingsState, skip_clone: bool) {
-    // 1. 检查环境 — 使用系统 PATH 上的命令
-    let git_path = find_command("git");
-    let node_path = find_command("node");
-    let npm_path = find_command("npm");
+    // 1. 检查环境 — 根据 env_mode 使用内置或系统 PATH
+    let is_builtin = settings.env_mode == EnvSource::Builtin;
+    let git_path = if is_builtin {
+        crate::core::env::get_builtin_git_path()
+    } else {
+        find_command("git")
+    };
+    let node_path = if is_builtin {
+        crate::core::env::get_builtin_node_path()
+    } else {
+        find_command("node")
+    };
+    let npm_path = if is_builtin {
+        crate::core::env::get_builtin_npm_path()
+    } else {
+        find_command("npm")
+    };
 
     if git_path.is_none() || node_path.is_none() || npm_path.is_none() {
         state.install_error_alert = Some(lang::t("missing_env_warning", &settings.language).to_string());
