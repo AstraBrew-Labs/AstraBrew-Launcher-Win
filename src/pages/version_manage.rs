@@ -1240,37 +1240,35 @@ fn start_full_scan(state: &mut VersionManageState, settings: &SettingsState) {
         threads_per_drive,
     )));
 
-    thread::spawn(move || {
-        if drives.is_empty() {
-            let _ = tx.send(ScanMsg::Finished);
-            return;
-        }
+    if drives.is_empty() {
+        let _ = tx.send(ScanMsg::Finished);
+        return;
+    }
 
-        let pending = Arc::new(AtomicUsize::new(drives.len()));
+    let pending = Arc::new(AtomicUsize::new(drives.len()));
+    for drive in drives.into_iter() {
+        let tx = tx.clone();
+        let cancel_flag = cancel_flag.clone();
+        let pending = pending.clone();
 
-        for drive in drives.into_iter() {
-            let tx = tx.clone();
-            let cancel_flag = cancel_flag.clone();
-            let pending = pending.clone();
+        thread::spawn(move || {
+            let _ = tx.send(ScanMsg::Log(format!(
+                "[{}] {} 开始扫描...",
+                chrono_now(),
+                drive,
+            )));
+            let _ = tx.send(ScanMsg::ScanningPath(drive.clone()));
 
-            thread::spawn(move || {
-                let _ = tx.send(ScanMsg::Log(format!(
-                    "[{}] {} 开始扫描...",
-                    chrono_now(),
-                    drive,
-                )));
-                let _ = tx.send(ScanMsg::ScanningPath(drive.clone()));
+            // 标记为扫描中
+            let _ = tx.send(ScanMsg::DriveProgress {
+                drive: drive.clone(),
+                path: String::new(),
+            });
 
-                // 标记为扫描中
-                let _ = tx.send(ScanMsg::DriveProgress {
-                    drive: drive.clone(),
-                    path: String::new(),
-                });
-
-                let drive_path = PathBuf::from(&drive);
-                let top_dirs: Vec<PathBuf> = match std::fs::read_dir(&drive_path) {
-                    Ok(entries) => entries
-                        .filter_map(|e| e.ok())
+            let drive_path = PathBuf::from(&drive);
+            let top_dirs: Vec<PathBuf> = match std::fs::read_dir(&drive_path) {
+                Ok(entries) => entries
+                    .filter_map(|e| e.ok())
                         .filter(|e| e.path().is_dir() && !is_path_excluded(&e.path()))
                         .map(|e| e.path())
                         .collect(),
@@ -1383,7 +1381,6 @@ fn start_full_scan(state: &mut VersionManageState, settings: &SettingsState) {
                 }
             });
         }
-    });
 }
 
 fn render_online_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut SettingsState) {
