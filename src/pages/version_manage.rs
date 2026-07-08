@@ -1,12 +1,12 @@
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::HashMap;
 use std::fs;
-use std::io::BufRead;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -64,13 +64,26 @@ pub enum DownloadMsg {
 pub enum ScanMsg {
     Found(LocalInstance),
     ScanningPath(String),
+    DriveProgress { drive: String, path: String },
+    DriveDone { drive: String, found: usize },
+    Log(String),
     Finished,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum ScanMode {
-    Quick,
-    Full,
+/// 单盘扫描状态
+#[derive(Clone)]
+pub(crate) struct DriveScanState {
+    drive: String,
+    status: DriveScanStatus,
+    current_path: String,
+    found_count: usize,
+}
+
+#[derive(Clone, PartialEq)]
+enum DriveScanStatus {
+    Pending,
+    Scanning,
+    Done,
 }
 
 pub struct VersionManageState {
@@ -114,12 +127,21 @@ pub struct VersionManageState {
     pub scan_finished_time: Option<std::time::Instant>,
     pub cancel_scan_flag: Option<Arc<AtomicBool>>,
     pub show_cancel_scan_confirm: bool,
-    /// 点击自动扫描后先让用户选择模式
-    pub show_scan_mode_dialog: bool,
-    /// 点击自动扫描时若无 FDA 权限，弹窗提示
-    pub show_fda_dialog: bool,
-    /// 待启动的扫描模式（帧末执行，None=空闲）
-    pub pending_scan: Option<ScanMode>,
+
+    // 扫描详情弹窗
+    pub show_scan_detail: bool,
+    pub drive_states: std::collections::HashMap<String, DriveScanState>,
+    pub scan_logs: Vec<String>,
+    pub scan_thread_info: Option<ScanThreadInfo>,
+}
+
+/// 扫描线程配置信息
+pub struct ScanThreadInfo {
+    pub total_cores: usize,
+    pub used_threads: usize,
+    pub drive_count: usize,
+    pub threads_per_drive: usize,
+    pub allocation_mode: String,  // "Auto" / "Half" / "All"
 }
 
 impl Default for VersionManageState {
@@ -161,9 +183,10 @@ impl VersionManageState {
             scan_finished_time: None,
             cancel_scan_flag: None,
             show_cancel_scan_confirm: false,
-            show_scan_mode_dialog: false,
-            show_fda_dialog: false,
-            pending_scan: None,
+            show_scan_detail: false,
+            drive_states: HashMap::new(),
+            scan_logs: vec![],
+            scan_thread_info: None,
         }
     }
 
@@ -357,36 +380,39 @@ pub fn save_current_to_settings(
     settings.save();
 }
 
-/// 全盘扫描时跳过的目录名（macOS 版，大小写不敏感）
+/// 全盘扫描时跳过的目录名（Windows 版，大小写不敏感）
 ///
 /// 注意：jwalk 无法在遍历前裁剪子树，因此需要在遍历线程中对
-/// `$HOME` 下级目录做预过滤，直接跳过整个排除目录，避免无效遍历。
+/// `%USERPROFILE%` 下级目录做预过滤，直接跳过整个排除目录，避免无效遍历。
 const SCAN_EXCLUDED_DIRS: &[&str] = &[
-    // 系统/隐藏
-    ".Trash",
-    ".DocumentRevisions-V100",
-    ".fseventsd",
-    ".Spotlight-V100",
-    ".TemporaryItems",
-    ".VolumeIcon.icns",
-    ".PKInstallSandboxManager",
-    ".vol",
-    "System",
-    "private",
-    "usr",
-    "bin",
-    "sbin",
-    "opt",
-    "dev",
-    "cores",
-    "Volumes",
-    // macOS 用户目录下大概率无代码的文件夹
-    "Library",
-    "Movies",
-    "Music",
-    "Pictures",
-    "Public",
-    "Applications",
+    // Windows 系统目录
+    "Windows",
+    "Program Files",
+    "Program Files (x86)",
+    "ProgramData",
+    "$Recycle.Bin",
+    "System Volume Information",
+    "Recovery",
+    "PerfLogs",
+    "MSOCache",
+    "Config.Msi",
+    // Windows 用户目录下大概率无代码的文件夹
+    "AppData",
+    "Contacts",
+    "Links",
+    "Searches",
+    "PrintHood",
+    "NetHood",
+    "SendTo",
+    "Start Menu",
+    "Templates",
+    "Cookies",
+    "Recent",
+    "Local Settings",
+    "My Documents",
+    "My Music",
+    "My Pictures",
+    "My Videos",
     // 开发工具缓存 / 大型依赖目录
     "node_modules",
     ".git",
@@ -394,9 +420,20 @@ const SCAN_EXCLUDED_DIRS: &[&str] = &[
     ".cargo",
     ".cache",
     ".vscode",
-    // 虚拟机（通常很大）
-    "Parallels",
-    "Virtual Machines",
+    ".idea",
+    "target",
+    "build",
+    "dist",
+    ".next",
+    ".nuxt",
+    ".venv",
+    "venv",
+    "__pycache__",
+    // 大型应用/游戏数据目录
+    "Microsoft",
+    "MicrosoftEdge",
+    "Google",
+    "Mozilla",
 ];
 
 /// 检查路径是否命中排除目录
@@ -424,6 +461,18 @@ fn truncate_path_mid(path: &str, max_len: usize) -> String {
     let head: String = path.chars().take(head_len).collect();
     let tail: String = path.chars().rev().take(tail_len).collect::<Vec<_>>().into_iter().rev().collect();
     format!("{}...{}", head, tail)
+}
+
+/// 获取当前时间字符串 HH:MM:SS
+fn chrono_now() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    let h = (secs / 3600) % 24;
+    let m = (secs / 60) % 60;
+    let s = secs % 60;
+    format!("{:02}:{:02}:{:02}", h, m, s)
 }
 
 /// 解析版本号字符串为 (major, minor)，支持 "v20.11.0" 或 "1.17.0" 格式
@@ -581,6 +630,28 @@ pub fn render(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut 
                     }
                     state.scanning_paths.push(path);
                 }
+                ScanMsg::DriveProgress { drive, path } => {
+                    if let Some(ds) = state.drive_states.get_mut(&drive) {
+                        if ds.status == DriveScanStatus::Pending {
+                            ds.status = DriveScanStatus::Scanning;
+                        }
+                        ds.current_path = path;
+                    }
+                }
+                ScanMsg::DriveDone { drive, found } => {
+                    if let Some(ds) = state.drive_states.get_mut(&drive) {
+                        ds.status = DriveScanStatus::Done;
+                        ds.found_count = found;
+                    }
+                    let timestamp = chrono_now();
+                    state.scan_logs.push(format!(
+                        "[{}] {} 扫描完成，找到 {} 个实例",
+                        timestamp, drive, found
+                    ));
+                }
+                ScanMsg::Log(log) => {
+                    state.scan_logs.push(log);
+                }
                 ScanMsg::Finished => {
                     state.is_scanning = false;
                     state.cancel_scan_flag = None;
@@ -590,12 +661,13 @@ pub fn render(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut 
         }
     }
 
-    // 扫描完成后3秒自动隐藏提示
+    // 扫描完成后3秒自动隐藏提示和详情弹窗
     if let Some(finished_at) = state.scan_finished_time {
         if finished_at.elapsed().as_secs() >= 3 {
             state.show_scan_tips = false;
             state.scanning_paths.clear();
             state.scan_finished_time = None;
+            state.show_scan_detail = false;
         }
     }
 
@@ -628,7 +700,8 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
             }
         } else {
             if ui.button(lang::t("btn_auto_scan", lang)).clicked() {
-                state.show_scan_mode_dialog = true;
+                start_full_scan(state, settings);
+                state.show_scan_detail = true;
             }
         }
         if ui.button(lang::t("btn_manual_add", lang)).clicked() {
@@ -692,67 +765,40 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
 
         // --- 右侧：扫描进度提示 ---
         if state.show_scan_tips && !state.scanning_paths.is_empty() {
-            let latest_path = state.scanning_paths.last().map(|p| truncate_path_mid(p, 60)).unwrap_or_default();
-            let header = if state.is_scanning {
-                lang::t("scan_tips_scanning_header", lang)
-            } else {
-                lang::t("scan_tips_done_header", lang)
-            };
-            let tips_text = format!("{}  {}", header, latest_path);
-            ui.label(
-                egui::RichText::new(tips_text)
-                    .size(11.0)
-                    .color(egui::Color32::GRAY),
-            );
+            ui.horizontal(|ui| {
+                // 详情图标
+                let icon_response = ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(egui_phosphor::regular::INFO)
+                            .size(14.0)
+                            .color(egui::Color32::from_rgb(120, 180, 255)),
+                    )
+                    .sense(egui::Sense::click()),
+                );
+                if icon_response.clicked() {
+                    state.show_scan_detail = true;
+                }
+                icon_response.on_hover_text("点击查看扫描详情");
+
+                let latest_path = state.scanning_paths.last()
+                    .map(|p| truncate_path_mid(p, 55))
+                    .unwrap_or_default();
+                let header = if state.is_scanning {
+                    lang::t("scan_tips_scanning_header", lang)
+                } else {
+                    lang::t("scan_tips_done_header", lang)
+                };
+                let tips_text = format!("{}  {}", header, latest_path);
+                ui.label(
+                    egui::RichText::new(tips_text)
+                        .size(11.0)
+                        .color(egui::Color32::GRAY),
+                );
+            });
         }
     });
 
-    // --- 完全磁盘访问权限提示 ---
-    if !state.is_scanning && !crate::core::app_permissions::is_full_disk_access_granted() {
-        ui.add_space(4.0);
-        egui::Frame::NONE
-            .fill(egui::Color32::from_rgb(60, 45, 20))
-            .corner_radius(6)
-            .inner_margin(egui::Margin::symmetric(10, 6))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(egui_phosphor::regular::WARNING_CIRCLE)
-                                .size(16.0)
-                                .color(egui::Color32::from_rgb(255, 200, 60)),
-                        )
-                        .selectable(false),
-                    );
-                    ui.add_space(4.0);
-                    ui.vertical(|ui| {
-                        ui.add_space(1.0);
-                        ui.label(
-                            egui::RichText::new(lang::t("fda_access_title", lang))
-                                .size(13.0)
-                                .strong()
-                                .color(egui::Color32::from_rgb(255, 220, 120)),
-                        );
-                        ui.label(
-                            egui::RichText::new(lang::t("fda_access_desc", lang))
-                                .size(11.0)
-                                .color(egui::Color32::from_rgb(200, 190, 170)),
-                        );
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .small_button(lang::t("fda_access_button", lang))
-                            .clicked()
-                        {
-                            crate::core::app_permissions::open_full_disk_access_settings();
-                        }
-                    });
-                });
-            });
-        ui.add_space(4.0);
-    } else {
-        ui.add_space(10.0);
-    }
+    ui.add_space(10.0);
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         if state.local_instances.is_empty() {
@@ -861,249 +907,489 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
         }
     }
 
-    // --- 扫描模式选择弹窗 ---
-    if state.show_scan_mode_dialog {
-        let mut open = true;
-        egui::Window::new(lang::t("scan_mode_title", lang))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ui.ctx(), |ui| {
-                ui.label(lang::t("scan_mode_desc", lang));
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button(lang::t("quick_scan", lang))
-                        .on_hover_text(lang::t("quick_scan_desc", lang))
-                        .clicked()
-                    {
-                        state.show_scan_mode_dialog = false;
-                        state.pending_scan = Some(ScanMode::Quick);
-                    }
-                    if ui.button(lang::t("full_scan", lang))
-                        .on_hover_text(lang::t("full_scan_desc", lang))
-                        .clicked()
-                    {
-                        state.show_scan_mode_dialog = false;
-                        let perms = crate::core::app_permissions::probe_scan_permissions();
-                        if perms.all_ok() {
-                            state.pending_scan = Some(ScanMode::Full);
-                        } else {
-                            state.show_fda_dialog = true;
-                        }
-                    }
-                });
-            });
-        if !open {
-            state.show_scan_mode_dialog = false;
-        }
-    }
+    // --- 扫描详情弹窗 ---
+    render_scan_detail_popup(ui.ctx(), state, settings);
+}
 
-    // --- FDA 权限弹窗（仅全盘扫描时触发） ---
-    if state.show_fda_dialog {
-        let mut open = true;
-        egui::Window::new(lang::t("fda_access_title", lang))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ui.ctx(), |ui| {
-                ui.label(lang::t("fda_access_dialog_desc", lang));
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button(lang::t("fda_access_button", lang)).clicked() {
-                        crate::core::app_permissions::open_full_disk_access_settings();
-                        state.show_fda_dialog = false;
-                        state.pending_scan = None;
-                    }
-                    if ui.button(lang::t("continue_anyway", lang)).clicked() {
-                        state.show_fda_dialog = false;
-                        state.pending_scan = Some(ScanMode::Full);
-                    }
-                });
-            });
-        if !open {
-            state.show_fda_dialog = false;
-            state.pending_scan = None;
-        }
+/// 绘制扫描详情弹窗：每盘圆盘进度 + 线程信息 + 实时日志
+fn render_scan_detail_popup(
+    ctx: &egui::Context,
+    state: &mut VersionManageState,
+    settings: &SettingsState,
+) {
+    if !state.show_scan_detail {
+        return;
     }
+    let mut open = true;
+    let lang_owned = settings.language.clone();
+    let _lang = &lang_owned;
 
-    // --- 帧末启动扫描线程 ---
-    if state.pending_scan.is_some() && !state.is_scanning && !state.show_scan_mode_dialog && !state.show_fda_dialog {
-        let mode = state.pending_scan.take().unwrap();
-        match mode {
-            ScanMode::Quick => start_quick_scan(state, settings),
-            ScanMode::Full => start_full_scan(state, settings),
-        }
+    egui::Window::new("扫描详情")
+        .open(&mut open)
+        .collapsible(true)
+        .resizable(true)
+        .default_size([640.0, 480.0])
+        .min_size([480.0, 360.0])
+        .max_size([800.0, f32::INFINITY])
+        .show(ctx, |ui| {
+            let mut drives: Vec<DriveScanState> = state.drive_states.values().cloned().collect();
+            drives.sort_by(|a, b| a.drive.cmp(&b.drive));
+            if drives.is_empty() {
+                ui.label("暂无扫描数据");
+            } else {
+                let total_h = ui.available_height();
+                let top_h = (total_h * 0.55).max(140.0);
+                let avail_w = ui.available_width();
+                let card_w = (avail_w * 0.62).min(480.0).max(280.0);
+
+                // === 上半区：左卡片列 + 右信息区 ===
+                ui.horizontal(|ui| {
+                    // 左：进度圆盘卡片
+                    ui.vertical(|ui| {
+                        ui.set_min_width(card_w);
+                        ui.set_max_width(card_w);
+                        ui.set_min_height(top_h);
+                        egui::ScrollArea::vertical()
+                            .id_salt("scan_cards_scroll")
+                            .max_height(top_h)
+                            .show(ui, |ui| {
+                                ui.set_min_width(card_w);
+                                ui.set_max_width(card_w);
+                                for ds in &drives {
+                                    ui.push_id(&ds.drive, |ui| {
+                                        render_drive_card(ui, ds, card_w);
+                                    });
+                                    ui.add_space(4.0);
+                                }
+                            });
+                    });
+
+                    ui.separator();
+
+                    // 右：信息区
+                    ui.vertical(|ui| {
+                        ui.set_min_width(160.0);
+                        ui.set_min_height(top_h);
+                        ui.set_max_height(top_h);
+                        egui::ScrollArea::vertical()
+                            .id_salt("scan_info_scroll")
+                            .max_height(top_h)
+                            .show(ui, |ui| {
+                                if let Some(ref info) = state.scan_thread_info {
+                                    ui.heading("线程信息");
+                                    ui.add_space(4.0);
+                                    ui.label(format!("物理核心: {}", info.total_cores));
+                                    ui.label(format!("使用线程: {}", info.used_threads));
+                                    ui.label(format!("分配模式: {}",
+                                        match info.allocation_mode.as_str() {
+                                            "Auto" => "Auto (-2)", "Half" => "Half (/2)", "All" => "All",
+                                            _ => &info.allocation_mode,
+                                        }
+                                    ));
+                                    ui.label(format!("磁盘数量: {}", info.drive_count));
+                                    ui.label(format!("每盘线程: {}", info.threads_per_drive));
+                                    ui.add_space(8.0);
+                                    let done = drives.iter().filter(|d| d.status == DriveScanStatus::Done).count();
+                                    let scanning = drives.iter().filter(|d| d.status == DriveScanStatus::Scanning).count();
+                                    let found: usize = drives.iter().map(|d| d.found_count).sum();
+                                    ui.separator();
+                                    ui.label(format!("扫描进度: {}/{}", done, drives.len()));
+                                    if state.is_scanning { ui.label(format!("正在扫描: {} 个盘", scanning)); }
+                                    ui.label(format!("已找到: {} 个实例", found));
+                                } else {
+                                    ui.label("暂无线程信息");
+                                }
+                            });
+                    });
+                });
+
+                ui.separator();
+
+                // === 下半区：日志区（填满剩余空间）===
+                ui.heading("扫描日志");
+                let log_text = state.scan_logs.join("\n");
+                egui::ScrollArea::vertical()
+                    .id_salt("scan_log_scroll")
+                    .max_height(ui.available_height().max(80.0))
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut log_text.as_str())
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY)
+                                .interactive(false),
+                        );
+                    });
+            }
+        });
+
+    if !open {
+        state.show_scan_detail = false;
     }
 }
 
-/// 全盘扫描：jwalk 多线程遍历 $HOME 下所有非排除目录，匹配 package.json
+/// 绘制单个磁盘的进度卡片
+fn render_drive_card(ui: &mut egui::Ui, ds: &DriveScanState, card_width: f32) {
+    let card_color = match ds.status {
+        DriveScanStatus::Done => egui::Color32::from_rgb(30, 70, 40),
+        DriveScanStatus::Scanning => egui::Color32::from_rgb(30, 50, 70),
+        DriveScanStatus::Pending => egui::Color32::from_rgb(50, 50, 50),
+    };
+
+    egui::Frame::NONE
+        .fill(card_color)
+        .corner_radius(6)
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.set_min_width(card_width);
+            ui.set_max_width(card_width);
+            ui.horizontal(|ui| {
+                // 圆形进度指示器
+                let size = 40.0;
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+                let center = rect.center();
+                let radius = size / 2.0 - 3.0;
+                let painter = ui.painter_at(rect);
+
+                match ds.status {
+                    DriveScanStatus::Pending => {
+                        painter.circle_stroke(
+                            center,
+                            radius,
+                            (2.0, egui::Color32::from_gray(120)),
+                        );
+                    }
+                    DriveScanStatus::Scanning => {
+                        painter.circle_stroke(
+                            center,
+                            radius,
+                            (2.0, egui::Color32::from_gray(70)),
+                        );
+                        let time = ui.input(|i| i.time) as f32;
+                        let sweep = 1.2;
+                        let start = time * 3.0;
+                        let end = start + sweep;
+                        draw_arc(&painter, center, radius - 1.0, start, end, egui::Color32::from_rgb(80, 160, 255), 2.5);
+                    }
+                    DriveScanStatus::Done => {
+                        painter.circle_filled(center, radius, egui::Color32::from_rgb(40, 160, 70));
+                        let check_color = egui::Color32::WHITE;
+                        let s = radius * 0.5;
+                        painter.line_segment(
+                            [
+                                center + egui::vec2(-s * 0.5, 0.0),
+                                center + egui::vec2(-s * 0.1, s * 0.5),
+                            ],
+                            (2.5, check_color),
+                        );
+                        painter.line_segment(
+                            [
+                                center + egui::vec2(-s * 0.1, s * 0.5),
+                                center + egui::vec2(s * 0.7, -s * 0.4),
+                            ],
+                            (2.5, check_color),
+                        );
+                    }
+                }
+
+                ui.add_space(8.0);
+
+                // 右侧文字信息（根据可用宽度截断路径）
+                let text_area_w = card_width - size - 8.0 - 20.0;
+                let path_max_chars = (text_area_w / 6.5) as usize;
+
+                ui.vertical(|ui| {
+                    let status_text = match ds.status {
+                        DriveScanStatus::Pending => "等待中",
+                        DriveScanStatus::Scanning => "扫描中...",
+                        DriveScanStatus::Done => {
+                            if ds.found_count > 0 {
+                                &format!("已完成 ({} 个)", ds.found_count)
+                            } else {
+                                "已完成"
+                            }
+                        }
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(&ds.drive)
+                                .strong()
+                                .size(13.0),
+                        );
+                        ui.label(
+                            egui::RichText::new(status_text)
+                                .size(11.0)
+                                .color(match ds.status {
+                                    DriveScanStatus::Done => egui::Color32::from_rgb(100, 220, 130),
+                                    DriveScanStatus::Scanning => egui::Color32::from_rgb(150, 200, 255),
+                                    DriveScanStatus::Pending => egui::Color32::GRAY,
+                                }),
+                        );
+                    });
+                    if ds.status == DriveScanStatus::Scanning && !ds.current_path.is_empty() {
+                        ui.label(
+                            egui::RichText::new(truncate_path_mid(&ds.current_path, path_max_chars))
+                                .size(10.0)
+                                .color(egui::Color32::from_gray(180)),
+                        );
+                    }
+                });
+            });
+        });
+}
+
+/// 绘制圆弧
+fn draw_arc(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    radius: f32,
+    start_angle: f32,
+    end_angle: f32,
+    color: egui::Color32,
+    width: f32,
+) {
+    let steps = 20;
+    let mut points = Vec::with_capacity(steps + 1);
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let angle = start_angle + t * (end_angle - start_angle);
+        points.push(egui::Pos2::new(
+            center.x + radius * angle.cos(),
+            center.y + radius * angle.sin(),
+        ));
+    }
+    painter.add(egui::Shape::line(points, (width, color)));
+}
+
+/// 枚举所有可访问的磁盘根目录（C:\ ~ Z:\）
+fn enumerate_drives() -> Vec<String> {
+    let mut drives = Vec::new();
+    for letter in b'C'..=b'Z' {
+        let drive = format!("{}:\\", letter as char);
+        if std::fs::read_dir(&drive).is_ok() {
+            drives.push(drive);
+        }
+    }
+    drives
+}
+
+/// 全盘扫描：多线程并行扫描所有磁盘，每盘独立线程，匹配 package.json
 fn start_full_scan(state: &mut VersionManageState, settings: &SettingsState) {
     state.is_scanning = true;
     state.scanning_paths.clear();
     state.show_scan_tips = true;
     state.scan_finished_time = None;
+    state.drive_states.clear();
+    state.scan_logs.clear();
+
     let (tx, rx) = mpsc::channel();
     state.scan_receiver = Some(rx);
     let cpu_cores = settings.cpu_cores.clone();
     let cancel_flag = Arc::new(AtomicBool::new(false));
     state.cancel_scan_flag = Some(cancel_flag.clone());
+
+    let drives = enumerate_drives();
+    // 初始化每盘状态
+    for drive in &drives {
+        state.drive_states.insert(
+            drive.clone(),
+            DriveScanState {
+                drive: drive.clone(),
+                status: DriveScanStatus::Pending,
+                current_path: String::new(),
+                found_count: 0,
+            },
+        );
+    }
+
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let total_threads = match &cpu_cores {
+        crate::pages::settings::CpuCores::Auto => std::cmp::max(1, cores.saturating_sub(2)),
+        crate::pages::settings::CpuCores::Half => std::cmp::max(1, cores / 2),
+        crate::pages::settings::CpuCores::All => cores,
+    };
+    let drive_count = drives.len();
+    let threads_per_drive = std::cmp::max(1, total_threads / drive_count.max(1));
+
+    // 保存线程信息供 UI 显示
+    let allocation_mode = match &cpu_cores {
+        crate::pages::settings::CpuCores::Auto => "Auto",
+        crate::pages::settings::CpuCores::Half => "Half",
+        crate::pages::settings::CpuCores::All => "All",
+    };
+    state.scan_thread_info = Some(ScanThreadInfo {
+        total_cores: cores,
+        used_threads: total_threads,
+        drive_count,
+        threads_per_drive,
+        allocation_mode: allocation_mode.to_string(),
+    });
+
+    let tx_init = tx.clone();
+    let _ = tx_init.send(ScanMsg::Log(format!(
+        "[{}] 开始全盘扫描，检测到 {} 个磁盘，{} 核心 ({} 模式)，每盘 {} 线程",
+        chrono_now(),
+        drive_count,
+        if matches!(&cpu_cores, crate::pages::settings::CpuCores::All) {
+            cores
+        } else {
+            total_threads
+        },
+        allocation_mode,
+        threads_per_drive,
+    )));
+
     thread::spawn(move || {
-        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-        let threads = match cpu_cores {
-            crate::pages::settings::CpuCores::Auto => std::cmp::max(1, cores.saturating_sub(2)),
-            crate::pages::settings::CpuCores::Half => std::cmp::max(1, cores / 2),
-            crate::pages::settings::CpuCores::All => cores,
-        };
-        let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()));
-        let _ = tx.send(ScanMsg::ScanningPath(home.to_string_lossy().to_string()));
-        // 预过滤顶层目录，直接跳过排除目录
-        let top_dirs: Vec<PathBuf> = match std::fs::read_dir(&home) {
-            Ok(entries) => entries
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_dir() && !is_path_excluded(&e.path()))
-                .map(|e| e.path())
-                .collect(),
-            Err(_) => vec![home.clone()],
-        };
-        if top_dirs.is_empty() {
+        if drives.is_empty() {
             let _ = tx.send(ScanMsg::Finished);
             return;
         }
-        for dir in &top_dirs {
-            if cancel_flag.load(Ordering::Relaxed) {
-                let _ = tx.send(ScanMsg::Finished);
-                return;
-            }
-            let walk = jwalk::WalkDir::new(dir)
-                .parallelism(jwalk::Parallelism::RayonNewPool(threads))
-                .skip_hidden(false);
-            for entry in walk.into_iter().filter_map(|e| e.ok()) {
-                if cancel_flag.load(Ordering::Relaxed) {
-                    let _ = tx.send(ScanMsg::Finished);
+
+        let extra = total_threads.saturating_sub(threads_per_drive * drives.len());
+        let pending = Arc::new(AtomicUsize::new(drives.len()));
+
+        for (i, drive) in drives.into_iter().enumerate() {
+            let tx = tx.clone();
+            let cancel_flag = cancel_flag.clone();
+            let pending = pending.clone();
+            let my_threads = if i == 0 {
+                threads_per_drive + extra
+            } else {
+                threads_per_drive
+            };
+
+            thread::spawn(move || {
+                let _ = tx.send(ScanMsg::Log(format!(
+                    "[{}] {} 开始扫描 ({} 线程)...",
+                    chrono_now(),
+                    drive,
+                    my_threads,
+                )));
+                let _ = tx.send(ScanMsg::ScanningPath(drive.clone()));
+
+                // 标记为扫描中
+                let _ = tx.send(ScanMsg::DriveProgress {
+                    drive: drive.clone(),
+                    path: String::new(),
+                });
+
+                let drive_path = PathBuf::from(&drive);
+                let top_dirs: Vec<PathBuf> = match std::fs::read_dir(&drive_path) {
+                    Ok(entries) => entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.path().is_dir() && !is_path_excluded(&e.path()))
+                        .map(|e| e.path())
+                        .collect(),
+                    Err(_) => vec![],
+                };
+
+                if top_dirs.is_empty() {
+                    let _ = tx.send(ScanMsg::DriveDone {
+                        drive: drive.clone(),
+                        found: 0,
+                    });
+                    if pending.fetch_sub(1, Ordering::SeqCst) == 1 {
+                        let _ = tx.send(ScanMsg::Finished);
+                    }
                     return;
                 }
-                if is_path_excluded(&entry.path()) {
-                    continue;
-                }
-                if entry.file_name() == "package.json" {
-                    let path = entry.path();
-                    let dir_path = path.parent()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|| path.to_string_lossy().to_string());
-                    let _ = tx.send(ScanMsg::ScanningPath(dir_path));
-                    if let Ok(content) = fs::read_to_string(&path) {
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                            if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
-                                if name == "sillytavern" {
-                                    let version = json.get("version")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("Unknown")
-                                        .to_string();
-                                    let mut parent_path = path.clone();
-                                    parent_path.pop();
-                                    let path_str = parent_path.to_string_lossy().to_string();
-                                    let _ = tx.send(ScanMsg::Found(LocalInstance {
-                                        version,
-                                        path: path_str,
-                                        is_current: false,
-                                        is_online: false,
-                                    }));
+
+                let excluded_count = {
+                    if let Ok(all) = std::fs::read_dir(&drive_path) {
+                        all.filter_map(|e| e.ok()).count()
+                    } else {
+                        0
+                    }
+                };
+                let _ = tx.send(ScanMsg::Log(format!(
+                    "[{}] {} 跳过 {} 个系统目录，扫描 {} 个目录",
+                    chrono_now(),
+                    drive,
+                    excluded_count.saturating_sub(top_dirs.len()),
+                    top_dirs.len(),
+                )));
+
+                let mut found_count: usize = 0;
+
+                for dir in &top_dirs {
+                    if cancel_flag.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let walk = jwalk::WalkDir::new(dir)
+                        .parallelism(jwalk::Parallelism::RayonNewPool(my_threads))
+                        .skip_hidden(false);
+                    for entry in walk.into_iter().filter_map(|e| e.ok()) {
+                        if cancel_flag.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        if is_path_excluded(&entry.path()) {
+                            continue;
+                        }
+                        if entry.file_name() == "package.json" {
+                            let path = entry.path();
+                            let dir_path = path
+                                .parent()
+                                .map(|p| p.to_string_lossy().to_string())
+                                .unwrap_or_else(|| path.to_string_lossy().to_string());
+
+                            let _ = tx.send(ScanMsg::DriveProgress {
+                                drive: drive.clone(),
+                                path: dir_path.clone(),
+                            });
+                            let _ = tx.send(ScanMsg::ScanningPath(dir_path));
+
+                            if let Ok(content) = fs::read_to_string(&path) {
+                                if let Ok(json) =
+                                    serde_json::from_str::<serde_json::Value>(&content)
+                                {
+                                    if let Some(name) = json.get("name").and_then(|n| n.as_str())
+                                    {
+                                        if name == "sillytavern" {
+                                            let version = json
+                                                .get("version")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("Unknown")
+                                                .to_string();
+                                            let mut parent_path = path.clone();
+                                            parent_path.pop();
+                                            let path_str =
+                                                parent_path.to_string_lossy().to_string();
+                                            found_count += 1;
+                                            let _ = tx.send(ScanMsg::Log(format!(
+                                                "[{}] {} 发现实例: v{} ({})",
+                                                chrono_now(),
+                                                drive,
+                                                version,
+                                                truncate_path_mid(&path_str, 50),
+                                            )));
+                                            let _ = tx.send(ScanMsg::Found(LocalInstance {
+                                                version,
+                                                path: path_str,
+                                                is_current: false,
+                                                is_online: false,
+                                            }));
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-        }
-        let _ = tx.send(ScanMsg::Finished);
-    });
-}
 
-/// 快速扫描：用系统 find 命令定位 package.json，跳过星酿自带酒馆
-fn start_quick_scan(state: &mut VersionManageState, _settings: &SettingsState) {
-    state.is_scanning = true;
-    state.scanning_paths.clear();
-    state.show_scan_tips = true;
-    state.scan_finished_time = None;
-    let (tx, rx) = mpsc::channel();
-    state.scan_receiver = Some(rx);
-    let cancel_flag = Arc::new(AtomicBool::new(false));
-    state.cancel_scan_flag = Some(cancel_flag.clone());
-    thread::spawn(move || {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        let _ = tx.send(ScanMsg::ScanningPath(home.clone()));
-        let prune_path = format!(
-            "{}/Library/Application Support/AstraBrew Launcher/sillytavern",
-            home
-        );
-        let mut child = match std::process::Command::new("find")
-            .arg(&home)
-            .arg("-path")
-            .arg(&prune_path)
-            .arg("-prune")
-            .arg("-o")
-            .arg("-type")
-            .arg("f")
-            .arg("-name")
-            .arg("package.json")
-            .arg("-print")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("[quick_scan] find spawn failed: {}", e);
-                let _ = tx.send(ScanMsg::Finished);
-                return;
-            }
-        };
-        let stdout = match child.stdout.take() {
-            Some(s) => s,
-            None => {
-                let _ = tx.send(ScanMsg::Finished);
-                return;
-            }
-        };
-        let reader = std::io::BufReader::new(stdout);
-        for line in reader.lines() {
-            if cancel_flag.load(Ordering::Relaxed) {
-                let _ = child.kill();
-                let _ = tx.send(ScanMsg::Finished);
-                return;
-            }
-            let path_str = match line {
-                Ok(l) => l,
-                Err(_) => continue,
-            };
-            let path = PathBuf::from(&path_str);
-            let dir_path = path.parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| path_str.clone());
-            let _ = tx.send(ScanMsg::ScanningPath(dir_path.clone()));
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(name) = json.get("name").and_then(|n| n.as_str()) {
-                        if name == "sillytavern" {
-                            let version = json.get("version")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown")
-                                .to_string();
-                            let _ = tx.send(ScanMsg::Found(LocalInstance {
-                                version,
-                                path: dir_path,
-                                is_current: false,
-                                is_online: false,
-                            }));
-                        }
-                    }
+                let _ = tx.send(ScanMsg::DriveDone {
+                    drive: drive.clone(),
+                    found: found_count,
+                });
+                if pending.fetch_sub(1, Ordering::SeqCst) == 1 {
+                    let _ = tx.send(ScanMsg::Log(format!(
+                        "[{}] 全盘扫描完成",
+                        chrono_now(),
+                    )));
+                    let _ = tx.send(ScanMsg::Finished);
                 }
-            }
+            });
         }
-        let _ = child.wait();
-        let _ = tx.send(ScanMsg::Finished);
     });
 }
 
