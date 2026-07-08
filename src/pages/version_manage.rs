@@ -1246,25 +1246,18 @@ fn start_full_scan(state: &mut VersionManageState, settings: &SettingsState) {
             return;
         }
 
-        let extra = total_threads.saturating_sub(threads_per_drive * drives.len());
         let pending = Arc::new(AtomicUsize::new(drives.len()));
 
-        for (i, drive) in drives.into_iter().enumerate() {
+        for drive in drives.into_iter() {
             let tx = tx.clone();
             let cancel_flag = cancel_flag.clone();
             let pending = pending.clone();
-            let my_threads = if i == 0 {
-                threads_per_drive + extra
-            } else {
-                threads_per_drive
-            };
 
             thread::spawn(move || {
                 let _ = tx.send(ScanMsg::Log(format!(
-                    "[{}] {} 开始扫描 ({} 线程)...",
+                    "[{}] {} 开始扫描...",
                     chrono_now(),
                     drive,
-                    my_threads,
                 )));
                 let _ = tx.send(ScanMsg::ScanningPath(drive.clone()));
 
@@ -1317,7 +1310,7 @@ fn start_full_scan(state: &mut VersionManageState, settings: &SettingsState) {
                         break;
                     }
                     let walk = jwalk::WalkDir::new(dir)
-                        .parallelism(jwalk::Parallelism::RayonNewPool(my_threads))
+                        .parallelism(jwalk::Parallelism::Serial)
                         .skip_hidden(false);
                     for entry in walk.into_iter().filter_map(|e| e.ok()) {
                         if cancel_flag.load(Ordering::Relaxed) {
