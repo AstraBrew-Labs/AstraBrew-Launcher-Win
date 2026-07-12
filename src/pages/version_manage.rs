@@ -128,6 +128,9 @@ pub struct VersionManageState {
     pub cancel_scan_flag: Option<Arc<AtomicBool>>,
     pub show_cancel_scan_confirm: bool,
 
+    // 首次扫描确认弹窗
+    pub show_scan_confirm: bool,
+
     // 扫描详情弹窗
     pub show_scan_detail: bool,
     pub drive_states: std::collections::HashMap<String, DriveScanState>,
@@ -183,6 +186,7 @@ impl VersionManageState {
             scan_finished_time: None,
             cancel_scan_flag: None,
             show_cancel_scan_confirm: false,
+            show_scan_confirm: false,
             show_scan_detail: false,
             drive_states: HashMap::new(),
             scan_logs: vec![],
@@ -700,8 +704,12 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
             }
         } else {
             if ui.button(lang::t("btn_auto_scan", lang)).clicked() {
-                start_full_scan(state, settings);
-                state.show_scan_detail = true;
+                if settings.has_seen_scan_warning {
+                    start_full_scan(state, settings);
+                    state.show_scan_detail = true;
+                } else {
+                    state.show_scan_confirm = true;
+                }
             }
         }
         if ui.button(lang::t("btn_manual_add", lang)).clicked() {
@@ -854,7 +862,7 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
 
                             if ui.button(lang::t("btn_view_info", lang)).clicked() {
                                 // View info — open in Finder
-                                let _ = Command::new("open").arg(&instance.path).spawn();
+                                let _ = Command::new("explorer").arg(&instance.path).spawn();
                             }
                         });
                     });
@@ -904,6 +912,35 @@ fn render_local_tab(ui: &mut egui::Ui, state: &mut VersionManageState, settings:
             });
         if !confirm_open {
             state.show_cancel_scan_confirm = false;
+        }
+    }
+
+    // 首次扫描二次确认弹窗
+    if state.show_scan_confirm {
+        let mut confirm_open = true;
+        egui::Window::new(lang::t("warning", lang))
+            .open(&mut confirm_open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ui.ctx(), |ui| {
+                ui.label(lang::t("confirm_first_scan_desc", lang));
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button(lang::t("btn_continue", lang)).clicked() {
+                        settings.has_seen_scan_warning = true;
+                        settings.save();
+                        state.show_scan_confirm = false;
+                        start_full_scan(state, settings);
+                        state.show_scan_detail = true;
+                    }
+                    if ui.button(lang::t("cancel", lang)).clicked() {
+                        state.show_scan_confirm = false;
+                    }
+                });
+            });
+        if !confirm_open {
+            state.show_scan_confirm = false;
         }
     }
 

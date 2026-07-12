@@ -533,6 +533,7 @@ fn build_command(binary: &PathBuf, args: &[String]) -> Command {
 
     if is_script {
         let mut cmd = Command::new("cmd");
+        cmd.creation_flags(CREATE_NO_WINDOW);
         cmd.arg("/c").arg(binary);
         for arg in args {
             cmd.arg(arg);
@@ -540,6 +541,7 @@ fn build_command(binary: &PathBuf, args: &[String]) -> Command {
         cmd
     } else {
         let mut cmd = Command::new(binary);
+        cmd.creation_flags(CREATE_NO_WINDOW);
         for arg in args {
             cmd.arg(arg);
         }

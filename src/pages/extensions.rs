@@ -62,6 +62,7 @@ pub struct OfflinePackage {
 pub struct ExtensionManageState {
     pub extensions: Vec<ExtensionInfo>,
     pub is_loading: bool,
+    pub has_loaded: bool,
     pub error_msg: Option<String>,
     rx: Option<Receiver<ExtensionMsg>>,
     pub show_add_dialog: bool,
@@ -95,6 +96,8 @@ pub struct ExtensionManageState {
     pub show_force_install: bool,
     pub force_install_url: String,
     pub force_install_branch: String,
+    pub show_non_github_confirm: bool,
+    pub non_github_skip_manifest_check: bool,
     git_temp_dir: Option<std::path::PathBuf>,
     git_target_dir: Option<std::path::PathBuf>,
     // 修复 Git 环境
@@ -113,6 +116,7 @@ impl ExtensionManageState {
         Self {
             extensions: Vec::new(),
             is_loading: false,
+            has_loaded: false,
             error_msg: None,
             rx: None,
             show_add_dialog: false,
@@ -146,6 +150,8 @@ impl ExtensionManageState {
             show_force_install: false,
             force_install_url: String::new(),
             force_install_branch: String::new(),
+            show_non_github_confirm: false,
+            non_github_skip_manifest_check: false,
             git_temp_dir: None,
             git_target_dir: None,
             show_fix_git_dialog: false,
@@ -274,11 +280,13 @@ impl ExtensionManageState {
                     ExtensionMsg::Loaded(exts) => {
                         self.extensions = exts;
                         self.is_loading = false;
+                        self.has_loaded = true;
                         self.current_page = 0; // 加载新数据后回到第一页
                     }
                     ExtensionMsg::Error(err) => {
                         self.error_msg = Some(err);
                         self.is_loading = false;
+                        self.has_loaded = true;
                     }
                 }
                 self.rx = None;
@@ -345,13 +353,19 @@ impl ExtensionManageState {
                 self.git_install_rx = None;
                 // 验证临时目录中的扩展
                 if let Some(temp) = &self.git_temp_dir {
-                    if temp.join("manifest.json").exists() {
-                        // 有效扩展，移动到目标目录
+                    let skip_check = self.non_github_skip_manifest_check;
+                    let has_manifest = temp.join("manifest.json").exists();
+                    let should_install = skip_check || has_manifest;
+
+                    if should_install {
                         if let Some(target) = &self.git_target_dir.clone() {
-                            self.git_install_log.push_str("\n✓ 检测到 manifest.json，正在移动文件...\n");
+                            if skip_check {
+                                self.git_install_log.push_str("\n→ 非 GitHub 仓库，跳过 API 检测，正在移动文件...\n");
+                            } else {
+                                self.git_install_log.push_str("\n✓ 检测到 manifest.json，正在移动文件...\n");
+                            }
                             if let Err(e) = fs::rename(temp, target) {
                                 self.git_install_log.push_str(&format!("✗ 移动文件失败: {}\n", e));
-                                // 移动失败，清理临时目录
                                 let _ = fs::remove_dir_all(temp);
                                 self.is_installing_git = false;
                                 self.git_install_done = Some(false);
@@ -363,13 +377,14 @@ impl ExtensionManageState {
                             }
                         }
                     } else {
-                        // 未检测到 manifest.json，提示用户
+                        // 未检测到 manifest.json，提示用户（仅 GitHub 仓库走此分支）
                         self.is_installing_git = false;
                         self.git_install_log = "✗ 未检测到 manifest.json，该仓库可能不是有效的扩展仓库。".to_string();
                         self.show_force_install = true;
                     }
                     self.git_temp_dir = None;
                     self.git_target_dir = None;
+                    self.non_github_skip_manifest_check = false;
                 }
             }
         }
@@ -482,6 +497,27 @@ fn start_fix_git(state: &mut ExtensionManageState) {
 pub fn render(ui: &mut egui::Ui, state: &mut ExtensionManageState, lang: &Language, instance_path: Option<&str>) {
     state.poll();
 
+    // 无实例选中时，显示提示信息
+    let has_instance = instance_path.map_or(false, |p| !p.is_empty());
+    if !has_instance {
+        ui.heading(lang::t("extension_manage", lang));
+        ui.separator();
+        ui.add_space(40.0);
+        ui.vertical_centered(|ui| {
+            ui.label(
+                egui::RichText::new(lang::t("ext_no_instance", lang))
+                    .color(egui::Color32::GRAY)
+                    .size(14.0),
+            );
+            ui.label(
+                egui::RichText::new(lang::t("ext_no_instance_hint", lang))
+                    .color(egui::Color32::GRAY)
+                    .size(12.0),
+            );
+        });
+        return;
+    }
+
     // 计算可见扩展索引（受「显示系统扩展」开关控制）
     let visible_indices: Vec<usize> = state
         .extensions
@@ -527,6 +563,11 @@ pub fn render(ui: &mut egui::Ui, state: &mut ExtensionManageState, lang: &Langua
     // ---- 强制安装确认弹窗 ----
     if state.show_force_install {
         render_force_install_confirm(ui, state, lang);
+    }
+
+    // ---- 非 GitHub 仓库确认弹窗 ----
+    if state.show_non_github_confirm {
+        render_non_github_confirm(ui, state, lang);
     }
 
     // ---- 修复 Git 弹窗 ----
@@ -1178,7 +1219,12 @@ fn render_add_dialog(ui: &mut egui::Ui, state: &mut ExtensionManageState, lang: 
                             }
                         } else {
                             // Git 添加
-                            start_git_install(state);
+                            if is_github_url(&state.git_url) {
+                                state.non_github_skip_manifest_check = false;
+                                start_git_install(state);
+                            } else {
+                                state.show_non_github_confirm = true;
+                            }
                         }
                     }
                 });
@@ -1202,6 +1248,8 @@ fn render_add_dialog(ui: &mut egui::Ui, state: &mut ExtensionManageState, lang: 
         state.overwrite_packages.clear();
         state.show_overwrite_confirm = false;
         state.show_force_install = false;
+        state.show_non_github_confirm = false;
+        state.non_github_skip_manifest_check = false;
         state.add_dialog_tab = AddDialogTab::Git;
     }
 }
@@ -1309,6 +1357,42 @@ fn render_force_install_confirm(ui: &mut egui::Ui, state: &mut ExtensionManageSt
         }
         state.git_target_dir = None;
         state.show_force_install = false;
+    }
+}
+
+// ============ 非 GitHub 仓库确认弹窗 ============
+
+fn render_non_github_confirm(ui: &mut egui::Ui, state: &mut ExtensionManageState, lang: &Language) {
+    let mut was_open = true;
+
+    egui::Window::new(lang::t("ext_non_github_title", lang))
+        .collapsible(false)
+        .resizable(false)
+        .fixed_size([400.0, 180.0])
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .open(&mut was_open)
+        .show(ui.ctx(), |ui| {
+            ui.label(lang::t("ext_non_github_msg", lang));
+            ui.add_space(12.0);
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(lang::t("ext_non_github_cancel", lang)).clicked() {
+                        state.show_non_github_confirm = false;
+                    }
+                    ui.add_space(8.0);
+                    if ui.button(lang::t("ext_non_github_confirm", lang)).clicked() {
+                        state.show_non_github_confirm = false;
+                        state.non_github_skip_manifest_check = true;
+                        start_git_install(state);
+                    }
+                });
+            });
+        });
+
+    if !was_open {
+        state.show_non_github_confirm = false;
     }
 }
 
@@ -1693,6 +1777,12 @@ fn try_fetch_branches(url: &str, proxy: &str, proxy_enabled: bool) -> (Vec<Strin
     (Vec::new(), Some("无法获取分支列表，请检查网络或仓库地址".to_string()))
 }
 
+fn is_github_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    // https://github.com/... 或 git@github.com:...
+    lower.contains("://github.com") || lower.contains("@github.com:")
+}
+
 fn apply_github_proxy(url: &str, proxy: &str) -> String {
     if proxy.is_empty() {
         return url.to_string();
@@ -1982,7 +2072,7 @@ fn render_extension_card(
                                 egui::RichText::new(egui_phosphor::regular::FOLDER_OPEN).size(icon_size),
                             ),
                         ).on_hover_text(lang::t("ext_open_folder", lang)).clicked() {
-                            let _ = std::process::Command::new("open")
+                            let _ = std::process::Command::new("explorer")
                                 .arg(&folder_path)
                                 .spawn();
                         }
@@ -1997,7 +2087,9 @@ fn render_extension_card(
                                     egui::RichText::new(egui_phosphor::regular::LINK).size(icon_size),
                                 ),
                             ).on_hover_text(lang::t("ext_open_homepage", lang)).clicked() {
-                                let _ = std::process::Command::new("open").arg(&url).spawn();
+                                let _ = std::process::Command::new("cmd")
+                                    .args(["/c", "start", "", &url])
+                                    .spawn();
                             }
                         }
 

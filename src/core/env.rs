@@ -100,6 +100,55 @@ pub fn get_system_cmd_path(cmd: &str) -> Option<PathBuf> {
     None
 }
 
+/// 获取内置环境应添加到 PATH 的目录列表
+/// 顺序：nodejs → git/cmd (or git/bin) → git/usr/bin
+/// 调用方将这些路径前置到子进程 PATH 中，确保酒馆能使用内置的 node/npm/git 工具
+pub fn get_builtin_path_entries() -> Vec<PathBuf> {
+    let mut entries = Vec::new();
+    let lib = get_data_dir().join("lib");
+
+    // Node.js 目录（包含 node.exe, npm.cmd 等）
+    let nodejs_dir = lib.join("nodejs");
+    if nodejs_dir.exists() {
+        entries.push(nodejs_dir);
+    }
+
+    // MinGit cmd 目录（包含 git.exe）
+    let git_cmd = lib.join("git").join("cmd");
+    if git_cmd.exists() {
+        entries.push(git_cmd);
+    } else {
+        let git_bin = lib.join("git").join("bin");
+        if git_bin.exists() {
+            entries.push(git_bin);
+        }
+    }
+
+    // MinGit usr/bin（包含 bash, ssh 等 Unix 工具，git 某些操作需要）
+    let git_usr_bin = lib.join("git").join("usr").join("bin");
+    if git_usr_bin.exists() {
+        entries.push(git_usr_bin);
+    }
+
+    entries
+}
+
+/// 将内置环境的 Node.js / MinGit 目录前置注入到 Command 的 PATH 中
+pub fn apply_builtin_path_to_command(cmd: &mut std::process::Command) {
+    let entries = get_builtin_path_entries();
+    if entries.is_empty() {
+        return;
+    }
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    let mut new_path_parts: Vec<String> = entries
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+    new_path_parts.push(current_path);
+    let new_path = new_path_parts.join(";");
+    cmd.env("PATH", &new_path);
+}
+
 pub fn get_cmd_version(path: &PathBuf) -> Option<String> {
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
     

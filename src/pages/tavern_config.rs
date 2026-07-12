@@ -564,8 +564,9 @@ pub fn render(ui: &mut egui::Ui, state: &mut TavernConfigUI, lang: &Language, cu
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui.button(crate::lang::t("tc_open_config_file", lang)).clicked() {
                 let path = TavernConfig::resolve_path(state.config_mode, state.instance.as_ref(), state.global_data_path.as_deref());
-                let _ = std::process::Command::new("open")
-                    .arg("-R")
+                // Windows: 在资源管理器中打开并选中文件
+                let _ = std::process::Command::new("explorer")
+                    .arg("/select,")
                     .arg(path.to_string_lossy().as_ref())
                     .spawn();
             }

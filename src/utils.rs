@@ -1194,9 +1194,9 @@ pub struct AppPaths {
     pub root: PathBuf,
     /// `root/logs/` — 软件日志目录
     pub logs: PathBuf,
-    /// `root/caches/` — 缓存目录
+    /// `%Temp%/astrabrew-launcher/caches` — 缓存目录（存放 API 数据缓存等）
     pub caches: PathBuf,
-    /// `%Temp%/astrabrew-launcher/` — 临时和缓存合并目录
+    /// `%Temp%/astrabrew-launcher/` — 临时目录
     pub temp: PathBuf,
     /// `root/data/` — 软件数据目录
     pub data: PathBuf,
@@ -1227,11 +1227,13 @@ impl AppPaths {
         )
         .join("AstraBrew Launcher");
 
+        let temp = Self::temp_root();
+
         Self {
             data: root.join("data"),
             logs: root.join("logs"),
-            caches: root.join("caches"),
-            temp: Self::temp_root(),
+            caches: temp.join("caches"),
+            temp,
             lib: root.join("lib"),
             root,
         }

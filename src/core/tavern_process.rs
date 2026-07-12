@@ -14,7 +14,7 @@
 //! - GitHub 代理：通过 --import 预加载拦截器脚本，重写 GitHub URL
 
 use crate::core::settings::env_detect;
-use crate::pages::settings::TavernDataMode;
+use crate::pages::settings::{EnvSource, TavernDataMode};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -296,6 +296,7 @@ impl TavernProcess {
         http_proxy: Option<&str>,
         github_proxy_url: Option<&str>,
         is_desktop_mode: bool,
+        env_mode: EnvSource,
     ) -> Result<(), String> {
         if self.child.is_some() {
             return Err("进程已在运行".into());
@@ -363,6 +364,11 @@ impl TavernProcess {
             cmd.arg("false");
         }
 
+        // 内置环境模式：将 Node.js / MinGit 路径注入到子进程 PATH
+        if env_mode == EnvSource::Builtin {
+            crate::core::env::apply_builtin_path_to_command(&mut cmd);
+        }
+
         cmd.current_dir(working_dir);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
@@ -415,7 +421,7 @@ impl TavernProcess {
         Ok(())
     }
 
-    /// 优雅停止 — 发送 SIGTERM，不阻塞
+    /// 停止进程 — 发送 taskkill /F，不阻塞
     pub fn stop(&mut self) {
         if self.child.is_none() {
             return;
@@ -423,8 +429,9 @@ impl TavernProcess {
         // 获取 pid
         if let Some(ref child) = self.child {
             let pid = child.id();
-            // 发送 taskkill（不带 /F = 优雅关闭，等效 SIGTERM）
+            // 发送 taskkill /F 强制终止（Node.js 子进程不响应 WM_CLOSE，必须带 /F）
             let _ = std::process::Command::new("taskkill")
+                .arg("/F")
                 .arg("/PID")
                 .arg(pid.to_string())
                 .spawn();

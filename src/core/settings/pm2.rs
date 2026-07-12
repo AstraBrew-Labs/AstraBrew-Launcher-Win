@@ -5,11 +5,14 @@
 use crate::EnvInstallProgress;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
-use crate::pages::settings::TavernDataMode;
+use crate::pages::settings::{EnvSource, TavernDataMode};
 use std::process::Command;
+
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// PM2 安装函数：通过 npm 安装到内置目录，生成包装脚本
 /// `registry` 可选：None 使用默认源，Some(url) 使用指定 registry
@@ -62,6 +65,7 @@ pub fn install_pm2(
     }
 
     let mut cmd = Command::new(&npm_cmd);
+    cmd.creation_flags(CREATE_NO_WINDOW);
     cmd.args(["install", "pm2", "--prefix"]);
     cmd.arg(&pm2_dir);
     // 不生成 package-lock.json（不需要锁版本）
@@ -164,6 +168,7 @@ set PM2_HOME=%~dp0runtime\\pm2\r\n\
     }
 
     let verify_output = Command::new(&pm2_cmd_path)
+        .creation_flags(CREATE_NO_WINDOW)
         .arg("-v")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -193,6 +198,7 @@ fn pm2_cmd() -> Command {
     let pm2_path = crate::core::env::get_pm2_path()
         .unwrap_or_else(|| PathBuf::from("pm2"));
     let mut cmd = Command::new(&pm2_path);
+    cmd.creation_flags(CREATE_NO_WINDOW);
 
     // 确保 PM2_HOME 指向内置运行时目录
     let runtime_dir = crate::core::env::get_data_dir()
@@ -291,6 +297,7 @@ impl Pm2Manager {
         github_proxy_url: Option<&str>,
         is_desktop_mode: bool,
         interceptor_path: Option<&str>,
+        env_mode: EnvSource,
     ) -> Result<(), String> {
         // 先检查是否已存在（如果已存在则先 delete 再 start，确保全新启动）
         if self.process_exists() {
@@ -364,6 +371,12 @@ impl Pm2Manager {
             for arg in script_args {
                 cmd.arg(arg);
             }
+        }
+
+        // 内置环境模式：将 Node.js / MinGit 路径注入到子进程 PATH
+        // PM2 会捕获当前环境并传递给托管的子进程
+        if env_mode == EnvSource::Builtin {
+            crate::core::env::apply_builtin_path_to_command(&mut cmd);
         }
 
         cmd.current_dir(working_dir);
@@ -592,28 +605,17 @@ impl Pm2Manager {
         (lines, new_offset)
     }
 
-    /// 清空 PM2 日志。
+    /// 仅删除日志文件（不调用 `pm2 flush`，无阻塞）。
     ///
-    /// 先执行 `pm2 flush`（处理进程运行中的情况），再直接删除日志文件
-    /// （处理进程不存在时 `pm2 flush` 不清空文件的问题）。
-    pub fn clear_logs(&self) -> Result<(), String> {
-        // 先尝试 pm2 flush（进程运行中时正确清空）
-        let _ = pm2_cmd()
-            .arg("flush")
-            .arg(&self.process_name)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .output();
-
-        // 直接删除日志文件，确保即使 PM2 进程不存在也彻底清空
+    /// 适用于启动/重启前清空旧日志——新进程启动后会自动创建新日志文件，
+    /// 无需通过 PM2 CLI 清空。
+    pub fn clear_logs_files_only(&self) {
         if let Some(path) = self.out_log_path() {
             let _ = std::fs::remove_file(&path);
         }
         if let Some(path) = self.error_log_path() {
             let _ = std::fs::remove_file(&path);
         }
-
-        Ok(())
     }
 
     // ---- 更新配置 ----

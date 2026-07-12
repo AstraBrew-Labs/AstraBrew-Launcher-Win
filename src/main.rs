@@ -566,13 +566,11 @@ impl eframe::App for MyApp {
                 self.settings_state.server_mode_enabled,
                 self.settings_state.server_service_mode.clone(),
                 self.settings_state.global_data_path.clone(),
+                self.settings_state.env_mode,
             );
         }
 
         // 每帧轮询酒馆进程状态
-        self.console_state.poll(&self.settings_state.language);
-
-        // ---- 每帧轮询酒馆进程状态 ----
         self.console_state.poll(&self.settings_state.language);
         if self.console_state.status == pages::console::ConsoleStatus::Running
             || self.console_state.status == pages::console::ConsoleStatus::Starting
@@ -713,8 +711,12 @@ impl eframe::App for MyApp {
                         }
                     });
                     
-                    // 如果扩展列表为空且没有在加载，触发一次加载
-                    if self.extension_manage_state.extensions.is_empty() && !self.extension_manage_state.is_loading {
+                    // 仅在有选中实例且尚未加载时触发加载
+                    let has_instance = instance_path.as_ref().map_or(false, |p| !p.is_empty());
+                    if has_instance
+                        && !self.extension_manage_state.has_loaded
+                        && !self.extension_manage_state.is_loading
+                    {
                         self.extension_manage_state.load_extensions(instance_path.as_deref());
                     }
 
@@ -800,6 +802,7 @@ impl eframe::App for MyApp {
         old_state.update_checking = self.settings_state.update_checking;
         old_state.check_update_trigger = self.settings_state.check_update_trigger;
         old_state.do_update_trigger.clone_from(&self.settings_state.do_update_trigger);
+        old_state.has_seen_scan_warning = self.settings_state.has_seen_scan_warning;
 
         // 设置变化时保存
         if old_state != self.settings_state {

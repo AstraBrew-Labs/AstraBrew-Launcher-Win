@@ -77,7 +77,7 @@ pub enum ProxyType {
     Custom,
 }
 
-#[derive(PartialEq, Clone, Serialize, Deserialize, Default)]
+#[derive(PartialEq, Clone, Copy, Serialize, Deserialize, Default)]
 pub enum EnvSource {
     #[default]
     Builtin,
@@ -186,6 +186,10 @@ pub struct SettingsState {
     // 当前版本实例
     #[serde(default)]
     pub sillytavern: Option<CurrentInstance>,
+
+    /// 是否已见过全盘扫描的二次确认对话框（首次点击"自动扫描"时弹出）
+    #[serde(default)]
+    pub has_seen_scan_warning: bool,
 
     // Node.js 运行时版本（不持久化）
     #[serde(skip)]
@@ -306,6 +310,7 @@ impl Default for SettingsState {
             reverse_proxy_ssl_cert: String::new(),
             reverse_proxy_ssl_key: String::new(),
             sillytavern: None,
+            has_seen_scan_warning: false,
             nodejs_version: String::new(),
             env_mode: EnvSource::default(),
             git_version: None,
@@ -2180,8 +2185,8 @@ pub fn render(
                                 if status == "requires_approval" {
                                     ui.add_space(4.0);
                                     if ui.small_button(lang::t("open_system_settings", &state.language)).clicked() {
-                                        let _ = std::process::Command::new("open")
-                                            .arg("x-apple.systempreferences:com.apple.LoginItems-Settings.extension")
+                                        let _ = std::process::Command::new("cmd")
+                                            .args(["/c", "start", "", "ms-settings:startupapps"])
                                             .spawn();
                                     }
                                 }
@@ -2330,7 +2335,10 @@ pub fn render(
                                 lang::t("allow_tavern_background", &state.language),
                                 lang::t("allow_tavern_background_desc", &state.language),
                                 |ui| {
-                                    let pm2_installed = state.pm2_version.is_some();
+                                    let pm2_installed = match state.env_mode {
+                                        EnvSource::Builtin => state.pm2_version_builtin.is_some(),
+                                        EnvSource::System => state.pm2_version.is_some(),
+                                    };
                                     ui.add_enabled_ui(pm2_installed, |ui| {
                                         ui.add(crate::ui::switch::toggle(&mut state.allow_tavern_background));
                                     });

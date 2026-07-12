@@ -44,7 +44,8 @@
 │   └── caddy/               ← 内置 Caddy 目录
 └── config.json              ← 启动器配置文件
 
-%Temp%/astrabrew-launcher/   ← 临时和缓存目录 (temp)
+%Temp%/astrabrew-launcher/         ← 根目录·临时目录 (temp)
+%Temp%/astrabrew-launcher/caches   ← 缓存目录，存放API数据缓存等 (caches)
 ```
 
 ## 开发规范

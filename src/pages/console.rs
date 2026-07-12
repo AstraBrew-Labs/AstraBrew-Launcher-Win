@@ -1,14 +1,31 @@
-use crate::core::settings::pm2::Pm2Manager;
+use crate::core::settings::pm2::{Pm2Manager, Pm2Status};
 use crate::core::tavern_process::TavernProcess;
 use crate::lang;
-use crate::pages::settings::{Language, ProxyType, ServerServiceMode, TavernDataMode};
+use crate::pages::settings::{EnvSource, Language, ProxyType, ServerServiceMode, TavernDataMode};
 use egui::text::LayoutJob;
 use egui::{Color32, RichText, TextFormat, Vec2};
 use std::path::PathBuf;
 use std::collections::VecDeque;
+use std::sync::mpsc;
 
 // 最大保留日志行数，超过时从头部修剪
 const MAX_LOG_LINES: usize = 2000;
+
+/// PM2 异步操作消息（后台线程 → UI 线程）
+enum Pm2AsyncMsg {
+    /// 状态轮询结果（pm2 jlist）
+    Status(Pm2Status),
+    /// 启动操作结果
+    Start(Result<(), String>),
+    /// 停止操作结果
+    Stop(Result<(), String>),
+    /// 强制停止（delete）操作结果
+    Delete(Result<(), String>),
+    /// 重启操作结果
+    Restart(Result<(), String>),
+    /// PM2 可用性检测结果（pm2 --version）
+    InstalledCheck(bool),
+}
 
 #[derive(PartialEq, Clone)]
 pub enum ConsoleStatus {
@@ -80,10 +97,21 @@ pub struct ConsoleState {
     settings_prepared: bool,
     /// 全局数据路径（全局数据模式下用户自定义路径）
     global_data_path: Option<String>,
+    /// 统一环境模式：系统 / 内置
+    env_mode: EnvSource,
+    /// PM2 异步操作：发送端（克隆给各后台线程）
+    pm2_async_tx: mpsc::Sender<Pm2AsyncMsg>,
+    /// PM2 异步操作：接收端（每帧 drain）
+    pm2_async_rx: mpsc::Receiver<Pm2AsyncMsg>,
+    /// PM2 状态轮询线程是否正在执行（避免重复启动）
+    pm2_status_poll_in_flight: bool,
+    /// PM2 可用性检测线程是否正在执行
+    pm2_installed_check_in_flight: bool,
 }
 
 impl ConsoleState {
     pub fn new() -> Self {
+        let (tx, rx) = mpsc::channel();
         Self {
             status: ConsoleStatus::Stopped,
             logs: VecDeque::from(vec![String::from("[系统] 控制台已就绪")]),
@@ -93,8 +121,10 @@ impl ConsoleState {
             use_pm2: false,
             pm2_log_byte_offset: 0,
             last_pm2_poll: std::time::Instant::now(),
-            pm2_available_cache: Pm2Manager::is_installed(),
-            last_pm2_check: std::time::Instant::now(),
+            pm2_available_cache: false,
+            last_pm2_check: std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(60))
+                .unwrap_or_else(std::time::Instant::now),
             pm2_state_restored: false,
             restart_pending: false,
             instance_path: String::new(),
@@ -116,6 +146,11 @@ impl ConsoleState {
             notified_connections: std::collections::HashSet::new(),
             settings_prepared: false,
             global_data_path: None,
+            env_mode: EnvSource::default(),
+            pm2_async_tx: tx,
+            pm2_async_rx: rx,
+            pm2_status_poll_in_flight: false,
+            pm2_installed_check_in_flight: false,
             parsed_layouts: VecDeque::from(vec![Some(parse_ansi_line(
                 "[系统] 控制台已就绪",
                 egui::FontId::monospace(12.0),
@@ -140,6 +175,7 @@ impl ConsoleState {
         server_mode_enabled: bool,
         server_service_mode: ServerServiceMode,
         global_data_path: Option<String>,
+        env_mode: EnvSource,
     ) {
         // 检测实例是否变更，重置优化设置标记
         let instance_changed = self.instance_path != instance_path;
@@ -160,15 +196,21 @@ impl ConsoleState {
         self.is_server_mode = server_mode_enabled;
         self.server_service_mode = server_service_mode.clone();
         self.global_data_path = global_data_path;
+        self.env_mode = env_mode;
 
         // PM2 接管条件：服务器模式 + 允许酒馆后台运行 + PM2 已安装
         // 仅当服务器模式开启时才能被 PM2 接管，关闭服务器模式后必须切回直接模式
-        // PM2 可用性缓存：每 30 秒检测一次，避免每帧执行 pm2 --version
+        // PM2 可用性缓存：每 30 秒在后台线程检测一次，避免阻塞 UI
         let now = std::time::Instant::now();
         let check_interval = std::time::Duration::from_secs(30);
-        if now.duration_since(self.last_pm2_check) > check_interval {
-            self.pm2_available_cache = Pm2Manager::is_installed();
+        if now.duration_since(self.last_pm2_check) > check_interval && !self.pm2_installed_check_in_flight {
+            self.pm2_installed_check_in_flight = true;
             self.last_pm2_check = now;
+            let tx = self.pm2_async_tx.clone();
+            std::thread::spawn(move || {
+                let installed = Pm2Manager::is_installed();
+                let _ = tx.send(Pm2AsyncMsg::InstalledCheck(installed));
+            });
         }
         let new_use_pm2 = server_mode_enabled && allow_tavern_background && self.pm2_available_cache;
 
@@ -364,6 +406,7 @@ impl ConsoleState {
             proxy.as_deref(),
             github_proxy.as_deref(),
             self.is_desktop_mode || self.is_server_mode,
+            self.env_mode,
         ) {
             Ok(()) => {
                 self.status = ConsoleStatus::Running;
@@ -378,8 +421,8 @@ impl ConsoleState {
 
     /// PM2 模式启动
     fn start_with_pm2(&mut self, lang: &Language) {
-        // 先清空 PM2 日志文件，再清空内存日志（避免下一帧 poll 拉回旧日志）
-        let _ = self.pm2_manager.clear_logs();
+        // 先清空 PM2 日志文件（仅删文件，不调 pm2 flush，无阻塞）
+        self.pm2_manager.clear_logs_files_only();
         self.logs.clear();
         self.parsed_layouts.clear();
         self.tavern_url = None;
@@ -465,37 +508,39 @@ impl ConsoleState {
             self.add_log(&format!("[启动命令] {}", parts.join(" ")));
         }
 
-        match self.pm2_manager.start(
-            &self.instance_path,
-            &self.data_mode,
-            proxy.as_deref(),
-            github_proxy.as_deref(),
-            self.is_desktop_mode || self.is_server_mode,
-            interceptor_path.as_deref(),
-        ) {
-            Ok(()) => {
-                self.status = ConsoleStatus::Running;
-                self.add_log(&lang::t("pm2_started", lang));
-            }
-            Err(e) => {
-                self.status = ConsoleStatus::Stopped;
-                self.add_log(&format!("[错误] PM2 启动失败: {}", e));
-            }
-        }
+        // 后台线程执行 PM2 start（避免阻塞 UI）
+        let tx = self.pm2_async_tx.clone();
+        let pm2 = Pm2Manager::new();
+        let instance_path = self.instance_path.clone();
+        let data_mode = self.data_mode.clone();
+        let env_mode = self.env_mode;
+        let is_desktop = self.is_desktop_mode || self.is_server_mode;
+        std::thread::spawn(move || {
+            let result = pm2.start(
+                &instance_path,
+                &data_mode,
+                proxy.as_deref(),
+                github_proxy.as_deref(),
+                is_desktop,
+                interceptor_path.as_deref(),
+                env_mode,
+            );
+            let _ = tx.send(Pm2AsyncMsg::Start(result));
+        });
     }
 
     /// 优雅停止酒馆
     pub fn stop(&mut self, lang: &Language) {
         if self.use_pm2 {
-            match self.pm2_manager.stop() {
-                Ok(()) => {
-                    self.status = ConsoleStatus::Stopping;
-                    self.add_log(&lang::t("pm2_stopping", lang));
-                }
-                Err(e) => {
-                    self.add_log(&format!("[错误] PM2 停止失败: {}", e));
-                }
-            }
+            self.status = ConsoleStatus::Stopping;
+            self.add_log(&lang::t("pm2_stopping", lang));
+            // 后台线程执行 PM2 stop（避免阻塞 UI）
+            let tx = self.pm2_async_tx.clone();
+            let pm2 = Pm2Manager::new();
+            std::thread::spawn(move || {
+                let result = pm2.stop();
+                let _ = tx.send(Pm2AsyncMsg::Stop(result));
+            });
             return;
         }
 
@@ -512,16 +557,15 @@ impl ConsoleState {
     /// 强制停止酒馆
     pub fn force_kill(&mut self, lang: &Language) {
         if self.use_pm2 {
-            match self.pm2_manager.delete() {
-                Ok(()) => {
-                    self.status = ConsoleStatus::Stopped;
-                    self.restart_pending = false;
-                    self.add_log(&lang::t("pm2_killed", lang));
-                }
-                Err(e) => {
-                    self.add_log(&format!("[错误] PM2 强制停止失败: {}", e));
-                }
-            }
+            self.status = ConsoleStatus::Stopping;
+            self.add_log(&lang::t("pm2_killing", lang));
+            // 后台线程执行 PM2 delete（避免阻塞 UI）
+            let tx = self.pm2_async_tx.clone();
+            let pm2 = Pm2Manager::new();
+            std::thread::spawn(move || {
+                let result = pm2.delete();
+                let _ = tx.send(Pm2AsyncMsg::Delete(result));
+            });
             return;
         }
 
@@ -539,8 +583,8 @@ impl ConsoleState {
     /// 重启酒馆
     pub fn restart(&mut self, lang: &Language) {
         if self.use_pm2 {
-            // 清空 PM2 日志文件 + 内存日志
-            let _ = self.pm2_manager.clear_logs();
+            // 清空 PM2 日志文件（仅删文件，不调 pm2 flush，无阻塞）
+            self.pm2_manager.clear_logs_files_only();
             self.logs.clear();
             self.parsed_layouts.clear();
             self.pm2_log_byte_offset = 0;
@@ -548,6 +592,7 @@ impl ConsoleState {
             self.notified_connections.clear();
 
             self.add_log(&lang::t("pm2_restarting", lang));
+            self.status = ConsoleStatus::Stopping;
 
             // GitHub 加速
             let github_proxy = if self.github_proxy_url.is_some() {
@@ -577,15 +622,13 @@ impl ConsoleState {
                 ));
             }
 
-            match self.pm2_manager.restart() {
-                Ok(()) => {
-                    self.status = ConsoleStatus::Running;
-                    self.add_log(&lang::t("pm2_restarted", lang));
-                }
-                Err(e) => {
-                    self.add_log(&format!("[错误] PM2 重启失败: {}", e));
-                }
-            }
+            // 后台线程执行 PM2 restart（避免阻塞 UI）
+            let tx = self.pm2_async_tx.clone();
+            let pm2 = Pm2Manager::new();
+            std::thread::spawn(move || {
+                let result = pm2.restart();
+                let _ = tx.send(Pm2AsyncMsg::Restart(result));
+            });
             return;
         }
 
@@ -605,132 +648,46 @@ impl ConsoleState {
 
     /// 每帧调用：拉取日志、检测进程退出、处理重启逻辑
     pub fn poll(&mut self, lang: &Language) {
+        // 始终处理 PM2 异步消息（即使当前不在 PM2 模式，
+        // is_installed 检测结果也需要被处理才能激活 PM2 模式）
+        self.process_pm2_async_messages(lang);
+
         if self.use_pm2 {
-            self.poll_pm2(lang);
+            self.poll_pm2();
             return;
         }
         self.poll_direct(lang);
     }
 
     /// PM2 模式轮询：获取状态和日志
-    /// 注意：pm2 CLI 是同步阻塞调用，节流到 ~1 秒一次，避免每帧调用导致 UI 卡顿
-    fn poll_pm2(&mut self, lang: &Language) {
-        // 节流：最多每秒轮询一次 PM2（状态恢复时首次立即轮询）
+    /// 所有 PM2 CLI 调用都在后台线程执行，UI 线程仅做 channel drain 和文件读取
+    fn poll_pm2(&mut self) {
+        // 1. 如果没有状态轮询线程在跑且到了轮询间隔，启动一个后台线程
         let now = std::time::Instant::now();
-        let poll_interval = std::time::Duration::from_millis(1000);
-        if !self.pm2_state_restored {
-            // 启动器重新打开，需要立即恢复 PM2 托管状态
-        } else if now.duration_since(self.last_pm2_poll) < poll_interval {
-            return;
-        }
-        self.last_pm2_poll = now;
-        let pm2_status = self.pm2_manager.get_status();
-
-        // 状态恢复：启动器重新打开时，从 PM2 恢复实际运行状态
-        if !self.pm2_state_restored {
-            self.pm2_state_restored = true;
-            match pm2_status {
-                crate::core::settings::pm2::Pm2Status::Online => {
-                    if self.status != ConsoleStatus::Running {
-                        self.status = ConsoleStatus::Running;
-                        self.add_log("[系统] 检测到 PM2 托管进程正在运行，已恢复控制");
-                        // 拉取当前日志（从文件开头读取全部已有日志）
-                        let (existing_logs, new_offset) =
-                            self.pm2_manager.read_out_logs_since(0);
-                        for line in &existing_logs {
-                            let cleaned = strip_osc(line);
-                            if self.tavern_url.is_none() {
-                                let plain = strip_ansi(&cleaned);
-                                if let Some(url) = extract_tavern_url(&plain) {
-                                    self.tavern_url = Some(url);
-                                }
-                            }
-                            self.add_log(&cleaned);
-                        }
-                        self.pm2_log_byte_offset = new_offset;
-                    }
-                    return;
-                }
-                crate::core::settings::pm2::Pm2Status::Stopped => {
-                    // PM2 中存在记录但已停止 → 状态一致，不需要额外操作
-                }
-                crate::core::settings::pm2::Pm2Status::Errored => {
-                    self.add_log("[系统] PM2 托管进程处于错误状态");
-                }
-                crate::core::settings::pm2::Pm2Status::Launching => {
-                    self.status = ConsoleStatus::Starting;
-                    self.add_log("[系统] PM2 托管进程正在启动中...");
-                    return;
-                }
-                crate::core::settings::pm2::Pm2Status::Stopping => {
-                    self.status = ConsoleStatus::Stopping;
-                    self.add_log("[系统] PM2 托管进程正在停止中...");
-                    return;
-                }
-                crate::core::settings::pm2::Pm2Status::NotStarted
-                | crate::core::settings::pm2::Pm2Status::Unknown => {
-                    // PM2 中无此进程记录，保持 Stopped 状态
-                }
-            }
-            // 首次恢复完成，后续走正常轮询
+        let poll_interval = std::time::Duration::from_millis(2000);
+        if !self.pm2_status_poll_in_flight
+            && (!self.pm2_state_restored || now.duration_since(self.last_pm2_poll) >= poll_interval)
+        {
+            self.pm2_status_poll_in_flight = true;
+            self.last_pm2_poll = now;
+            let tx = self.pm2_async_tx.clone();
+            let pm2 = Pm2Manager::new();
+            std::thread::spawn(move || {
+                let status = pm2.get_status();
+                let _ = tx.send(Pm2AsyncMsg::Status(status));
+            });
         }
 
-        // 同步状态
-        match pm2_status {
-            crate::core::settings::pm2::Pm2Status::Online => {
-                // 如果之前是 Starting，现在变成 Online → 启动成功
-                if self.status == ConsoleStatus::Starting {
-                    self.status = ConsoleStatus::Running;
-                    self.add_log(&lang::t("pm2_started", lang));
-                }
-            }
-            crate::core::settings::pm2::Pm2Status::Stopped => {
-                // 如果之前是 Stopping，现在变成 Stopped → 停止成功
-                if self.status == ConsoleStatus::Stopping {
-                    self.status = ConsoleStatus::Stopped;
-                    self.add_log(&lang::t("pm2_stopped", lang));
-                } else if self.status == ConsoleStatus::Running {
-                    // 异常退出
-                    self.status = ConsoleStatus::Stopped;
-                    self.add_log("[系统] PM2 酒馆进程已停止");
-                }
-            }
-            crate::core::settings::pm2::Pm2Status::Errored => {
-                if self.status != ConsoleStatus::Stopped {
-                    self.status = ConsoleStatus::Stopped;
-                    self.add_log("[系统] PM2 酒馆进程异常退出（errored）");
-                }
-            }
-            crate::core::settings::pm2::Pm2Status::Launching => {
-                if self.status != ConsoleStatus::Starting {
-                    self.status = ConsoleStatus::Starting;
-                }
-            }
-            crate::core::settings::pm2::Pm2Status::Stopping => {
-                if self.status != ConsoleStatus::Stopping {
-                    self.status = ConsoleStatus::Stopping;
-                }
-            }
-            crate::core::settings::pm2::Pm2Status::NotStarted | crate::core::settings::pm2::Pm2Status::Unknown => {
-                if self.status == ConsoleStatus::Running || self.status == ConsoleStatus::Starting {
-                    self.status = ConsoleStatus::Stopped;
-                    self.add_log("[系统] PM2 酒馆进程未找到");
-                }
-            }
-        }
-
-        // 拉取 PM2 日志（仅在运行或启动时）
+        // 3. 读取 PM2 日志文件（纯文件 I/O，不阻塞）
         if self.status == ConsoleStatus::Running
             || self.status == ConsoleStatus::Starting
         {
-            // 直接读取 out.log 文件从上次偏移开始的新内容
             let (new_logs, new_offset) =
                 self.pm2_manager.read_out_logs_since(self.pm2_log_byte_offset);
             if !new_logs.is_empty() {
                 for line in &new_logs {
                     let cleaned = strip_osc(line);
 
-                    // 解析酒馆访问地址
                     if self.tavern_url.is_none() {
                         let plain = strip_ansi(&cleaned);
                         if let Some(url) = extract_tavern_url(&plain) {
@@ -741,6 +698,172 @@ impl ConsoleState {
                     self.add_log(&cleaned);
                 }
                 self.pm2_log_byte_offset = new_offset;
+            }
+        }
+    }
+
+    /// 处理 PM2 后台线程回传的异步消息
+    fn process_pm2_async_messages(&mut self, lang: &Language) {
+        while let Ok(msg) = self.pm2_async_rx.try_recv() {
+            match msg {
+                Pm2AsyncMsg::Status(pm2_status) => {
+                    self.pm2_status_poll_in_flight = false;
+
+                    // 状态恢复：启动器重新打开时，从 PM2 恢复实际运行状态
+                    if !self.pm2_state_restored {
+                        self.pm2_state_restored = true;
+                        self.handle_pm2_status_restore(pm2_status, lang);
+                        continue;
+                    }
+
+                    // 正常状态同步
+                    self.handle_pm2_status(pm2_status, lang);
+                }
+                Pm2AsyncMsg::Start(result) => {
+                    match result {
+                        Ok(()) => {
+                            self.status = ConsoleStatus::Running;
+                            self.add_log(&lang::t("pm2_started", lang));
+                        }
+                        Err(e) => {
+                            self.status = ConsoleStatus::Stopped;
+                            self.add_log(&format!("[错误] PM2 启动失败: {}", e));
+                        }
+                    }
+                }
+                Pm2AsyncMsg::Stop(result) => {
+                    match result {
+                        Ok(()) => {
+                            self.status = ConsoleStatus::Stopped;
+                            self.add_log(&lang::t("pm2_stopped", lang));
+                        }
+                        Err(e) => {
+                            self.status = ConsoleStatus::Running;
+                            self.add_log(&format!("[错误] PM2 停止失败: {}", e));
+                        }
+                    }
+                }
+                Pm2AsyncMsg::Delete(result) => {
+                    match result {
+                        Ok(()) => {
+                            self.status = ConsoleStatus::Stopped;
+                            self.restart_pending = false;
+                            self.add_log(&lang::t("pm2_killed", lang));
+                        }
+                        Err(e) => {
+                            self.status = ConsoleStatus::Running;
+                            self.add_log(&format!("[错误] PM2 强制停止失败: {}", e));
+                        }
+                    }
+                }
+                Pm2AsyncMsg::Restart(result) => {
+                    match result {
+                        Ok(()) => {
+                            self.status = ConsoleStatus::Running;
+                            self.add_log(&lang::t("pm2_restarted", lang));
+                        }
+                        Err(e) => {
+                            self.add_log(&format!("[错误] PM2 重启失败: {}", e));
+                        }
+                    }
+                }
+                Pm2AsyncMsg::InstalledCheck(installed) => {
+                    self.pm2_installed_check_in_flight = false;
+                    self.pm2_available_cache = installed;
+                }
+            }
+        }
+    }
+
+    /// 处理 PM2 状态恢复（启动器重新打开时）
+    fn handle_pm2_status_restore(&mut self, pm2_status: Pm2Status, _lang: &Language) {
+        match pm2_status {
+            Pm2Status::Online => {
+                if self.status != ConsoleStatus::Running {
+                    self.status = ConsoleStatus::Running;
+                    self.add_log("[系统] 检测到 PM2 托管进程正在运行，已恢复控制");
+                    let (existing_logs, new_offset) =
+                        self.pm2_manager.read_out_logs_since(0);
+                    for line in &existing_logs {
+                        let cleaned = strip_osc(line);
+                        if self.tavern_url.is_none() {
+                            let plain = strip_ansi(&cleaned);
+                            if let Some(url) = extract_tavern_url(&plain) {
+                                self.tavern_url = Some(url);
+                            }
+                        }
+                        self.add_log(&cleaned);
+                    }
+                    self.pm2_log_byte_offset = new_offset;
+                }
+            }
+            Pm2Status::Stopped => {
+                // PM2 中存在记录但已停止 → 状态一致
+            }
+            Pm2Status::Errored => {
+                self.add_log("[系统] PM2 托管进程处于错误状态");
+            }
+            Pm2Status::Launching => {
+                self.status = ConsoleStatus::Starting;
+                self.add_log("[系统] PM2 托管进程正在启动中...");
+            }
+            Pm2Status::Stopping => {
+                self.status = ConsoleStatus::Stopping;
+                self.add_log("[系统] PM2 托管进程正在停止中...");
+            }
+            Pm2Status::NotStarted | Pm2Status::Unknown => {
+                // PM2 中无此进程记录，保持 Stopped 状态
+            }
+        }
+    }
+
+    /// 处理 PM2 状态同步（正常轮询）
+    fn handle_pm2_status(&mut self, pm2_status: Pm2Status, lang: &Language) {
+        match pm2_status {
+            Pm2Status::Online => {
+                // 停止中时忽略 Online（PM2 stop 命令可能尚未完成，等待 Stop 结果消息）
+                if self.status == ConsoleStatus::Stopping {
+                    return;
+                }
+                if self.status == ConsoleStatus::Starting {
+                    self.status = ConsoleStatus::Running;
+                    self.add_log(&lang::t("pm2_started", lang));
+                }
+            }
+            Pm2Status::Stopped => {
+                if self.status == ConsoleStatus::Stopping {
+                    self.status = ConsoleStatus::Stopped;
+                    self.add_log(&lang::t("pm2_stopped", lang));
+                } else if self.status == ConsoleStatus::Running {
+                    self.status = ConsoleStatus::Stopped;
+                    self.add_log("[系统] PM2 酒馆进程已停止");
+                }
+            }
+            Pm2Status::Errored => {
+                if self.status != ConsoleStatus::Stopped {
+                    self.status = ConsoleStatus::Stopped;
+                    self.add_log("[系统] PM2 酒馆进程异常退出（errored）");
+                }
+            }
+            Pm2Status::Launching => {
+                if self.status != ConsoleStatus::Starting {
+                    self.status = ConsoleStatus::Starting;
+                }
+            }
+            Pm2Status::Stopping => {
+                if self.status != ConsoleStatus::Stopping {
+                    self.status = ConsoleStatus::Stopping;
+                }
+            }
+            Pm2Status::NotStarted | Pm2Status::Unknown => {
+                // 启动中时忽略 NotStarted（PM2 start 命令可能尚未完成，等待 Start 结果消息）
+                if self.status == ConsoleStatus::Starting {
+                    return;
+                }
+                if self.status == ConsoleStatus::Running {
+                    self.status = ConsoleStatus::Stopped;
+                    self.add_log("[系统] PM2 酒馆进程未找到");
+                }
             }
         }
     }
@@ -851,6 +974,7 @@ impl ConsoleState {
                     proxy.as_deref(),
                     github_proxy.as_deref(),
                     self.is_desktop_mode || self.is_server_mode,
+                    self.env_mode,
                 ) {
                     Ok(()) => {
                         self.status = ConsoleStatus::Running;
@@ -1361,8 +1485,8 @@ pub fn render(ui: &mut egui::Ui, state: &mut ConsoleState, lang: &Language) {
                                     if resp.clicked() {
                                         match action {
                                             VisitAction::OpenBrowser => {
-                                                let _ = std::process::Command::new("open")
-                                                    .arg(url)
+                                                let _ = std::process::Command::new("cmd")
+                                                    .args(["/c", "start", "", url])
                                                     .spawn();
                                             }
                                             VisitAction::ReopenWebview => {
@@ -1526,9 +1650,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut ConsoleState, lang: &Language) {
                         state.logs.clear();
                         state.pm2_log_byte_offset = 0;
                         if state.use_pm2 {
-                            if let Err(e) = state.pm2_manager.clear_logs() {
-                                state.add_log(&format!("[错误] PM2 清空日志失败: {}", e));
-                            }
+                            state.pm2_manager.clear_logs_files_only();
                         }
                         state.add_log(lang::t("console_log_cleared", lang));
                     }
