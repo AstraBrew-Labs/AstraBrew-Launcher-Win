@@ -303,8 +303,9 @@ pub fn download_and_install_git_from_url(
         .join("cmd")
         .join("git.exe");
     let version = if git_exe.exists() {
-        let result = std::process::Command::new(&git_exe)
-            .arg("--version")
+        let mut git_cmd = std::process::Command::new(&git_exe);
+        crate::core::env::apply_no_window_to_command(&mut git_cmd);
+        let result = git_cmd.arg("--version")
             .output()
             .ok()
             .and_then(|o| {

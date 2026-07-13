@@ -7,6 +7,13 @@ use std::os::windows::process::CommandExt;
 // 隐藏控制台窗口的标志
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+/// 为控制台程序统一附加“无黑窗”启动标志。
+///
+/// 适用于从 GUI 程序拉起 `git`、`node`、`npm`、`reg`、`taskkill` 等命令行工具。
+pub fn apply_no_window_to_command(cmd: &mut Command) {
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
 /// 获取应用根目录：`%AppData%/AstraBrew Launcher/`
 pub fn get_data_dir() -> PathBuf {
     let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
@@ -59,10 +66,6 @@ pub fn get_pm2_path() -> Option<PathBuf> {
         let npm_global = PathBuf::from(&appdata).join("npm").join("pm2.cmd");
         if npm_global.exists() {
             return Some(npm_global);
-        }
-        let npm_global_ps = PathBuf::from(&appdata).join("npm").join("pm2.ps1");
-        if npm_global_ps.exists() {
-            return Some(npm_global_ps);
         }
     }
 
@@ -155,14 +158,14 @@ pub fn get_cmd_version(path: &PathBuf) -> Option<String> {
     // 如果是批处理文件，使用 cmd /c 运行
     let result = if ext == "cmd" || ext == "bat" {
         let mut cmd = Command::new("cmd");
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        apply_no_window_to_command(&mut cmd);
         cmd.arg("/c")
            .arg(path)
            .arg("--version")
            .output()
     } else {
         let mut cmd = Command::new(path);
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        apply_no_window_to_command(&mut cmd);
         cmd.arg("--version")
            .output()
     };

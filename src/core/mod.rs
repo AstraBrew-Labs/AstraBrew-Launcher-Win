@@ -4,6 +4,7 @@ pub mod desktop_webview;
 pub mod env;
 pub mod network;
 pub mod process;
+pub mod shell;
 pub mod settings;
 pub mod tavern_process;
 pub mod updater;

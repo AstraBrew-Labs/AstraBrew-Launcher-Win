@@ -13,7 +13,9 @@ pub fn set_auto_launch(enabled: bool) -> Result<(), String> {
 
 /// 当前是否已注册为登录项
 pub fn is_auto_launch_enabled() -> bool {
-    let output = std::process::Command::new("reg")
+    let mut reg_cmd = std::process::Command::new("reg");
+    crate::core::env::apply_no_window_to_command(&mut reg_cmd);
+    let output = reg_cmd
         .args([
             "query",
             autostart::REG_KEY,

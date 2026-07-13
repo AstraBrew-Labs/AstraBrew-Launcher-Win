@@ -14,6 +14,11 @@ use crate::lang;
 use crate::pages::settings::{EnvSource, SettingsState};
 use crate::utils;
 
+/// 为版本管理里的命令行工具统一附加无黑窗标志。
+fn apply_hidden_command(cmd: &mut Command) {
+    crate::core::env::apply_no_window_to_command(cmd);
+}
+
 #[derive(PartialEq, Clone, Copy)]
 pub enum VersionTab {
     Local,
@@ -1891,6 +1896,7 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                 }
                 let _ = fs::create_dir_all(&target_dir);
                 let mut git_cmd = Command::new(&git_path);
+                apply_hidden_command(&mut git_cmd);
                 git_cmd.arg("clone")
                        .arg("-b").arg(&version_str)
                        .arg("--depth").arg("1")
@@ -1938,8 +1944,9 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                     .map(|p| format!("{}https://github.com/SillyTavern/SillyTavern.git", p))
                     .unwrap_or_else(|| "https://github.com/SillyTavern/SillyTavern.git".to_string());
                 let _ = tx.send(DownloadMsg::Log(format!("Setting remote origin to: {}", remote_url)));
-                let _ = Command::new(&git_path)
-                    .arg("remote")
+                let mut git_remote = Command::new(&git_path);
+                apply_hidden_command(&mut git_remote);
+                let _ = git_remote.arg("remote")
                     .arg("set-url")
                     .arg("origin")
                     .arg(&remote_url)
@@ -1948,6 +1955,7 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
 
                 // Fetch
                 let mut git_fetch = Command::new(&git_path);
+                apply_hidden_command(&mut git_fetch);
                 git_fetch.arg("fetch")
                          .arg("origin")
                          .arg(&version_str)
@@ -1986,6 +1994,7 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
 
                 // Checkout
                 let mut git_checkout = Command::new(&git_path);
+                apply_hidden_command(&mut git_checkout);
                 git_checkout.arg("checkout")
                             .arg("-B").arg(&version_str)
                             .arg("FETCH_HEAD")
@@ -2024,6 +2033,7 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
         let _ = tx.send(DownloadMsg::Progress(0.5, "Installing dependencies...".to_string()));
 
         let mut npm_cmd = Command::new(&npm_path);
+        apply_hidden_command(&mut npm_cmd);
         npm_cmd.env("NODE_ENV", "production");
 
         // Ensure node is in PATH for npm

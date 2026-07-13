@@ -1517,9 +1517,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut ConsoleState, lang: &Language) {
                                     if resp.clicked() {
                                         match action {
                                             VisitAction::OpenBrowser => {
-                                                let _ = std::process::Command::new("cmd")
-                                                    .args(["/c", "start", "", url])
-                                                    .spawn();
+                                                let _ = crate::core::shell::open_target(url);
                                             }
                                             VisitAction::ReopenWebview => {
                                                 state.reopen_webview_triggered = true;

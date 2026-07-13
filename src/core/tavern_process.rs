@@ -16,9 +16,12 @@
 use crate::core::settings::env_detect;
 use crate::pages::settings::{EnvSource, TavernDataMode};
 use std::io::{BufRead, BufReader};
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
+
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// GitHub 代理拦截器脚本（编译时内嵌）
 const GITHUB_INTERCEPTOR_JS: &str = r#"// GitHub URL 拦截器 - 自动重写 GitHub 链接到镜像
@@ -188,8 +191,9 @@ pub fn prepare_interceptor() -> std::io::Result<PathBuf> {
 
 /// 检查当前 Node.js 是否支持 `--import` 标志（Node.js >= 19.0.0）
 pub fn node_supports_import() -> bool {
-    let output = Command::new(env_detect::resolve_command("node"))
-        .arg("--version")
+    let mut cmd = Command::new(env_detect::resolve_command("node"));
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = cmd.arg("--version")
         .output()
         .ok();
     match output {
@@ -303,6 +307,7 @@ impl TavernProcess {
         }
 
         let mut cmd = Command::new(env_detect::resolve_command("node"));
+        cmd.creation_flags(CREATE_NO_WINDOW);
 
         // GitHub 加速代理：通过 --import 预加载拦截器脚本
         if let Some(proxy_url) = github_proxy_url {
@@ -430,8 +435,9 @@ impl TavernProcess {
         if let Some(ref child) = self.child {
             let pid = child.id();
             // 发送 taskkill /F 强制终止（Node.js 子进程不响应 WM_CLOSE，必须带 /F）
-            let _ = std::process::Command::new("taskkill")
-                .arg("/F")
+            let mut taskkill = std::process::Command::new("taskkill");
+            taskkill.creation_flags(CREATE_NO_WINDOW);
+            let _ = taskkill.arg("/F")
                 .arg("/PID")
                 .arg(pid.to_string())
                 .spawn();

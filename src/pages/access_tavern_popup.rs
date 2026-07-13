@@ -482,9 +482,7 @@ fn render_addr_panel_padded(
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
             if resp.clicked() {
-                let _ = std::process::Command::new("cmd")
-                    .args(["/c", "start", "", &url])
-                    .spawn();
+                let _ = crate::core::shell::open_target(&url);
             }
         }
 

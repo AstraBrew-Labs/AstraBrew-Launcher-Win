@@ -294,8 +294,9 @@ pub fn download_and_install_nodejs_from_url(
     // 验证安装：执行 node --version
     let node_exe = nodejs_dir.join("node.exe");
     let version = if node_exe.exists() {
-        let output = std::process::Command::new(&node_exe)
-            .arg("--version")
+        let mut node_cmd = std::process::Command::new(&node_exe);
+        crate::core::env::apply_no_window_to_command(&mut node_cmd);
+        let output = node_cmd.arg("--version")
             .output()
             .ok()
             .and_then(|o| {

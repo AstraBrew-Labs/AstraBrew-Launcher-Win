@@ -127,10 +127,14 @@ struct MyApp {
     console_state: ConsoleState,
     // 资源管理状态
     resource_manage_state: ResourceManageState,
-    // 临时占位：桌面模式 WebView（Windows 版本待实现）
-    // desktop_webview 相关功能暂不可用
-    #[allow(dead_code)]
-    desktop_mode_enabled: bool,
+    // 桌面模式 WebView 句柄
+    desktop_webview: Option<crate::core::desktop_webview::DesktopWebView>,
+    // 桌面模式关闭事件通道
+    desktop_webview_close_rx: Option<std::sync::mpsc::Receiver<()>>,
+    // 桌面模式 IPC 事件通道
+    desktop_webview_ipc_rx: Option<std::sync::mpsc::Receiver<String>>,
+    // 标记当前关闭是否由主程序主动发起，避免误触发自动停服
+    desktop_webview_internal_close: bool,
     // 安装任务状态（Git/Node.js/Caddy/PM2/WebView2 安装弹窗）
     #[allow(dead_code)]
     git_install_state: pages::settings::InstallTaskState,
@@ -206,7 +210,10 @@ impl MyApp {
             ),
             console_state: ConsoleState::new(),
             resource_manage_state: ResourceManageState::new(),
-            desktop_mode_enabled: false,
+            desktop_webview: None,
+            desktop_webview_close_rx: None,
+            desktop_webview_ipc_rx: None,
+            desktop_webview_internal_close: false,
             git_install_state: pages::settings::InstallTaskState::new(),
             nodejs_install_state: pages::settings::InstallTaskState::new(),
             caddy_install_state: pages::settings::InstallTaskState::new(),
@@ -224,6 +231,198 @@ impl MyApp {
             last_path_check: None,
             updater_rx: None,
         }
+    }
+}
+
+impl MyApp {
+    /// 主动关闭当前桌面模式窗口。
+    fn close_desktop_webview(&mut self) {
+        if let Some(mut webview) = self.desktop_webview.take() {
+            self.desktop_webview_internal_close = true;
+            webview.close();
+        }
+        self.desktop_webview_close_rx = None;
+        self.desktop_webview_ipc_rx = None;
+    }
+
+    /// 打开桌面模式窗口，并把关闭/IPC 事件接回主线程。
+    fn open_desktop_webview(&mut self, ctx: &egui::Context, url: String) {
+        let (close_tx, close_rx) = std::sync::mpsc::channel();
+        let (ipc_tx, ipc_rx) = std::sync::mpsc::channel();
+
+        let export_path = self.settings_state.tavern_export_path.clone();
+        let runtime =
+            crate::core::desktop_webview::WebViewRuntime::from_env_source(self.settings_state.env_mode);
+        let env_mode_name = match self.settings_state.env_mode {
+            pages::settings::EnvSource::System => "System",
+            pages::settings::EnvSource::Builtin => "Builtin",
+        };
+        let user_agent = format!(
+            "AstraBrew Launcher/{} ({})",
+            env!("CARGO_PKG_VERSION"),
+            env_mode_name
+        );
+
+        let webview = crate::core::desktop_webview::WebViewWindow::new(url.clone())
+            .title("SillyTavern")
+            .size(1280, 720)
+            .resizable(true)
+            .decorations(true)
+            .devtools(cfg!(debug_assertions))
+            .runtime(runtime)
+            .user_agent(user_agent)
+            .export_path(export_path)
+            .init_script(
+                r#"
+                    console.log("AstraBrew Desktop Mode Ready");
+                "#,
+            )
+            .on_close(move || {
+                let _ = close_tx.send(());
+            })
+            .on_ipc(move |msg| {
+                let _ = ipc_tx.send(msg);
+            })
+            .run();
+
+        match webview {
+            Ok(webview) => {
+                self.console_state.webview_auto_opened = true;
+                self.desktop_webview = Some(webview);
+                self.desktop_webview_close_rx = Some(close_rx);
+                self.desktop_webview_ipc_rx = Some(ipc_rx);
+                self.toast_stack.push("桌面模式已打开".into(), ctx);
+            }
+            Err(err) => {
+                self.console_state.webview_auto_opened = true;
+                self.console_state
+                    .add_log(&format!("[桌面模式] 打开 WebView 失败: {err}"));
+                self.notification_stack.push(
+                    "桌面模式".into(),
+                    format!("打开 WebView 失败，已回退到系统浏览器。\n{err}"),
+                    ctx,
+                );
+                let _ = crate::core::shell::open_target(&url);
+            }
+        }
+    }
+
+    /// 处理桌面模式网页通过 `window.ipc.postMessage(...)` 发回来的消息。
+    fn handle_desktop_ipc_message(&mut self, ctx: &egui::Context, message: String) {
+        let trimmed = message.trim();
+        match trimmed {
+            "restart-server" => {
+                self.console_state
+                    .add_log("[桌面模式] 收到 IPC: restart-server");
+                self.console_state.restart(&self.settings_state.language);
+            }
+            "stop-server" => {
+                self.console_state
+                    .add_log("[桌面模式] 收到 IPC: stop-server");
+                self.console_state.stop(&self.settings_state.language);
+            }
+            "focus-webview" => {
+                if let Some(webview) = &self.desktop_webview {
+                    webview.bring_to_front();
+                }
+            }
+            _ => {
+                self.console_state
+                    .add_log(&format!("[桌面模式] IPC: {trimmed}"));
+                self.toast_stack
+                    .push(format!("桌面 IPC: {trimmed}"), ctx);
+            }
+        }
+    }
+
+    /// 轮询桌面模式的关闭、IPC 和下载通知事件。
+    fn drain_desktop_webview_events(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.desktop_webview_close_rx {
+            let mut closed = false;
+            while rx.try_recv().is_ok() {
+                closed = true;
+            }
+
+            if closed {
+                self.desktop_webview = None;
+                self.desktop_webview_close_rx = None;
+                self.desktop_webview_ipc_rx = None;
+
+                if self.desktop_webview_internal_close {
+                    self.desktop_webview_internal_close = false;
+                } else if self.settings_state.auto_stop_tavern_on_webview_close {
+                    self.console_state
+                        .stop(&self.settings_state.language);
+                    self.notification_stack.push(
+                        "桌面模式".into(),
+                        "桌面窗口已关闭，已自动停止酒馆服务。".into(),
+                        ctx,
+                    );
+                } else {
+                    self.toast_stack.push("桌面窗口已关闭".into(), ctx);
+                }
+            }
+        }
+
+        if let Some(rx) = &self.desktop_webview_ipc_rx {
+            let mut messages = Vec::new();
+            while let Ok(message) = rx.try_recv() {
+                messages.push(message);
+            }
+            for message in messages {
+                self.handle_desktop_ipc_message(ctx, message);
+            }
+        }
+
+        if let Ok(mut notifications) =
+            crate::core::desktop_webview::DOWNLOAD_NOTIFICATIONS.lock()
+        {
+            let messages: Vec<String> = notifications.drain(..).collect();
+            drop(notifications);
+            for message in messages {
+                self.toast_stack.push(message, ctx);
+            }
+        }
+    }
+
+    /// 同步桌面模式窗口生命周期。
+    fn sync_desktop_webview(&mut self, ctx: &egui::Context) {
+        let is_desktop_mode = self.settings_state.start_mode == StartMode::Desktop;
+        if !is_desktop_mode || self.console_state.status == pages::console::ConsoleStatus::Stopped {
+            if self.desktop_webview.is_some() {
+                self.close_desktop_webview();
+            }
+            self.console_state.reopen_webview_triggered = false;
+            return;
+        }
+
+        let should_reopen = self.console_state.reopen_webview_triggered;
+        self.console_state.reopen_webview_triggered = false;
+
+        if should_reopen {
+            if let Some(webview) = &self.desktop_webview {
+                if webview.is_running() {
+                    webview.bring_to_front();
+                    return;
+                }
+            }
+        }
+
+        let Some(url) = self.console_state.tavern_url.clone() else {
+            return;
+        };
+
+        let auto_open = !self.console_state.webview_auto_opened;
+        let should_open = should_reopen || auto_open;
+        if !should_open {
+            return;
+        }
+
+        if self.desktop_webview.is_some() {
+            self.close_desktop_webview();
+        }
+
+        self.open_desktop_webview(ctx, url);
     }
 }
 
@@ -594,6 +793,8 @@ impl eframe::App for MyApp {
 
         // 每帧轮询酒馆进程状态
         self.console_state.poll(&self.settings_state.language);
+        self.drain_desktop_webview_events(ctx);
+        self.sync_desktop_webview(ctx);
         if self.console_state.status == pages::console::ConsoleStatus::Running
             || self.console_state.status == pages::console::ConsoleStatus::Starting
             || self.console_state.status == pages::console::ConsoleStatus::Stopping

@@ -12,6 +12,11 @@ use crate::utils;
 use crate::ui::switch::toggle;
 use std::io::{BufRead, BufReader};
 
+/// 为扩展管理里的命令行工具统一附加无黑窗标志。
+fn apply_hidden_command(cmd: &mut std::process::Command) {
+    crate::core::env::apply_no_window_to_command(cmd);
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ExtensionManifest {
     #[serde(default)]
@@ -448,8 +453,9 @@ fn start_fix_git(state: &mut ExtensionManageState) {
     std::thread::spawn(move || {
         // Step 1: git init
         let _ = tx.send(String::new()); // trigger status update
-        let output = std::process::Command::new("git")
-            .arg("init")
+        let mut git_init = std::process::Command::new("git");
+        apply_hidden_command(&mut git_init);
+        let output = git_init.arg("init")
             .current_dir(&path)
             .output();
 
@@ -472,8 +478,9 @@ fn start_fix_git(state: &mut ExtensionManageState) {
 
         // Step 2: git remote add origin
         let _ = tx.send("__STATUS_remote__".to_string());
-        let output = std::process::Command::new("git")
-            .args(["remote", "add", "origin", &remote_url])
+        let mut git_remote = std::process::Command::new("git");
+        apply_hidden_command(&mut git_remote);
+        let output = git_remote.args(["remote", "add", "origin", &remote_url])
             .current_dir(&path)
             .output();
 
@@ -1729,8 +1736,9 @@ fn fetch_git_branches(state: &mut ExtensionManageState) {
 fn try_fetch_branches(url: &str, proxy: &str, proxy_enabled: bool) -> (Vec<String>, Option<String>) {
     fn run_ls_remote(target_url: &str) -> (Vec<String>, bool) {
         let mut branches = Vec::new();
-        let output = std::process::Command::new("git")
-            .args(["ls-remote", "--heads", target_url])
+        let mut git_ls_remote = std::process::Command::new("git");
+        apply_hidden_command(&mut git_ls_remote);
+        let output = git_ls_remote.args(["ls-remote", "--heads", target_url])
             .output();
         match output {
             Ok(o) if o.status.success() => {
@@ -1816,7 +1824,9 @@ fn try_git_clone(
     ) -> bool {
         let _ = tx.send(format!("git clone --branch {} \"{}\" \"{}\"", branch, url, dest.display()));
 
-        let mut child = match std::process::Command::new("git")
+        let mut git_clone = std::process::Command::new("git");
+        apply_hidden_command(&mut git_clone);
+        let mut child = match git_clone
             .args(["clone", "--progress", "--branch", branch, url, dest.to_str().unwrap_or(".")])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
@@ -2087,9 +2097,7 @@ fn render_extension_card(
                                     egui::RichText::new(egui_phosphor::regular::LINK).size(icon_size),
                                 ),
                             ).on_hover_text(lang::t("ext_open_homepage", lang)).clicked() {
-                                let _ = std::process::Command::new("cmd")
-                                    .args(["/c", "start", "", &url])
-                                    .spawn();
+                                let _ = crate::core::shell::open_target(&url);
                             }
                         }
 

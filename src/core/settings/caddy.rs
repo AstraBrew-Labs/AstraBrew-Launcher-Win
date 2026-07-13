@@ -194,8 +194,9 @@ pub fn install_caddy(
         }
 
         let exe_path = caddy_dir.join("caddy.exe");
-        let output = std::process::Command::new(&exe_path)
-            .arg("version")
+        let mut caddy_cmd = std::process::Command::new(&exe_path);
+        crate::core::env::apply_no_window_to_command(&mut caddy_cmd);
+        let output = caddy_cmd.arg("version")
             .output()
             .ok()
             .and_then(|o| {

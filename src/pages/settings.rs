@@ -2281,9 +2281,7 @@ pub fn render(
                                 if status == "requires_approval" {
                                     ui.add_space(4.0);
                                     if ui.small_button(lang::t("open_system_settings", &state.language)).clicked() {
-                                        let _ = std::process::Command::new("cmd")
-                                            .args(["/c", "start", "", "ms-settings:startupapps"])
-                                            .spawn();
+                                        let _ = crate::core::shell::open_target("ms-settings:startupapps");
                                     }
                                 }
                             },

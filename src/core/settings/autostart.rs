@@ -6,6 +6,11 @@
 pub const REG_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 pub const REG_VALUE_NAME: &str = "AstraBrewLauncher";
 
+/// 为注册表命令统一附加无黑窗标志，避免设置页操作时闪出控制台窗口。
+fn apply_hidden_command(cmd: &mut std::process::Command) {
+    crate::core::env::apply_no_window_to_command(cmd);
+}
+
 /// 启用自启动：将当前 exe 路径写入注册表 Run 键
 pub fn enable() -> Result<(), String> {
     let exe_path = std::env::current_exe()
@@ -13,7 +18,9 @@ pub fn enable() -> Result<(), String> {
     let exe_path_str = exe_path.to_string_lossy().to_string();
 
     // 使用 reg add 命令，/f 强制覆盖
-    let output = std::process::Command::new("reg")
+    let mut reg_add = std::process::Command::new("reg");
+    apply_hidden_command(&mut reg_add);
+    let output = reg_add
         .args([
             "add",
             REG_KEY,
@@ -35,7 +42,9 @@ pub fn enable() -> Result<(), String> {
 
 /// 禁用自启动：从注册表 Run 键删除 AstraBrewLauncher 值
 pub fn disable() -> Result<(), String> {
-    let output = std::process::Command::new("reg")
+    let mut reg_delete = std::process::Command::new("reg");
+    apply_hidden_command(&mut reg_delete);
+    let output = reg_delete
         .args([
             "delete",
             REG_KEY,

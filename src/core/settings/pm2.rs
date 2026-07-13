@@ -33,6 +33,11 @@ fn apply_pm2_runtime_env(cmd: &mut Command) {
     cmd.env("PM2_HOME", pm2_runtime_dir());
 }
 
+/// PM2 启动配置文件存放到运行时目录，避免散落在实例目录中。
+fn pm2_start_config_path(process_name: &str) -> PathBuf {
+    pm2_runtime_dir().join(format!("{}-startup.cjs", process_name))
+}
+
 /// 根据 pm2 安装目录定位对应的 JS 入口，优先直接用 node 执行，避免走 .cmd 包装脚本。
 fn find_pm2_script(pm2_root: &Path, script_name: &str) -> Option<PathBuf> {
     let bin_dir = pm2_root.join("node_modules").join("pm2").join("bin");
@@ -62,17 +67,26 @@ fn resolve_pm2_node_path(pm2_root: &Path) -> Option<PathBuf> {
 /// 优先构建“node + pm2 JS 入口”的无黑窗命令。
 ///
 /// 这样可以绕开 `pm2.cmd` / `cmd /c` 这类批处理层，显著降低命令行窗口闪烁概率。
-fn build_pm2_node_command(script_name: &str) -> Option<Command> {
-    let pm2_path = crate::core::env::get_pm2_path()?;
+pub(crate) fn build_pm2_command_for_path(
+    pm2_path: &Path,
+    script_name: &str,
+    preferred_node_path: Option<PathBuf>,
+) -> Option<Command> {
     let pm2_root = pm2_path.parent()?;
     let script_path = find_pm2_script(pm2_root, script_name)?;
-    let node_path = resolve_pm2_node_path(pm2_root)?;
+    let node_path = preferred_node_path.or_else(|| resolve_pm2_node_path(pm2_root))?;
 
     let mut cmd = Command::new(node_path);
     apply_no_window(&mut cmd);
     cmd.arg(script_path);
     apply_pm2_runtime_env(&mut cmd);
     Some(cmd)
+}
+
+/// 使用当前已解析的 PM2 路径构建无黑窗命令。
+fn build_pm2_node_command(script_name: &str) -> Option<Command> {
+    let pm2_path = crate::core::env::get_pm2_path()?;
+    build_pm2_command_for_path(&pm2_path, script_name, None)
 }
 
 /// PM2 安装函数：通过 npm 安装到内置目录，生成包装脚本
@@ -243,7 +257,7 @@ set PM2_HOME=%~dp0runtime\\pm2\r\n\
         let _ = tx.send(EnvInstallProgress::Status("验证安装...".to_string()));
     }
 
-    let verify_output = pm2_cmd()
+    let verify_output = pm2_cmd()?
         .arg("-v")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -268,17 +282,34 @@ set PM2_HOME=%~dp0runtime\\pm2\r\n\
     }
 }
 
-/// 构建 PM2 命令（使用内置包装脚本，自动设置 PM2_HOME）
-fn pm2_cmd() -> Command {
+/// 构建 PM2 命令。
+///
+/// 这里只接受“node + PM2 JS 入口”或原生命令可执行文件两种安全路径，
+/// 避免静默回退到 `.cmd` / `.ps1` 再次触发黑窗。
+fn pm2_cmd() -> Result<Command, String> {
     if let Some(cmd) = build_pm2_node_command("pm2") {
-        return cmd;
+        return Ok(cmd);
     }
 
-    let pm2_path = crate::core::env::get_pm2_path().unwrap_or_else(|| PathBuf::from("pm2"));
+    let pm2_path = crate::core::env::get_pm2_path()
+        .ok_or_else(|| "未找到 PM2 命令".to_string())?;
+    let ext = pm2_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    if ext == "cmd" || ext == "bat" || ext == "ps1" {
+        return Err(format!(
+            "无法以无黑窗模式解析 PM2 命令: {}",
+            pm2_path.display()
+        ));
+    }
+
     let mut cmd = Command::new(&pm2_path);
     apply_no_window(&mut cmd);
     apply_pm2_runtime_env(&mut cmd);
-    cmd
+    Ok(cmd)
 }
 
 /// PM2 进程名（固定，避免与用户自行安装的 sillytavern 冲突）
@@ -338,8 +369,12 @@ impl Pm2Manager {
 
     /// 检查 PM2 是否已安装（pm2 --version 成功返回即视为已安装）
     pub fn is_installed() -> bool {
-        pm2_cmd()
-            .arg("--version")
+        let mut cmd = match pm2_cmd() {
+            Ok(cmd) => cmd,
+            Err(_) => return false,
+        };
+
+        cmd.arg("--version")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
@@ -374,82 +409,22 @@ impl Pm2Manager {
             self.delete_internal()?;
         }
 
-        let mut cmd = pm2_cmd();
-        cmd.arg("start").arg("server.js");
-        cmd.arg("--name").arg(&self.process_name);
+        let start_config = self.write_start_config(
+            working_dir,
+            data_mode,
+            http_proxy,
+            github_proxy_url,
+            is_desktop_mode,
+            interceptor_path,
+            env_mode,
+        )?;
 
-        // GitHub 加速代理：通过 --node-args 传递 --import
-        if let Some(proxy_url) = github_proxy_url {
-            if let Some(interceptor) = interceptor_path {
-                cmd.arg("--node-args");
-                cmd.arg(format!("--import {}", interceptor));
-                cmd.env("GITHUB_PROXY_URL", proxy_url);
-            }
-        }
-
-        // HTTP 代理：注入环境变量（PM2 会自动将当前环境变量传给子进程）
-        if let Some(proxy) = http_proxy {
-            let proxy_url = crate::core::tavern_process::normalize_proxy_url(proxy);
-            cmd.env("HTTP_PROXY", &proxy_url);
-            cmd.env("HTTPS_PROXY", &proxy_url);
-            cmd.env("http_proxy", &proxy_url);
-            cmd.env("https_proxy", &proxy_url);
-        }
-
-        // 酒馆脚本参数
-        let mut script_args: Vec<String> = Vec::new();
-
-        // 全局数据模式参数
-        if *data_mode == TavernDataMode::Global {
-            let paths = crate::utils::app_paths();
-            script_args.push("--configPath".to_string());
-            script_args.push(
-                paths
-                    .global_tavern_config_file()
-                    .to_string_lossy()
-                    .to_string(),
-            );
-            script_args.push("--dataRoot".to_string());
-            script_args.push(
-                paths
-                    .default_global_data_dir()
-                    .to_string_lossy()
-                    .to_string(),
-            );
-        }
-
-        // HTTP 代理酒馆参数
-        if let Some(proxy) = http_proxy {
-            let proxy_url = crate::core::tavern_process::normalize_proxy_url(proxy);
-            script_args.push("--requestProxyEnabled".to_string());
-            script_args.push("true".to_string());
-            script_args.push("--requestProxyUrl".to_string());
-            script_args.push(proxy_url);
-            script_args.push("--requestProxyBypass".to_string());
-            script_args.push("localhost 127.0.0.1 ::1".to_string());
-        }
-
-        // 桌面模式
-        if is_desktop_mode {
-            script_args.push("--browserLaunchEnabled".to_string());
-            script_args.push("false".to_string());
-        }
-
-        // PM2 分隔符：-- 之后是脚本参数
-        if !script_args.is_empty() {
-            cmd.arg("--");
-            for arg in script_args {
-                cmd.arg(arg);
-            }
-        }
-
-        // 内置环境模式：将 Node.js / MinGit 路径注入到子进程 PATH
-        // PM2 会捕获当前环境并传递给托管的子进程
-        if env_mode == EnvSource::Builtin {
-            crate::core::env::apply_builtin_path_to_command(&mut cmd);
-        }
-
-        cmd.current_dir(working_dir);
+        let mut cmd = pm2_cmd()?;
+        cmd.arg("start")
+            .arg(&start_config)
+            .arg("--only")
+            .arg(&self.process_name)
+            .arg("--update-env");
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
@@ -471,7 +446,7 @@ impl Pm2Manager {
 
     /// 停止酒馆进程（pm2 stop astrabrew-launcher-sillytavern）
     pub fn stop(&self) -> Result<(), String> {
-        let output = pm2_cmd()
+        let output = pm2_cmd()?
             .arg("stop")
             .arg(&self.process_name)
             .stdout(std::process::Stdio::piped())
@@ -499,7 +474,7 @@ impl Pm2Manager {
 
     /// 内部删除实现
     fn delete_internal(&self) -> Result<(), String> {
-        let output = pm2_cmd()
+        let output = pm2_cmd()?
             .arg("delete")
             .arg(&self.process_name)
             .stdout(std::process::Stdio::piped())
@@ -522,7 +497,7 @@ impl Pm2Manager {
 
     /// 重启酒馆进程（pm2 restart astrabrew-launcher-sillytavern）
     pub fn restart(&self) -> Result<(), String> {
-        let output = pm2_cmd()
+        let output = pm2_cmd()?
             .arg("restart")
             .arg(&self.process_name)
             .stdout(std::process::Stdio::piped())
@@ -564,8 +539,8 @@ impl Pm2Manager {
 
     /// 从 pm2 jlist 输出中提取目标进程信息
     fn get_process_info(&self) -> Option<ProcessInfo> {
-        let output = pm2_cmd()
-            .arg("jlist")
+        let mut cmd = pm2_cmd().ok()?;
+        let output = cmd.arg("jlist")
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .output()
@@ -687,6 +662,136 @@ impl Pm2Manager {
     #[allow(dead_code)]
     pub fn update_config(&self) -> Result<(), String> {
         self.restart()
+    }
+
+    /// 生成 PM2 启动配置。
+    ///
+    /// 使用 ecosystem 配置的目的是把 `windowsHide` 明确传给 PM2 托管子进程，
+    /// 从根源上避免 PM2 daemon 在 Windows 下拉起 Node 时闪出控制台窗口。
+    fn write_start_config(
+        &self,
+        working_dir: &str,
+        data_mode: &TavernDataMode,
+        http_proxy: Option<&str>,
+        github_proxy_url: Option<&str>,
+        is_desktop_mode: bool,
+        interceptor_path: Option<&str>,
+        env_mode: EnvSource,
+    ) -> Result<PathBuf, String> {
+        let pm2_path = crate::core::env::get_pm2_path()
+            .ok_or_else(|| "未找到 PM2 命令".to_string())?;
+        let pm2_root = pm2_path
+            .parent()
+            .ok_or_else(|| format!("PM2 路径无效: {}", pm2_path.display()))?;
+        let interpreter = resolve_pm2_node_path(pm2_root)
+            .ok_or_else(|| "未找到 PM2 对应的 Node.js 解释器".to_string())?;
+
+        let mut script_args: Vec<String> = Vec::new();
+        if *data_mode == TavernDataMode::Global {
+            let paths = crate::utils::app_paths();
+            script_args.push("--configPath".to_string());
+            script_args.push(paths.global_tavern_config_file().to_string_lossy().to_string());
+            script_args.push("--dataRoot".to_string());
+            script_args.push(paths.default_global_data_dir().to_string_lossy().to_string());
+        }
+
+        if let Some(proxy) = http_proxy {
+            let proxy_url = crate::core::tavern_process::normalize_proxy_url(proxy);
+            script_args.push("--requestProxyEnabled".to_string());
+            script_args.push("true".to_string());
+            script_args.push("--requestProxyUrl".to_string());
+            script_args.push(proxy_url);
+            script_args.push("--requestProxyBypass".to_string());
+            script_args.push("localhost 127.0.0.1 ::1".to_string());
+        }
+
+        if is_desktop_mode {
+            script_args.push("--browserLaunchEnabled".to_string());
+            script_args.push("false".to_string());
+        }
+
+        let mut env_map = serde_json::Map::new();
+        if let Some(proxy) = http_proxy {
+            let proxy_url = crate::core::tavern_process::normalize_proxy_url(proxy);
+            env_map.insert("HTTP_PROXY".to_string(), serde_json::Value::String(proxy_url.clone()));
+            env_map.insert("HTTPS_PROXY".to_string(), serde_json::Value::String(proxy_url.clone()));
+            env_map.insert("http_proxy".to_string(), serde_json::Value::String(proxy_url.clone()));
+            env_map.insert("https_proxy".to_string(), serde_json::Value::String(proxy_url));
+        }
+        if let Some(proxy_url) = github_proxy_url {
+            if interceptor_path.is_some() {
+                env_map.insert(
+                    "GITHUB_PROXY_URL".to_string(),
+                    serde_json::Value::String(proxy_url.to_string()),
+                );
+            }
+        }
+        if env_mode == EnvSource::Builtin {
+            let current_path = std::env::var("PATH").unwrap_or_default();
+            let mut path_parts: Vec<String> = crate::core::env::get_builtin_path_entries()
+                .into_iter()
+                .map(|path| path.to_string_lossy().to_string())
+                .collect();
+            if !current_path.is_empty() {
+                path_parts.push(current_path);
+            }
+            env_map.insert(
+                "PATH".to_string(),
+                serde_json::Value::String(path_parts.join(";")),
+            );
+        }
+
+        let mut app = serde_json::Map::new();
+        app.insert("name".to_string(), serde_json::Value::String(self.process_name.clone()));
+        app.insert(
+            "script".to_string(),
+            serde_json::Value::String(
+                PathBuf::from(working_dir)
+                    .join("server.js")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        );
+        app.insert(
+            "cwd".to_string(),
+            serde_json::Value::String(working_dir.to_string()),
+        );
+        app.insert(
+            "interpreter".to_string(),
+            serde_json::Value::String(interpreter.to_string_lossy().to_string()),
+        );
+        app.insert("exec_mode".to_string(), serde_json::Value::String("fork".to_string()));
+        app.insert("autorestart".to_string(), serde_json::Value::Bool(true));
+        app.insert("windowsHide".to_string(), serde_json::Value::Bool(true));
+        if !script_args.is_empty() {
+            app.insert("args".to_string(), serde_json::json!(script_args));
+        }
+        if let Some(interceptor) = interceptor_path {
+            let escaped = interceptor.replace('\\', "/").replace('"', "\\\"");
+            app.insert(
+                "node_args".to_string(),
+                serde_json::Value::String(format!("--import \"{}\"", escaped)),
+            );
+        }
+        if !env_map.is_empty() {
+            app.insert("env".to_string(), serde_json::Value::Object(env_map));
+        }
+
+        let config = serde_json::json!({
+            "apps": [serde_json::Value::Object(app)]
+        });
+        let content = format!("module.exports = {};\r\n", serde_json::to_string_pretty(&config)
+            .map_err(|e| format!("无法序列化 PM2 启动配置: {}", e))?);
+
+        let config_path = pm2_start_config_path(&self.process_name);
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("无法创建 PM2 配置目录: {}", e))?;
+        }
+        fs::write(&config_path, content)
+            .map_err(|e| format!("无法写入 PM2 启动配置: {}", e))?;
+
+        Ok(config_path)
     }
 }
 

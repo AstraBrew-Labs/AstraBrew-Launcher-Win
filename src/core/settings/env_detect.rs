@@ -118,7 +118,16 @@ pub fn detect_caddy_system() -> Option<String> {
 
 /// 检测 PM2 版本（系统 PATH）
 pub fn detect_pm2_system() -> Option<String> {
-    let output = cmd_system("pm2").arg("-v").output().ok()?;
+    let pm2_path = crate::core::env::get_system_cmd_path("pm2")?;
+    let preferred_node = crate::core::env::get_system_cmd_path("node");
+    let output = crate::core::settings::pm2::build_pm2_command_for_path(
+        &pm2_path,
+        "pm2",
+        preferred_node,
+    )?
+    .arg("-v")
+    .output()
+    .ok()?;
     let combined = format!(
         "{}\n{}",
         String::from_utf8_lossy(&output.stdout),
@@ -167,7 +176,11 @@ pub fn detect_pm2_builtin() -> Option<String> {
     if !pm2_cmd.exists() {
         return None;
     }
-    let output = cmd_builtin("pm2", &pm2_cmd.to_string_lossy())
+    let output = crate::core::settings::pm2::build_pm2_command_for_path(
+        &pm2_cmd,
+        "pm2",
+        crate::core::env::get_builtin_node_path(),
+    )?
         .arg("-v")
         .output()
         .ok()?;

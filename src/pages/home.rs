@@ -149,9 +149,7 @@ pub fn render(
                                     }
                                     if resp.clicked() {
                                         if open_in_browser {
-                                            let _ = std::process::Command::new("cmd")
-                                                .args(["/c", "start", "", url])
-                                                .spawn();
+                                            let _ = crate::core::shell::open_target(url);
                                         } else {
                                             console_state.reopen_webview_triggered = true;
                                         }
