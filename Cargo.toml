@@ -81,4 +81,4 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Shel
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com"] }
 webview2-com = "0.38"
 winit = "0.30"
-wry = "0.55"
+wry = { version = "0.55", features = ["devtools"] }
