@@ -6,13 +6,74 @@ use crate::EnvInstallProgress;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
 use crate::pages::settings::{EnvSource, TavernDataMode};
 use std::process::Command;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// 统一为 PM2 / npm 子进程设置隐藏窗口标志，避免 Windows 下闪黑框。
+fn apply_no_window(cmd: &mut Command) {
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+/// PM2 运行时目录固定到应用数据目录，避免污染用户全局 PM2 状态。
+fn pm2_runtime_dir() -> PathBuf {
+    crate::core::env::get_data_dir()
+        .join("lib")
+        .join("pm2")
+        .join("runtime")
+        .join("pm2")
+}
+
+/// 将 PM2_HOME 注入命令环境，确保所有 PM2 调用读写同一份运行时数据。
+fn apply_pm2_runtime_env(cmd: &mut Command) {
+    cmd.env("PM2_HOME", pm2_runtime_dir());
+}
+
+/// 根据 pm2 安装目录定位对应的 JS 入口，优先直接用 node 执行，避免走 .cmd 包装脚本。
+fn find_pm2_script(pm2_root: &Path, script_name: &str) -> Option<PathBuf> {
+    let bin_dir = pm2_root.join("node_modules").join("pm2").join("bin");
+    let candidates = [
+        bin_dir.join(script_name),
+        bin_dir.join(format!("{}.js", script_name)),
+        bin_dir.join(format!("{}.cjs", script_name)),
+    ];
+
+    candidates.into_iter().find(|candidate| candidate.exists())
+}
+
+/// 为 PM2 解析最合适的 Node.js 路径。
+///
+/// - 内置 PM2 优先配套内置 Node.js。
+/// - 系统 PM2 优先系统 Node.js，不存在时回退到内置 Node.js。
+fn resolve_pm2_node_path(pm2_root: &Path) -> Option<PathBuf> {
+    let builtin_pm2_root = crate::core::env::get_data_dir().join("lib").join("pm2");
+    if pm2_root == builtin_pm2_root {
+        crate::core::env::get_builtin_node_path()
+    } else {
+        crate::core::env::get_system_cmd_path("node")
+            .or_else(crate::core::env::get_builtin_node_path)
+    }
+}
+
+/// 优先构建“node + pm2 JS 入口”的无黑窗命令。
+///
+/// 这样可以绕开 `pm2.cmd` / `cmd /c` 这类批处理层，显著降低命令行窗口闪烁概率。
+fn build_pm2_node_command(script_name: &str) -> Option<Command> {
+    let pm2_path = crate::core::env::get_pm2_path()?;
+    let pm2_root = pm2_path.parent()?;
+    let script_path = find_pm2_script(pm2_root, script_name)?;
+    let node_path = resolve_pm2_node_path(pm2_root)?;
+
+    let mut cmd = Command::new(node_path);
+    apply_no_window(&mut cmd);
+    cmd.arg(script_path);
+    apply_pm2_runtime_env(&mut cmd);
+    Some(cmd)
+}
 
 /// PM2 安装函数：通过 npm 安装到内置目录，生成包装脚本
 /// `registry` 可选：None 使用默认源，Some(url) 使用指定 registry
@@ -64,8 +125,23 @@ pub fn install_pm2(
         }
     }
 
-    let mut cmd = Command::new(&npm_cmd);
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    let is_script = npm_cmd
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
+        .unwrap_or(false);
+
+    let mut cmd = if is_script {
+        let mut c = Command::new("cmd");
+        apply_no_window(&mut c);
+        c.arg("/c").arg(&npm_cmd);
+        c
+    } else {
+        let mut c = Command::new(&npm_cmd);
+        apply_no_window(&mut c);
+        c
+    };
+
     cmd.args(["install", "pm2", "--prefix"]);
     cmd.arg(&pm2_dir);
     // 不生成 package-lock.json（不需要锁版本）
@@ -167,8 +243,7 @@ set PM2_HOME=%~dp0runtime\\pm2\r\n\
         let _ = tx.send(EnvInstallProgress::Status("验证安装...".to_string()));
     }
 
-    let verify_output = Command::new(&pm2_cmd_path)
-        .creation_flags(CREATE_NO_WINDOW)
+    let verify_output = pm2_cmd()
         .arg("-v")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -195,19 +270,14 @@ set PM2_HOME=%~dp0runtime\\pm2\r\n\
 
 /// 构建 PM2 命令（使用内置包装脚本，自动设置 PM2_HOME）
 fn pm2_cmd() -> Command {
-    let pm2_path = crate::core::env::get_pm2_path()
-        .unwrap_or_else(|| PathBuf::from("pm2"));
+    if let Some(cmd) = build_pm2_node_command("pm2") {
+        return cmd;
+    }
+
+    let pm2_path = crate::core::env::get_pm2_path().unwrap_or_else(|| PathBuf::from("pm2"));
     let mut cmd = Command::new(&pm2_path);
-    cmd.creation_flags(CREATE_NO_WINDOW);
-
-    // 确保 PM2_HOME 指向内置运行时目录
-    let runtime_dir = crate::core::env::get_data_dir()
-        .join("lib")
-        .join("pm2")
-        .join("runtime")
-        .join("pm2");
-    cmd.env("PM2_HOME", &runtime_dir);
-
+    apply_no_window(&mut cmd);
+    apply_pm2_runtime_env(&mut cmd);
     cmd
 }
 
@@ -505,40 +575,30 @@ impl Pm2Manager {
             return None;
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // 简易 JSON 解析：在 JSON 数组中查找 name 匹配的对象
-        // 我们使用简单的字符串搜索而非引入 serde_json 依赖
-        // pm2 jlist 返回格式: [{"name":"astrabrew-launcher-sillytavern","pm2_env":{"status":"online",...},...}]
+        let process_list: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+        let processes = process_list.as_array()?;
 
-        // 查找 "name":"<process_name>" 的位置
-        let search_name = format!("\"name\":\"{}\"", self.process_name);
-        if let Some(_name_pos) = stdout.find(&search_name) {
-            // 在该对象的范围内查找 "status":"xxx"
-            // 从 name 位置向后搜索 status
-            let after_name = &stdout[_name_pos..];
-            if let Some(status_pos) = after_name.find("\"status\":\"") {
-                let status_start = status_pos + "\"status\":\"".len();
-                let status_rest = &after_name[status_start..];
-                if let Some(quote_end) = status_rest.find('"') {
-                    let status = status_rest[..quote_end].to_string();
-                    return Some(ProcessInfo { status });
-                }
+        processes.iter().find_map(|process| {
+            let name = process.get("name")?.as_str()?;
+            if name != self.process_name {
+                return None;
             }
-        }
 
-        None
+            let status = process
+                .get("pm2_env")?
+                .get("status")?
+                .as_str()?
+                .to_string();
+
+            Some(ProcessInfo { status })
+        })
     }
 
     // ---- 日志操作 ----
 
     /// 获取 PM2 运行时目录下的日志路径
     fn pm2_home_dir(&self) -> Option<PathBuf> {
-        let dir = crate::core::env::get_data_dir()
-            .join("lib")
-            .join("pm2")
-            .join("runtime")
-            .join("pm2");
-        Some(dir)
+        Some(pm2_runtime_dir())
     }
 
     /// 获取 PM2 stdout 日志文件路径（`lib/pm2/runtime/pm2/logs/<name>-out.log`）

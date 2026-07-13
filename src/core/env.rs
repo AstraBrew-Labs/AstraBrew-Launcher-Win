@@ -154,17 +154,17 @@ pub fn get_cmd_version(path: &PathBuf) -> Option<String> {
     
     // 如果是批处理文件，使用 cmd /c 运行
     let result = if ext == "cmd" || ext == "bat" {
-        Command::new("cmd")
-            .arg("/c")
-            .arg(path)
-            .arg("--version")
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
+        let mut cmd = Command::new("cmd");
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.arg("/c")
+           .arg(path)
+           .arg("--version")
+           .output()
     } else {
-        Command::new(path)
-            .arg("--version")
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
+        let mut cmd = Command::new(path);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.arg("--version")
+           .output()
     };
 
     if let Ok(output) = result {

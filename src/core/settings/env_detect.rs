@@ -55,15 +55,36 @@ fn resolve_command_builtin(name: &str, sub_dirs: &[&str]) -> Option<String> {
 
 /// 创建 Command（系统 PATH 查找）
 fn cmd_system(name: &str) -> Command {
-    let mut cmd = Command::new(resolve_command_system(name));
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    let path = resolve_command_system(name);
+    let is_script = path.ends_with(".cmd") || path.ends_with(".bat");
+    
+    let cmd = if is_script {
+        let mut c = Command::new("cmd");
+        c.creation_flags(CREATE_NO_WINDOW);
+        c.arg("/c").arg(path);
+        c
+    } else {
+        let mut c = Command::new(path);
+        c.creation_flags(CREATE_NO_WINDOW);
+        c
+    };
     cmd
 }
 
 /// 创建 Command（仅内置路径）
 fn cmd_builtin(_name: &str, path: &str) -> Command {
-    let mut cmd = Command::new(path);
-    cmd.creation_flags(CREATE_NO_WINDOW);
+    let is_script = path.ends_with(".cmd") || path.ends_with(".bat");
+    
+    let cmd = if is_script {
+        let mut c = Command::new("cmd");
+        c.creation_flags(CREATE_NO_WINDOW);
+        c.arg("/c").arg(path);
+        c
+    } else {
+        let mut c = Command::new(path);
+        c.creation_flags(CREATE_NO_WINDOW);
+        c
+    };
     cmd
 }
 
@@ -321,6 +342,18 @@ fn strip_ansi(input: &str) -> String {
         }
     }
     result
+}
+
+// ─── WebView2 检测 ───────────────────────────────────────────────────────────
+
+/// 检测系统 WebView2 版本（通过注册表）
+pub fn detect_webview2_system() -> Option<String> {
+    crate::core::settings::webview2::get_webview2_version_system()
+}
+
+/// 检测内置 WebView2 状态（检查 lib/webview2/ 目录）
+pub fn detect_webview2_builtin() -> Option<String> {
+    crate::core::settings::webview2::get_webview2_version_builtin()
 }
 
 #[cfg(test)]

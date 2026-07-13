@@ -95,6 +95,7 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "desktop_mode_desc" => "Open Tavern page with WebView",
         "desktop_auto_stop" => "Stop service when closing tavern window",
         "desktop_auto_stop_desc" => "Automatically stop the running tavern service when closing the WebView window",
+        "desktop_mode_need_webview2" => "Desktop mode requires WebView2 runtime, please install first",
         "desktop_export_path" => "Export save directory",
         "desktop_export_path_desc" => "Directory where files exported from the tavern page are automatically saved",
         "server_start_mode" => "Server Mode",
@@ -192,6 +193,11 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "caddy_purpose_required" => "Reverse proxy for Tavern (Required)",
         "caddy_install_title" => "Caddy Installation",
         "caddy_install_desc" => "Preparing Caddy installation, please wait...",
+        
+        // WebView2
+        "webview2_purpose" => "Provides WebView runtime for desktop mode (Optional)",
+        "webview2_install_title" => "WebView2 Installation",
+        "webview2_install_desc" => "Downloading and installing the built-in fixed WebView2 runtime, please wait...",
         
         // Github Settings
         "github_settings" => "Github Settings",

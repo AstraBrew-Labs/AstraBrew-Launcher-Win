@@ -121,6 +121,15 @@
 - `download_and_install_git_from_url(url, tx)` 安装到 `{APPDATA}/AstraBrew Launcher/lib/git/`
 - 翻译 key：`git_node_select_title/desc`、`git_node_auto_select`、`git_install_progress_title/desc`
 
+## WebView2 环境检测（2026-07-13）
+- `src/core/settings/webview2.rs`：WebView2 检测模块
+  - `get_webview2_version_system()`：通过注册表 `HKLM\SOFTWARE\(WOW6432Node\)\Microsoft\EdgeUpdate\Clients\{GUID}` 读取 `pv` 字段获取版本号
+  - `check_webview2_builtin()`：检查 `lib/webview2/msedgewebview2.exe` 是否存在
+- `env_detect.rs`：`detect_webview2_system()` / `detect_webview2_builtin()` 封装
+- 设置页环境依赖区最后一行显示 WebView2 状态（系统/内置模式均支持）
+- 翻译键 `webview2_purpose` 中英双语
+- `SettingsState` 新增 `webview2_version` / `webview2_version_builtin`（均不持久化）
+
 ## 构建打包体系（2026-07-13）
 - **工具链**：cargo-packager v0.11.8，生成 NSIS exe 安装包（不支持 zip，zip 由脚本另行生成）
 - **配置**：`Cargo.toml` 的 `[package.metadata.packager]` 段（camelCase 字段名）

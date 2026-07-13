@@ -131,7 +131,7 @@ struct MyApp {
     // desktop_webview 相关功能暂不可用
     #[allow(dead_code)]
     desktop_mode_enabled: bool,
-    // 安装任务状态（Git/Node.js/Caddy/PM2 安装弹窗）
+    // 安装任务状态（Git/Node.js/Caddy/PM2/WebView2 安装弹窗）
     #[allow(dead_code)]
     git_install_state: pages::settings::InstallTaskState,
     #[allow(dead_code)]
@@ -140,6 +140,8 @@ struct MyApp {
     caddy_install_state: pages::settings::InstallTaskState,
     #[allow(dead_code)]
     pm2_install_state: pages::settings::InstallTaskState,
+    #[allow(dead_code)]
+    webview2_install_state: pages::settings::InstallTaskState,
 
     // Git 节点选择弹窗状态
     git_node_select: GitNodeSelectState,
@@ -209,6 +211,7 @@ impl MyApp {
             nodejs_install_state: pages::settings::InstallTaskState::new(),
             caddy_install_state: pages::settings::InstallTaskState::new(),
             pm2_install_state: pages::settings::InstallTaskState::new(),
+            webview2_install_state: pages::settings::InstallTaskState::new(),
             git_node_select: GitNodeSelectState::new(),
             nodejs_node_select: NodejsNodeSelectState::new(),
             caddy_node_select: CaddyNodeSelectState::new(),
@@ -802,6 +805,7 @@ impl eframe::App for MyApp {
                         &mut self.nodejs_install_state,
                         &mut self.caddy_install_state,
                         &mut self.pm2_install_state,
+                        &mut self.webview2_install_state,
                         &self.github_node_state,
                         &mut self.on_refresh_nodes,
                         &mut self.git_node_select,

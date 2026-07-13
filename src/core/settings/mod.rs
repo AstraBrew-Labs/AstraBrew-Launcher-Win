@@ -6,3 +6,4 @@ pub mod github_proxy;
 pub mod nodejs;
 pub mod pm2;
 pub mod tavern;
+pub mod webview2;

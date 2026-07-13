@@ -95,6 +95,7 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "desktop_mode_desc" => "用 Webview 打开酒馆页面",
         "desktop_auto_stop" => "关闭酒馆窗口自动停止服务",
         "desktop_auto_stop_desc" => "关闭 Webview 窗口时，自动停止正在运行的酒馆服务",
+        "desktop_mode_need_webview2" => "桌面模式依赖 WebView2 运行环境，请先安装",
         "desktop_export_path" => "导出保存目录",
         "desktop_export_path_desc" => "在酒馆页面里点击导出，文件自动保存的目录",
         "server_start_mode" => "服务器模式",
@@ -192,6 +193,11 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "caddy_purpose_required" => "用于给酒馆添加反向代理（必装）",
         "caddy_install_title" => "Caddy 安装",
         "caddy_install_desc" => "正在准备 Caddy 安装，请稍候...",
+        
+        // WebView2
+        "webview2_purpose" => "用于提供桌面模式 WebView 运行环境（可选）",
+        "webview2_install_title" => "WebView2 安装",
+        "webview2_install_desc" => "正在下载并安装内置 WebView2 固定版运行时，请稍候...",
         
         // Github Settings
         "github_settings" => "Github 设置",

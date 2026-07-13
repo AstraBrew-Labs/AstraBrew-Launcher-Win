@@ -206,6 +206,8 @@ pub struct SettingsState {
     pub caddy_version: Option<String>,
     #[serde(skip)]
     pub pm2_version: Option<String>,
+    #[serde(skip)]
+    pub webview2_version: Option<String>,
 
     // 环境依赖检测结果 — 内置环境（不持久化）
     #[serde(skip)]
@@ -216,6 +218,8 @@ pub struct SettingsState {
     pub caddy_version_builtin: Option<String>,
     #[serde(skip)]
     pub pm2_version_builtin: Option<String>,
+    #[serde(skip)]
+    pub webview2_version_builtin: Option<String>,
 
     // 恢复默认触发标记（不持久化）
     #[serde(skip)]
@@ -320,6 +324,8 @@ impl Default for SettingsState {
             nodejs_version_builtin: String::new(),
             caddy_version_builtin: None,
             pm2_version_builtin: None,
+            webview2_version: None,
+            webview2_version_builtin: None,
             restore_defaults_triggered: false,
             trigger_folder_picker: false,
             trigger_export_path_picker: false,
@@ -371,6 +377,7 @@ impl SettingsState {
         }
         self.caddy_version = env_detect::detect_caddy_system();
         self.pm2_version = env_detect::detect_pm2_system();
+        self.webview2_version = env_detect::detect_webview2_system();
         // 内置环境
         self.detect_builtin_env();
     }
@@ -385,6 +392,7 @@ impl SettingsState {
         }
         self.caddy_version_builtin = env_detect::detect_caddy_builtin();
         self.pm2_version_builtin = env_detect::detect_pm2_builtin();
+        self.webview2_version_builtin = env_detect::detect_webview2_builtin();
     }
 }
 
@@ -782,6 +790,89 @@ impl InstallTaskState {
                 Err(e) => {
                     let _ = tx.send(format!("__LOG__:错误: {}", e));
                     let _ = tx.send(format!("__STATUS__:错误"));
+                }
+            }
+            let _ = tx.send("__DONE__".to_string());
+        });
+    }
+
+    /// 启动 WebView2 固定版下载安装（自动获取官方最新 x64 版本）
+    pub fn start_webview2_install(&mut self) {
+        use crate::EnvInstallProgress;
+        let install_dir = crate::utils::app_paths().lib.join("webview2");
+        let temp_dir = crate::utils::app_paths().temp.join("webview2");
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.receiver = Some(rx);
+        self.log = String::new();
+        self.running = true;
+        self.show = true;
+        self.done_at = None;
+        self.timed_out = false;
+        self.progress = 0.0;
+        self.progress_text = String::new();
+        self.speed_text = String::new();
+        self.installed_version = None;
+        self.progress_mode = true;
+        self.started_at = Some(std::time::Instant::now());
+
+        let _ = tx.send(format!("__LOG__:临时目录: {}", temp_dir.display()));
+        let _ = tx.send(format!("__LOG__:安装目录: {}", install_dir.display()));
+
+        std::thread::spawn(move || {
+            let (prog_tx, prog_rx) = std::sync::mpsc::channel();
+
+            let download_thread = std::thread::spawn(move || {
+                crate::core::settings::webview2::download_and_install_webview2(Some(prog_tx))
+                    .map_err(|e| e.to_string())
+            });
+
+            let mut last_sent_pct: i32 = -1;
+            let mut is_download_phase = true;
+            for msg in prog_rx {
+                match msg {
+                    EnvInstallProgress::Progress(p) => {
+                        let display_pct = (p * 100.0) as i32;
+                        if display_pct != last_sent_pct {
+                            last_sent_pct = display_pct;
+                            let _ = tx.send(format!("__PROGRESS__:{}", p));
+                            let phase_text = if p < 0.6 {
+                                "下载中..."
+                            } else {
+                                if is_download_phase {
+                                    is_download_phase = false;
+                                }
+                                "安装中..."
+                            };
+                            let _ = tx.send(format!("__STATUS__:{}", phase_text));
+                        }
+                    }
+                    EnvInstallProgress::Speed(speed) => {
+                        let _ = tx.send(format!("__SPEED__:{}", speed));
+                    }
+                    EnvInstallProgress::Status(s) => {
+                        let _ = tx.send(format!("__LOG__:{}", s));
+                        if s.contains("下载完成") {
+                            let _ = tx.send("__STATUS__:安装中...".to_string());
+                            let _ = tx.send("__SPEED__:0.0".to_string());
+                        }
+                    }
+                    EnvInstallProgress::Error(e) => {
+                        let _ = tx.send(format!("__LOG__:错误: {}", e));
+                        let _ = tx.send("__STATUS__:错误".to_string());
+                    }
+                    EnvInstallProgress::Version(ver) => {
+                        let _ = tx.send(format!("__VERSION__:{}", ver));
+                        let _ = tx.send(format!("__LOG__:检测到版本: {}", ver));
+                    }
+                    EnvInstallProgress::Finished => {}
+                }
+            }
+
+            match download_thread.join().unwrap_or_else(|_| Err("线程异常".to_string())) {
+                Ok(()) => {}
+                Err(e) => {
+                    let _ = tx.send(format!("__LOG__:错误: {}", e));
+                    let _ = tx.send("__STATUS__:错误".to_string());
                 }
             }
             let _ = tx.send("__DONE__".to_string());
@@ -2034,6 +2125,7 @@ pub fn render(
     nodejs_install: &mut InstallTaskState,
     caddy_install: &mut InstallTaskState,
     pm2_install: &mut InstallTaskState,
+    webview2_install: &mut InstallTaskState,
     github_node_state: &crate::core::settings::github_proxy::NodeLoadState,
     on_refresh_nodes: &mut bool,
     git_node_select: &mut GitNodeSelectState,
@@ -2050,19 +2142,23 @@ pub fn render(
                 let git_version = state.git_version.clone();
                 let caddy_version = state.caddy_version.clone();
                 let pm2_version = state.pm2_version.clone();
+                let webview2_version = state.webview2_version.clone();
                 let nodejs_version_builtin = state.nodejs_version_builtin.clone();
                 let git_version_builtin = state.git_version_builtin.clone();
                 let caddy_version_builtin = state.caddy_version_builtin.clone();
                 let pm2_version_builtin = state.pm2_version_builtin.clone();
+                let webview2_version_builtin = state.webview2_version_builtin.clone();
                 *state = SettingsState::default();
                 state.nodejs_version = nodejs_version;
                 state.git_version = git_version;
                 state.caddy_version = caddy_version;
                 state.pm2_version = pm2_version;
+                state.webview2_version = webview2_version;
                 state.nodejs_version_builtin = nodejs_version_builtin;
                 state.git_version_builtin = git_version_builtin;
                 state.caddy_version_builtin = caddy_version_builtin;
                 state.pm2_version_builtin = pm2_version_builtin;
+                state.webview2_version_builtin = webview2_version_builtin;
                 state.restore_defaults_triggered = true;
             }
         });
@@ -2215,8 +2311,16 @@ pub fn render(
                         );
                         ui.add_space(10.0);
 
+                        let webview2_available = if state.env_mode == EnvSource::Builtin {
+                            state.webview2_version_builtin.is_some()
+                        } else {
+                            state.webview2_version.is_some()
+                        };
+
                         let mode_desc = if state.server_mode_enabled {
                             lang::t("server_mode_enabled_desc", &state.language)
+                        } else if !webview2_available {
+                            lang::t("desktop_mode_need_webview2", &state.language)
                         } else {
                             match state.start_mode {
                                 StartMode::Normal => lang::t("normal_mode_desc", &state.language),
@@ -2236,6 +2340,21 @@ pub fn render(
                                             &mut state.start_mode,
                                             &[
                                                 (StartMode::Normal, lang::t("server_start_mode", &state.language)),
+                                            ],
+                                        );
+                                    });
+                                } else if !webview2_available {
+                                    // WebView2 未安装 → 强制切回正常模式，禁用整个控件
+                                    if state.start_mode == StartMode::Desktop {
+                                        state.start_mode = StartMode::Normal;
+                                    }
+                                    ui.add_enabled_ui(false, |ui| {
+                                        crate::ui::segmented::segmented_control(
+                                            ui,
+                                            &mut state.start_mode,
+                                            &[
+                                                (StartMode::Normal, lang::t("normal_mode", &state.language)),
+                                                (StartMode::Desktop, lang::t("desktop_mode", &state.language)),
                                             ],
                                         );
                                     });
@@ -2631,6 +2750,31 @@ pub fn render(
                                 },
                             );
                         }
+                        ui.add_space(10.0);
+                        // WebView2
+                        {
+                            let wv = if is_builtin { state.webview2_version_builtin.clone() } else { state.webview2_version.clone() };
+                            setting_row(
+                                ui,
+                                egui_phosphor::regular::BROWSER,
+                                "WebView2",
+                                lang::t("webview2_purpose", &state.language),
+                                |ui| {
+                                    match wv {
+                                        Some(ref ver) => {
+                                            ui.label(egui::RichText::new(ver.as_str()).size(14.0));
+                                        }
+                                        None => {
+                                            if is_system {
+                                                ui.label(egui::RichText::new(lang::t("not_installed", &state.language)).size(14.0).color(egui::Color32::GRAY));
+                                            } else if ui.button(lang::t("install", &state.language)).clicked() {
+                                                webview2_install.start_webview2_install();
+                                            }
+                                        }
+                                    }
+                                },
+                            );
+                        }
                     });
 
                     // Git 节点选择弹窗（安装前选择下载源）
@@ -2720,6 +2864,19 @@ pub fn render(
                         lang::t("pm2_install_desc", &state.language),
                         lang::t("brew_install_waiting", &state.language),
                         lang::t("brew_install_running", &state.language),
+                        lang::t("close", &state.language),
+                        lang::t("install_timeout", &state.language),
+                    ) {
+                        state.detect_builtin_env();
+                        state.save();
+                    }
+
+                    // WebView2 安装弹窗（进度条模式）
+                    if render_git_install_window(
+                        ui.ctx(),
+                        webview2_install,
+                        lang::t("webview2_install_title", &state.language),
+                        lang::t("webview2_install_desc", &state.language),
                         lang::t("close", &state.language),
                         lang::t("install_timeout", &state.language),
                     ) {

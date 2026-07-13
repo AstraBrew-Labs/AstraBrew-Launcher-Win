@@ -10,6 +10,10 @@ use std::sync::mpsc;
 
 // 最大保留日志行数，超过时从头部修剪
 const MAX_LOG_LINES: usize = 2000;
+/// PM2 状态查询节流间隔，兼顾实时性与后台线程开销。
+const PM2_STATUS_POLL_INTERVAL_MS: u64 = 800;
+/// PM2 日志文件读取节流间隔，避免每帧文件 I/O 导致界面卡顿。
+const PM2_LOG_POLL_INTERVAL_MS: u64 = 250;
 
 /// PM2 异步操作消息（后台线程 → UI 线程）
 enum Pm2AsyncMsg {
@@ -49,6 +53,8 @@ pub struct ConsoleState {
     use_pm2: bool,
     /// PM2 日志读取字节偏移量（追踪 out.log 文件已读位置）
     pm2_log_byte_offset: u64,
+    /// 上次 PM2 日志读取时间
+    last_pm2_log_poll: std::time::Instant,
     /// 上次 PM2 轮询时间（节流用，避免每帧调用 pm2 CLI 导致 UI 卡顿）
     last_pm2_poll: std::time::Instant,
     /// PM2 可用性缓存（避免每帧检测 pm2 --version）
@@ -120,6 +126,9 @@ impl ConsoleState {
             pm2_manager: Pm2Manager::new(),
             use_pm2: false,
             pm2_log_byte_offset: 0,
+            last_pm2_log_poll: std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(1))
+                .unwrap_or_else(std::time::Instant::now),
             last_pm2_poll: std::time::Instant::now(),
             pm2_available_cache: false,
             last_pm2_check: std::time::Instant::now()
@@ -226,6 +235,7 @@ impl ConsoleState {
                 }
                 // 标记需要恢复 PM2 状态（启动器重新打开时也走这里）
                 self.pm2_state_restored = false;
+                self.schedule_pm2_refresh();
                 self.add_log("[系统] 已切换到 PM2 后台模式，关闭启动器不影响服务运行");
             } else {
                 // 切换回直接模式：PM2 进程保持运行（用户手动切换回直接模式）
@@ -428,6 +438,7 @@ impl ConsoleState {
         self.tavern_url = None;
         self.webview_auto_opened = false;
         self.pm2_log_byte_offset = 0;
+        self.schedule_pm2_refresh();
         // 重置连接去重记录：新进程会重新输出所有连接日志，避免重启后被误判为重复而漏掉通知
         self.notified_connections.clear();
 
@@ -533,6 +544,7 @@ impl ConsoleState {
     pub fn stop(&mut self, lang: &Language) {
         if self.use_pm2 {
             self.status = ConsoleStatus::Stopping;
+            self.schedule_pm2_refresh();
             self.add_log(&lang::t("pm2_stopping", lang));
             // 后台线程执行 PM2 stop（避免阻塞 UI）
             let tx = self.pm2_async_tx.clone();
@@ -558,6 +570,7 @@ impl ConsoleState {
     pub fn force_kill(&mut self, lang: &Language) {
         if self.use_pm2 {
             self.status = ConsoleStatus::Stopping;
+            self.schedule_pm2_refresh();
             self.add_log(&lang::t("pm2_killing", lang));
             // 后台线程执行 PM2 delete（避免阻塞 UI）
             let tx = self.pm2_async_tx.clone();
@@ -588,6 +601,7 @@ impl ConsoleState {
             self.logs.clear();
             self.parsed_layouts.clear();
             self.pm2_log_byte_offset = 0;
+            self.schedule_pm2_refresh();
             // 重置连接去重记录：新进程会重新输出所有连接日志，避免重启后被误判为重复而漏掉通知
             self.notified_connections.clear();
 
@@ -659,12 +673,23 @@ impl ConsoleState {
         self.poll_direct(lang);
     }
 
+    /// 将 PM2 状态与日志轮询时间重置为“立即可拉取”，用于启动后快速同步真实状态。
+    fn schedule_pm2_refresh(&mut self) {
+        self.last_pm2_poll = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_millis(PM2_STATUS_POLL_INTERVAL_MS))
+            .unwrap_or_else(std::time::Instant::now);
+        self.last_pm2_log_poll = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_millis(PM2_LOG_POLL_INTERVAL_MS))
+            .unwrap_or_else(std::time::Instant::now);
+    }
+
     /// PM2 模式轮询：获取状态和日志
     /// 所有 PM2 CLI 调用都在后台线程执行，UI 线程仅做 channel drain 和文件读取
     fn poll_pm2(&mut self) {
         // 1. 如果没有状态轮询线程在跑且到了轮询间隔，启动一个后台线程
         let now = std::time::Instant::now();
-        let poll_interval = std::time::Duration::from_millis(2000);
+        let poll_interval =
+            std::time::Duration::from_millis(PM2_STATUS_POLL_INTERVAL_MS);
         if !self.pm2_status_poll_in_flight
             && (!self.pm2_state_restored || now.duration_since(self.last_pm2_poll) >= poll_interval)
         {
@@ -679,9 +704,14 @@ impl ConsoleState {
         }
 
         // 3. 读取 PM2 日志文件（纯文件 I/O，不阻塞）
-        if self.status == ConsoleStatus::Running
+        let log_poll_interval =
+            std::time::Duration::from_millis(PM2_LOG_POLL_INTERVAL_MS);
+        if (self.status == ConsoleStatus::Running
             || self.status == ConsoleStatus::Starting
+            || self.status == ConsoleStatus::Stopping)
+            && now.duration_since(self.last_pm2_log_poll) >= log_poll_interval
         {
+            self.last_pm2_log_poll = now;
             let (new_logs, new_offset) =
                 self.pm2_manager.read_out_logs_since(self.pm2_log_byte_offset);
             if !new_logs.is_empty() {
@@ -722,8 +752,8 @@ impl ConsoleState {
                 Pm2AsyncMsg::Start(result) => {
                     match result {
                         Ok(()) => {
-                            self.status = ConsoleStatus::Running;
-                            self.add_log(&lang::t("pm2_started", lang));
+                            self.status = ConsoleStatus::Starting;
+                            self.schedule_pm2_refresh();
                         }
                         Err(e) => {
                             self.status = ConsoleStatus::Stopped;
@@ -735,6 +765,7 @@ impl ConsoleState {
                     match result {
                         Ok(()) => {
                             self.status = ConsoleStatus::Stopped;
+                            self.schedule_pm2_refresh();
                             self.add_log(&lang::t("pm2_stopped", lang));
                         }
                         Err(e) => {
@@ -747,6 +778,7 @@ impl ConsoleState {
                     match result {
                         Ok(()) => {
                             self.status = ConsoleStatus::Stopped;
+                            self.schedule_pm2_refresh();
                             self.restart_pending = false;
                             self.add_log(&lang::t("pm2_killed", lang));
                         }
@@ -759,8 +791,8 @@ impl ConsoleState {
                 Pm2AsyncMsg::Restart(result) => {
                     match result {
                         Ok(()) => {
-                            self.status = ConsoleStatus::Running;
-                            self.add_log(&lang::t("pm2_restarted", lang));
+                            self.status = ConsoleStatus::Starting;
+                            self.schedule_pm2_refresh();
                         }
                         Err(e) => {
                             self.add_log(&format!("[错误] PM2 重启失败: {}", e));
