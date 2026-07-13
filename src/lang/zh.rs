@@ -2,6 +2,7 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
     match key {
         "app_title" => "星酿启动器",
         "app_subtitle" => "AstraBrew Launcher",
+        "beta_tag" => "测试版",
         "sidebar_current_version" => "当前版本",
         "sidebar_version_label" => "版本:",
         "sidebar_instance_local" => "本地实例",

@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  AstraBrew Launcher - 跨平台构建打包脚本（bash 版）
+#
+#  用法:
+#    ./build -release     构建正式版（NSIS exe 安装包 + zip 免安装版）
+#    ./build -beta        构建测试版（版本号追加 -beta 后缀）
+#    ./build -clean       构建前清空 dist 目录
+#    ./build -skipbuild   跳过 NSIS 构建，仅生成 zip 免安装版
+#    ./build -help        显示帮助
+#
+#  参数可组合，例如:
+#    ./build -beta -clean
+#    ./build -release -skipbuild
+#
+#  平台说明:
+#    - Windows (Git Bash / MSYS2): 完整流程（NSIS exe + zip）
+#    - Linux / macOS: 仅生成 zip 免安装版（NSIS 为 Windows 专属格式）
+#                     需先配置 Windows 交叉编译目标
+# ============================================================================
+
+set -euo pipefail
+
+# ----------------------------------------------------------------------------
+# 颜色输出（非 TTY 时自动禁用颜色）
+# ----------------------------------------------------------------------------
+if [[ -t 1 ]]; then
+    C_CYAN='\033[36m'; C_GREEN='\033[32m'; C_YELLOW='\033[33m'
+    C_RED='\033[31m'; C_WHITE='\033[37m'; C_BOLD='\033[1m'; C_RESET='\033[0m'
+else
+    C_CYAN=''; C_GREEN=''; C_YELLOW=''; C_RED=''; C_WHITE=''; C_BOLD=''; C_RESET=''
+fi
+
+log_step()  { printf "\n${C_CYAN}[*]${C_RESET} %s\n" "$1"; }
+log_ok()    { printf "${C_GREEN}[OK]${C_RESET} %s\n" "$1"; }
+log_warn()  { printf "${C_YELLOW}[!] ${C_RESET} %s\n" "$1"; }
+log_error() { printf "${C_RED}[X] ${C_RESET} %s\n" "$1"; }
+die()       { log_error "$1"; exit 1; }
+
+# ----------------------------------------------------------------------------
+# 路径与常量
+# ----------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
+CARGO_TOML="$PROJECT_ROOT/Cargo.toml"
+DIST_DIR="$PROJECT_ROOT/dist"
+RELEASE_DIR="$PROJECT_ROOT/target/release"
+
+PRODUCT_NAME="AstraBrew Launcher"
+BINARY_NAME="astrabrew-launcher-win.exe"   # cargo 默认产物名（package name）
+CARGO_TOML_BAK=""                           # Cargo.toml 备份路径（beta 模式用）
+
+cd "$PROJECT_ROOT" || die "无法进入项目根目录: $PROJECT_ROOT"
+
+# ----------------------------------------------------------------------------
+# 参数解析
+# ----------------------------------------------------------------------------
+BUILD_MODE=""      # beta | release（空则默认 release）
+FLAG_CLEAN=0
+FLAG_SKIPBUILD=0
+FLAG_HELP=0
+
+for arg in "$@"; do
+    case "$arg" in
+        -beta)        BUILD_MODE="beta" ;;
+        -release)     BUILD_MODE="release" ;;
+        -clean)       FLAG_CLEAN=1 ;;
+        -skipbuild)   FLAG_SKIPBUILD=1 ;;
+        -help|--help|-h) FLAG_HELP=1 ;;
+        *) die "未知参数: $arg（使用 -help 查看用法）" ;;
+    esac
+done
+
+# 默认 release
+[[ -z "$BUILD_MODE" ]] && BUILD_MODE="release"
+
+if [[ $FLAG_HELP -eq 1 ]]; then
+    cat <<'EOF'
+AstraBrew Launcher 构建打包脚本
+
+用法: ./build [选项]
+
+选项:
+  -release     构建正式版（版本号原样，默认）
+  -beta        构建测试版（版本号追加 -beta 后缀，如 0.0.1 -> 0.0.1-beta）
+  -clean       构建前清空 dist 目录
+  -skipbuild   跳过 NSIS 安装包构建，仅生成 zip 免安装版
+  -help        显示此帮助信息
+
+参数可组合:  ./build -beta -clean
+
+产物（输出到 dist/ 目录）:
+  - NSIS 安装包:  AstraBrew Launcher_<version>_x64-setup.exe
+  - 免安装版:     AstraBrew Launcher_<version>_x64_portable.zip
+
+平台:
+  - Windows (Git Bash): 完整流程（NSIS exe + zip）
+  - Linux / macOS:      仅 zip 免安装版（需配置 Windows 交叉编译目标）
+EOF
+    exit 0
+fi
+
+# ----------------------------------------------------------------------------
+# 平台检测
+# ----------------------------------------------------------------------------
+detect_platform() {
+    local os
+    os="$(uname -s)"
+    case "$os" in
+        MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
+        Linux*)                echo "linux" ;;
+        Darwin*)               echo "macos" ;;
+        *)                     echo "unknown" ;;
+    esac
+}
+
+PLATFORM="$(detect_platform)"
+log_ok "检测到平台: $PLATFORM"
+
+# ----------------------------------------------------------------------------
+# 1. 读取版本号
+# ----------------------------------------------------------------------------
+log_step "读取版本号"
+
+if [[ ! -f "$CARGO_TOML" ]]; then die "找不到 Cargo.toml: $CARGO_TOML"; fi
+
+# 提取 [package] 段下的 version（第一个出现的顶层 version 字段）
+ORIGINAL_VERSION="$(grep -m1 '^version = "' "$CARGO_TOML" | sed 's/^version = "\([^"]*\)".*/\1/')"
+if [[ -z "$ORIGINAL_VERSION" ]]; then die "无法从 Cargo.toml 解析 version"; fi
+
+# 根据 build mode 计算最终版本号
+if [[ "$BUILD_MODE" == "beta" ]]; then
+    FINAL_VERSION="${ORIGINAL_VERSION}-beta"
+else
+    FINAL_VERSION="$ORIGINAL_VERSION"
+fi
+
+log_ok "原始版本号: $ORIGINAL_VERSION"
+log_ok "构建模式:   $BUILD_MODE"
+log_ok "最终版本号: $FINAL_VERSION"
+
+# 根据 build mode 设置编译时环境变量（build.rs 读取，控制 BETA 角标渲染）
+if [[ "$BUILD_MODE" == "beta" ]]; then
+    export ASTRABREW_BUILD_TYPE="beta"
+    log_ok "编译标识: cfg(beta) 已启用（UI 将渲染 BETA 角标）"
+else
+    export ASTRABREW_BUILD_TYPE="release"
+fi
+
+# ----------------------------------------------------------------------------
+# 2. 检查工具链
+# ----------------------------------------------------------------------------
+log_step "检查工具链"
+
+# cargo
+command -v cargo >/dev/null 2>&1 || die "未找到 cargo，请先安装 Rust 工具链"
+log_ok "cargo: $(command -v cargo)"
+
+# zip 命令（用于免安装版打包）
+ZIP_CMD=""
+if command -v zip >/dev/null 2>&1; then
+    ZIP_CMD="zip"
+    log_ok "zip: $(command -v zip)"
+else
+    # Windows 上若无 zip，回退到 PowerShell Compress-Archive
+    if [[ "$PLATFORM" == "windows" ]] && command -v powershell >/dev/null 2>&1; then
+        ZIP_CMD="powershell"
+        log_warn "未找到 zip 命令，将使用 PowerShell Compress-Archive 回退"
+    else
+        die "未找到 zip 命令，请安装 zip（如: apt install zip / pacman -S zip）"
+    fi
+fi
+
+# cargo-packager（仅在不跳过构建且平台为 Windows 时需要）
+NEED_NSIS=0
+if [[ $FLAG_SKIPBUILD -eq 0 && "$PLATFORM" == "windows" ]]; then
+    NEED_NSIS=1
+    if ! command -v cargo-packager >/dev/null 2>&1; then
+        log_warn "未安装 cargo-packager，开始安装（cargo install cargo-packager --locked）..."
+        cargo install cargo-packager --locked
+        command -v cargo-packager >/dev/null 2>&1 || die "cargo-packager 安装失败或不在 PATH"
+    fi
+    log_ok "cargo-packager: $(command -v cargo-packager)"
+elif [[ $FLAG_SKIPBUILD -eq 0 && "$PLATFORM" != "windows" ]]; then
+    log_warn "非 Windows 平台，跳过 NSIS 安装包构建（仅生成 zip 免安装版）"
+fi
+
+# ----------------------------------------------------------------------------
+# 3. beta 模式：临时修改 Cargo.toml 版本号
+#     打包完成后通过 trap 自动恢复，确保不残留修改
+# ----------------------------------------------------------------------------
+if [[ "$BUILD_MODE" == "beta" && "$FINAL_VERSION" != "$ORIGINAL_VERSION" ]]; then
+    log_step "临时修改 Cargo.toml 版本号: $ORIGINAL_VERSION -> $FINAL_VERSION"
+    CARGO_TOML_BAK="$CARGO_TOML.bak.$$"
+    cp "$CARGO_TOML" "$CARGO_TOML_BAK"
+    # 替换所有 version = "x.y.z" 为 version = "x.y.z-beta"
+    # 安全性：仅替换与 ORIGINAL_VERSION 完全匹配的行
+    if [[ "$PLATFORM" == "macos" ]]; then
+        # macOS sed -i 需要空字符串参数
+        sed -i '' "s/^version = \"${ORIGINAL_VERSION}\"/version = \"${FINAL_VERSION}\"/g" "$CARGO_TOML"
+    else
+        sed -i "s/^version = \"${ORIGINAL_VERSION}\"/version = \"${FINAL_VERSION}\"/g" "$CARGO_TOML"
+    fi
+    log_ok "Cargo.toml 已临时修改（备份: $CARGO_TOML_BAK）"
+fi
+
+# 恢复 Cargo.toml 的清理函数（被 trap 调用）
+restore_cargo_toml() {
+    if [[ -n "$CARGO_TOML_BAK" && -f "$CARGO_TOML_BAK" ]]; then
+        mv "$CARGO_TOML_BAK" "$CARGO_TOML"
+        log_ok "Cargo.toml 已恢复原始版本号"
+    fi
+}
+trap restore_cargo_toml EXIT INT TERM
+
+# ----------------------------------------------------------------------------
+# 4. 清理 dist 目录
+# ----------------------------------------------------------------------------
+if [[ $FLAG_CLEAN -eq 1 && -d "$DIST_DIR" ]]; then
+    log_step "清空 dist 目录: $DIST_DIR"
+    rm -rf "$DIST_DIR"
+    log_ok "dist 目录已清空"
+fi
+mkdir -p "$DIST_DIR"
+
+# ----------------------------------------------------------------------------
+# 5. 生成 NSIS 安装包（exe）— 仅 Windows 平台
+# ----------------------------------------------------------------------------
+if [[ $NEED_NSIS -eq 1 ]]; then
+    log_step "调用 cargo packager 生成 NSIS 安装包（含 cargo build --release）"
+    cargo packager --release
+    [[ $? -eq 0 ]] || die "cargo packager 执行失败"
+    log_ok "NSIS 安装包生成完毕"
+elif [[ $FLAG_SKIPBUILD -eq 1 ]]; then
+    log_warn "已跳过 NSIS 构建（-skipbuild）"
+fi
+
+# ----------------------------------------------------------------------------
+# 6. 生成 zip 免安装版
+# ----------------------------------------------------------------------------
+log_step "生成 zip 免安装版"
+
+RELEASE_EXE="$RELEASE_DIR/$BINARY_NAME"
+if [[ ! -f "$RELEASE_EXE" ]]; then
+    die "未找到 release 二进制: $RELEASE_EXE
+请先运行 cargo build --release 或去掉 -skipbuild 参数"
+fi
+
+# 临时暂存目录：把 exe 重命名为产品名后打包
+TEMP_STAGE="$(mktemp -d)"
+PORTABLE_EXE_NAME="${PRODUCT_NAME}.exe"
+PORTABLE_EXE_PATH="$TEMP_STAGE/$PORTABLE_EXE_NAME"
+cp "$RELEASE_EXE" "$PORTABLE_EXE_PATH"
+
+EXE_SIZE_MB="$(du -m "$PORTABLE_EXE_PATH" 2>/dev/null | cut -f1)"
+log_ok "已暂存: $PORTABLE_EXE_NAME (${EXE_SIZE_MB} MB)"
+
+# 输出 zip 路径
+ZIP_NAME="${PRODUCT_NAME}_${FINAL_VERSION}_x64_portable.zip"
+ZIP_PATH="$DIST_DIR/$ZIP_NAME"
+[[ -f "$ZIP_PATH" ]] && rm -f "$ZIP_PATH"
+
+if [[ "$ZIP_CMD" == "zip" ]]; then
+    # 进入暂存目录后打包，避免 zip 内包含临时目录路径
+    ( cd "$TEMP_STAGE" && zip -j -9 "$ZIP_PATH" "$PORTABLE_EXE_NAME" )
+elif [[ "$ZIP_CMD" == "powershell" ]]; then
+    # Windows 回退：PowerShell Compress-Archive
+    powershell -NoProfile -ExecutionPolicy Bypass -Command \
+        "Compress-Archive -Path '$PORTABLE_EXE_PATH' -DestinationPath '$ZIP_PATH' -CompressionLevel Optimal"
+fi
+
+ZIP_SIZE_MB="$(du -m "$ZIP_PATH" 2>/dev/null | cut -f1)"
+log_ok "zip 免安装版: $ZIP_NAME (${ZIP_SIZE_MB} MB)"
+
+# 清理临时目录
+rm -rf "$TEMP_STAGE"
+
+# ----------------------------------------------------------------------------
+# 7. 列出 dist 产物
+# ----------------------------------------------------------------------------
+log_step "dist 目录产物清单"
+if [[ -d "$DIST_DIR" ]]; then
+    while IFS= read -r f; do
+        size_mb="$(du -m "$f" 2>/dev/null | cut -f1)"
+        printf "  ${C_WHITE}%-55s %10s MB${C_RESET}\n" "$(basename "$f")" "$size_mb"
+    done < <(find "$DIST_DIR" -maxdepth 1 -type f | sort)
+fi
+
+# 显式恢复 Cargo.toml（trap 也会兜底）
+restore_cargo_toml
+trap - EXIT INT TERM
+
+echo ""
+echo "========================================"
+echo " 构建打包完成 - 模式: $BUILD_MODE | 版本: $FINAL_VERSION"
+echo "========================================"
+echo ""

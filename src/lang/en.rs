@@ -2,6 +2,7 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
     match key {
         "app_title" => "AstraBrew",
         "app_subtitle" => "Launcher",
+        "beta_tag" => "BETA",
         "sidebar_current_version" => "Version",
         "sidebar_version_label" => "Ver:",
         "sidebar_instance_local" => "Local",

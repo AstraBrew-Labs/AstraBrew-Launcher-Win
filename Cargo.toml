@@ -2,11 +2,63 @@
 name = "astrabrew-launcher-win"
 version = "0.0.1"
 edition = "2024"
+description = "星酿启动器 (AstraBrew Launcher) 原为 酒馆启动器GUI (SillyTavern Launcher GUI)，是一款专为小白打造的简单易用的酒馆(SillyTavern)启动器。基于 Rust 和 egui 开发，旨在为用户提供易用、快速、轻量、多功能的启动和管理体验。"
+authors = ["AstraBrew-Labs"]
+license = "MIT"
+homepage = "https://github.com/AstraBrew-Labs/AstraBrew-Launcher-Win"
 
+# ============================================================================
+# cargo-packager 打包配置
+# 文档: https://docs.rs/cargo-packager/latest/cargo_packager/config/struct.Config.html
+# 安装 CLI: cargo install cargo-packager --locked
+# 打包命令: cargo packager --release
+# 输出目录: dist/  （NSIS exe 安装包）
+# 免安装 zip 由 scripts/build.ps1 用 Compress-Archive 额外生成
+# ============================================================================
 [package.metadata.packager]
 productName = "AstraBrew Launcher"
+version = "0.0.1"
 identifier = "cn.astrabrew.launcher"
+publisher = "AstraBrew-Labs"
+description = "星酿启动器 (AstraBrew Launcher) 原为 酒馆启动器GUI (SillyTavern Launcher GUI)，是一款专为小白打造的简单易用的酒馆(SillyTavern)启动器。基于 Rust 和 egui 开发，旨在为用户提供易用、快速、轻量、多功能的启动和管理体验。"
+homepage = "https://github.com/AstraBrew-Labs/AstraBrew-Launcher-Win"
+copyright = "Copyright © 2024 AstraBrew-Labs"
+
+# 输出目录（exe 安装包与 zip 免安装版统一放这里）
 outDir = "dist"
+
+# cargo build --release 产物所在目录（区别于 outDir）
+binariesDir = "target/release"
+
+# 主二进制（行内表语法，避免 [[binaries]] 数组项"吞噬"后续字段）
+binaries = [{ path = "astrabrew-launcher-win", main = true }]
+
+# 仅生成 NSIS 安装包（zip 免安装版由构建脚本另行生成）
+formats = ["nsis"]
+
+# 打包前自动构建 release 二进制（HookCommand：简单字符串 OR { script, dir } 对象）
+beforePackagingCommand = "cargo build --release"
+
+# 图标（NSIS 安装包图标 + 卸载程序图标）
+icons = ["icons/icon.ico"]
+
+# NSIS 安装包特定配置
+[package.metadata.packager.nsis]
+# 安装时可选择：当前用户 / 所有用户
+installMode = "both"
+# 安装界面语言：简体中文 + 英文
+languages = ["SimpChinese", "English"]
+# 首次启动时让用户选择语言
+displayLanguageSelector = true
+# 安装包压缩算法（LZMA 压缩率高）
+compression = "lzma"
+# 卸载时询问用户是否保留应用数据（%AppData%/AstraBrew Launcher）
+appdataPaths = ["$APPDATA/$PUBLISHER/$PRODUCTNAME", "$LOCALAPPDATA/$PUBLISHER/$PRODUCTNAME"]
+
+
+[build-dependencies]
+# Windows 资源嵌入：exe 图标 + 窗口子系统（无命令行窗口）
+winresource = "0.1"
 
 
 [dependencies]

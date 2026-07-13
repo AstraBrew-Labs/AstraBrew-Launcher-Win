@@ -1,3 +1,6 @@
+// 禁用命令行窗口（Windows 窗口应用程序，免安装版直接双击无黑窗）
+#![windows_subsystem = "windows"]
+
 use eframe::egui;
 use egui::{FontData, FontDefinitions, FontFamily};
 
@@ -273,6 +276,22 @@ impl eframe::App for MyApp {
 
                 ui.vertical_centered(|ui| {
                     ui.heading(lang::t("app_title", &self.settings_state.language));
+                    // BETA 角标（仅 beta 构建时渲染，放在中文标题和英文副标题之间，不遮挡 logo）
+                    #[cfg(beta)]
+                    {
+                        egui::Frame::NONE
+                            .fill(egui::Color32::from_rgb(255, 120, 50))
+                            .corner_radius(3.0)
+                            .inner_margin(egui::Margin::symmetric(6, 1))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(lang::t("beta_tag", &self.settings_state.language))
+                                        .size(10.0)
+                                        .color(egui::Color32::WHITE)
+                                        .strong(),
+                                );
+                            });
+                    }
                     ui.heading(egui::RichText::new(lang::t("app_subtitle", &self.settings_state.language)).size(12.0));
                 });
 

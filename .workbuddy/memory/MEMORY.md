@@ -120,3 +120,19 @@
 - `GitMirrorNode` 存储于 `src/core/settings/git.rs`
 - `download_and_install_git_from_url(url, tx)` 安装到 `{APPDATA}/AstraBrew Launcher/lib/git/`
 - 翻译 key：`git_node_select_title/desc`、`git_node_auto_select`、`git_install_progress_title/desc`
+
+## 构建打包体系（2026-07-13）
+- **工具链**：cargo-packager v0.11.8，生成 NSIS exe 安装包（不支持 zip，zip 由脚本另行生成）
+- **配置**：`Cargo.toml` 的 `[package.metadata.packager]` 段（camelCase 字段名）
+  - `formats = ["nsis"]`、`outDir = "dist"`、`binariesDir = "target/release"`
+  - `beforePackagingCommand = { cmd = "cargo", args = ["build", "--release"] }`
+  - `[package.metadata.packager.nsis]`：installMode=currentUser、中英文、LZMA 压缩
+- **双脚本**：
+  - `build`（项目根目录，bash，无扩展名）：`-beta`/`-release`/`-clean`/`-skipbuild`/`-help`
+  - `scripts/build.ps1` + `scripts/build.bat`：`-Beta`/`-Release`/`-Clean`/`-SkipBuild`
+- **BETA 角标**：`build.rs` 读取 `ASTRABREW_BUILD_TYPE=beta` 环境变量 → `cargo::rustc-cfg=beta`
+  - `main.rs` 侧边栏右上角 `#[cfg(beta)]` painter 绘制橙红色角标（翻译键 `beta_tag`）
+  - 脚本 beta 模式 export 环境变量，自动继承到 cargo packager 子进程
+  - build.rs 必须加 `cargo::rustc-check-cfg=cfg(beta)` 否则 warning
+- **图标**：`icons/icon.ico` 由 `scripts/gen_icon_ico.py` 从 PNG 生成（Python venv + Pillow）
+- **字体/图标内嵌**：`include_bytes!` 内嵌，产物完全自包含

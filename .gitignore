@@ -3,6 +3,8 @@
 /.workbuddy
 *.py
 *.vue
+# 例外：构建脚本目录下的 Python 工具需要入库
+!scripts/*.py
 
 /dist
 /cache
@@ -11,3 +13,5 @@
 keys/update_key.pem
 .DS_Store
 dist-packages
+# build 脚本 beta 模式产生的 Cargo.toml 临时备份
+Cargo.toml.bak.*
