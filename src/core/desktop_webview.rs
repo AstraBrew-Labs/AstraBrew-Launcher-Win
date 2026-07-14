@@ -3,9 +3,11 @@
 //! 这里把旧的 macOS 原生 WebView 思路统一替换成 Windows 下的 WebView2。
 //! 为了便于后续扩展，这里采用 Builder 风格封装，并保留窗口控制句柄。
 
+use std::ffi::c_void;
+use std::num::NonZeroIsize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, mpsc};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, mpsc};
 use std::thread;
 
 use webview2_com::{
@@ -15,18 +17,30 @@ use webview2_com::{
         ICoreWebView2EnvironmentOptions,
     },
 };
-use windows::Win32::Foundation::E_POINTER;
+use windows::Win32::Foundation::{E_POINTER, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, HBRUSH, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
+    DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, IDC_ARROW,
+    LoadCursorW, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SW_MAXIMIZE, SW_RESTORE,
+    SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WM_APP,
+    WM_CLOSE, WM_DESTROY, WM_MOVE, WM_NCCREATE, WM_NCDESTROY, WM_SIZE, WNDCLASSW,
+    WS_CAPTION, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_APPWINDOW, WS_MAXIMIZEBOX,
+    WS_MINIMIZEBOX, WS_OVERLAPPED, WS_POPUP, WS_SIZEBOX, WS_SYSMENU, WINDOW_EX_STYLE,
+    WINDOW_STYLE,
+};
 use windows::core::{Error as WindowsError, HSTRING, PCWSTR};
-use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
-use winit::platform::windows::EventLoopBuilderExtWindows;
-use winit::window::{Fullscreen, Window};
 use wry::WebView;
 use wry::WebViewBuilder;
 use wry::WebViewBuilderExtWindows;
+use wry::raw_window_handle::{
+    HandleError, HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle,
+};
 
 use crate::pages::settings::EnvSource;
 
@@ -281,7 +295,8 @@ impl WebViewWindow {
 
 /// 运行中的桌面模式窗口句柄。
 pub struct DesktopWebView {
-    proxy: EventLoopProxy<WebViewCommand>,
+    command_tx: mpsc::Sender<WebViewCommand>,
+    hwnd: HWND,
     closed: Arc<AtomicBool>,
     /// 保留标题字段，便于后续扩展窗口切换、调试和诊断。
     title: String,
@@ -315,29 +330,27 @@ impl DesktopWebView {
 
     /// 将窗口关闭。
     pub fn close(&mut self) {
-        let _ = self.proxy.send_event(WebViewCommand::Close);
+        self.send_command(WebViewCommand::Close);
     }
 
     /// 将窗口唤回前台。
     pub fn bring_to_front(&self) {
-        let _ = self.proxy.send_event(WebViewCommand::BringToFront);
+        self.send_command(WebViewCommand::BringToFront);
     }
 
     /// 动态切换全屏状态。
     pub fn set_fullscreen(&self, value: bool) {
-        let _ = self.proxy.send_event(WebViewCommand::SetFullscreen(value));
+        self.send_command(WebViewCommand::SetFullscreen(value));
     }
 
     /// 执行一段运行时脚本，方便后续扩展宿主控制。
     pub fn evaluate_script(&self, script: impl Into<String>) {
-        let _ = self
-            .proxy
-            .send_event(WebViewCommand::EvaluateScript(script.into()));
+        self.send_command(WebViewCommand::EvaluateScript(script.into()));
     }
 
     /// 跳转到新地址。
     pub fn navigate(&self, url: impl Into<String>) {
-        let _ = self.proxy.send_event(WebViewCommand::Navigate(url.into()));
+        self.send_command(WebViewCommand::Navigate(url.into()));
     }
 
     /// 检查窗口是否已经关闭。
@@ -360,62 +373,44 @@ impl DesktopWebView {
         &self.title
     }
 
-    /// 启动真正的 WebView2 线程并返回控制句柄。
+    /// 向窗口线程发送控制命令，并唤醒原生消息循环。
+    fn send_command(&self, command: WebViewCommand) {
+        if self.closed.load(Ordering::SeqCst) {
+            return;
+        }
+        if self.command_tx.send(command).is_ok() {
+            unsafe {
+                let _ = PostMessageW(Some(self.hwnd), WM_DESKTOP_WEBVIEW_COMMAND, WPARAM(0), LPARAM(0));
+            }
+        }
+    }
+
+    /// 启动真正的 WebView2 窗口线程并返回控制句柄。
     fn spawn(config: WebViewWindow) -> Result<Self, String> {
         let closed = Arc::new(AtomicBool::new(false));
-        let startup_closed = Arc::clone(&closed);
         let title = config.title.clone();
         let url = config.url.clone();
-
-        let (proxy_tx, proxy_rx) = mpsc::sync_channel(1);
-        let (startup_tx, startup_rx) = mpsc::sync_channel(1);
+        let (startup_tx, startup_rx) = mpsc::sync_channel::<Result<isize, String>>(1);
+        let (command_tx, command_rx) = mpsc::channel();
+        let thread_closed = Arc::clone(&closed);
 
         let thread = thread::Builder::new()
             .name("desktop-webview".into())
             .spawn(move || {
-                let _com_scope = match ComScope::new() {
-                    Ok(scope) => scope,
-                    Err(err) => {
-                        let _ = startup_tx.send(Err(err));
-                        startup_closed.store(true, Ordering::SeqCst);
-                        return;
-                    }
-                };
-
-                let mut event_loop_builder = EventLoop::<WebViewCommand>::with_user_event();
-                // 桌面模式运行在独立线程中，Windows 下需要显式允许任意线程创建事件循环。
-                event_loop_builder.with_any_thread(true);
-
-                let event_loop = match event_loop_builder.build() {
-                    Ok(loop_handle) => loop_handle,
-                    Err(err) => {
-                        let _ = startup_tx.send(Err(format!("创建 WebView 事件循环失败: {err}")));
-                        startup_closed.store(true, Ordering::SeqCst);
-                        return;
-                    }
-                };
-
-                let proxy = event_loop.create_proxy();
-                let _ = proxy_tx.send(proxy);
-
-                let mut app = DesktopWebViewApp::new(config, startup_tx, startup_closed);
-                if let Err(err) = event_loop.run_app(&mut app) {
-                    let _ = app.send_startup_error_if_needed(format!("运行 WebView 事件循环失败: {err}"));
-                    app.mark_closed();
-                }
+                let result =
+                    run_webview_window_thread(config, command_rx, Arc::clone(&thread_closed));
+                let _ = startup_tx.send(result.map(|hwnd| hwnd.0 as isize));
             })
             .map_err(|err| format!("启动 WebView 线程失败: {err}"))?;
 
-        let proxy = proxy_rx
-            .recv()
-            .map_err(|_| "未能获取 WebView 事件代理".to_string())?;
-
-        startup_rx
+        let hwnd_value = startup_rx
             .recv()
             .map_err(|_| "WebView 启动结果通道已断开".to_string())??;
+        let hwnd = HWND(hwnd_value as *mut c_void);
 
         Ok(Self {
-            proxy,
+            command_tx,
+            hwnd,
             closed,
             title,
             url,
@@ -423,6 +418,9 @@ impl DesktopWebView {
         })
     }
 }
+
+/// 原生命令消息，用于唤醒窗口线程处理管道命令。
+const WM_DESKTOP_WEBVIEW_COMMAND: u32 = WM_APP + 1;
 
 /// 窗口线程内部使用的控制命令。
 #[allow(dead_code)]
@@ -434,31 +432,58 @@ enum WebViewCommand {
     Navigate(String),
 }
 
-/// 事件循环内部的应用状态。
-struct DesktopWebViewApp {
-    config: Option<WebViewWindow>,
-    startup_tx: Option<mpsc::SyncSender<Result<(), String>>>,
+/// Win32 原生窗口包装，供 `wry` 读取窗口句柄。
+struct NativeWindowHandle {
+    hwnd: HWND,
+    hinstance: HINSTANCE,
+}
+
+impl NativeWindowHandle {
+    /// 根据原生句柄创建包装对象。
+    fn new(hwnd: HWND) -> Result<Self, String> {
+        let hinstance = unsafe {
+            GetModuleHandleW(None)
+                .map(HINSTANCE::from)
+                .map_err(|err| format!("获取窗口模块句柄失败: {err}"))?
+        };
+        Ok(Self { hwnd, hinstance })
+    }
+}
+
+impl HasWindowHandle for NativeWindowHandle {
+    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+        let hwnd =
+            NonZeroIsize::new(self.hwnd.0 as isize).ok_or(HandleError::Unavailable)?;
+        let mut handle = Win32WindowHandle::new(hwnd);
+        handle.hinstance = NonZeroIsize::new(self.hinstance.0 as isize);
+        unsafe { Ok(WindowHandle::borrow_raw(RawWindowHandle::Win32(handle))) }
+    }
+}
+
+/// 窗口线程内部状态。
+struct DesktopWebViewState {
+    command_rx: mpsc::Receiver<WebViewCommand>,
     closed: Arc<AtomicBool>,
-    window: Option<Window>,
-    webview: Option<WebView>,
     on_close: Option<CloseHandler>,
+    webview: Option<WebView>,
+    fullscreen: bool,
     closed_callback_fired: bool,
 }
 
-impl DesktopWebViewApp {
-    /// 初始化应用状态。
+impl DesktopWebViewState {
+    /// 初始化窗口线程状态。
     fn new(
-        config: WebViewWindow,
-        startup_tx: mpsc::SyncSender<Result<(), String>>,
+        command_rx: mpsc::Receiver<WebViewCommand>,
         closed: Arc<AtomicBool>,
+        on_close: Option<CloseHandler>,
+        fullscreen: bool,
     ) -> Self {
         Self {
-            config: Some(config),
-            startup_tx: Some(startup_tx),
+            command_rx,
             closed,
-            window: None,
+            on_close,
             webview: None,
-            on_close: None,
+            fullscreen,
             closed_callback_fired: false,
         }
     }
@@ -479,130 +504,275 @@ impl DesktopWebViewApp {
         }
     }
 
-    /// 发送启动结果。
-    fn send_startup_result(&mut self, result: Result<(), String>) {
-        if let Some(tx) = self.startup_tx.take() {
-            let _ = tx.send(result);
+    /// 处理来自主线程的窗口命令。
+    fn process_commands(&mut self, hwnd: HWND) {
+        while let Ok(command) = self.command_rx.try_recv() {
+            match command {
+                WebViewCommand::BringToFront => unsafe {
+                    let _ = ShowWindow(hwnd, SW_RESTORE);
+                    let _ = SetForegroundWindow(hwnd);
+                },
+                WebViewCommand::Close => unsafe {
+                    let _ = DestroyWindow(hwnd);
+                },
+                WebViewCommand::SetFullscreen(enabled) => {
+                    self.fullscreen = enabled;
+                    apply_fullscreen(hwnd, enabled);
+                }
+                WebViewCommand::EvaluateScript(script) => {
+                    if let Some(webview) = &self.webview {
+                        let _ = webview.evaluate_script(&script);
+                    }
+                }
+                WebViewCommand::Navigate(url) => {
+                    if let Some(webview) = &self.webview {
+                        let _ = webview.load_url(&url);
+                    }
+                }
+            }
         }
-    }
-
-    /// 当事件循环异常退出但启动结果尚未发送时，补发错误。
-    fn send_startup_error_if_needed(&mut self, message: String) -> Result<(), String> {
-        if self.startup_tx.is_some() {
-            self.send_startup_result(Err(message.clone()));
-        }
-        Err(message)
     }
 }
 
-impl ApplicationHandler<WebViewCommand> for DesktopWebViewApp {
-    /// 事件循环恢复时创建窗口与 WebView。
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
-            return;
+/// 窗口创建参数。
+struct DesktopWebViewCreateParams {
+    state: Box<DesktopWebViewState>,
+}
+
+/// 已注册的桌面模式窗口类 Atom。
+static DESKTOP_WEBVIEW_WINDOW_CLASS: OnceLock<Result<u16, String>> = OnceLock::new();
+
+/// 获取并注册桌面模式窗口类。
+fn desktop_webview_window_class() -> Result<u16, String> {
+    DESKTOP_WEBVIEW_WINDOW_CLASS
+        .get_or_init(register_desktop_webview_window_class)
+        .clone()
+}
+
+/// 注册桌面模式原生窗口类。
+fn register_desktop_webview_window_class() -> Result<u16, String> {
+    let module = unsafe {
+        GetModuleHandleW(None)
+            .map(HINSTANCE::from)
+            .map_err(|err| format!("获取模块句柄失败: {err}"))?
+    };
+
+    let class_name = HSTRING::from("AstraBrewDesktopWebViewWindow");
+    let window_class = WNDCLASSW {
+        style: CS_HREDRAW | CS_VREDRAW,
+        hCursor: unsafe { LoadCursorW(None, IDC_ARROW).unwrap_or_default() },
+        hInstance: module,
+        lpszClassName: PCWSTR(class_name.as_ptr()),
+        lpfnWndProc: Some(desktop_webview_wndproc),
+        hbrBackground: HBRUSH(std::ptr::null_mut()),
+        ..Default::default()
+    };
+
+    let atom = unsafe { RegisterClassW(&window_class) };
+    if atom == 0 {
+        Err("注册桌面模式窗口类失败".into())
+    } else {
+        Ok(atom)
+    }
+}
+
+/// 原生窗口线程入口。
+fn run_webview_window_thread(
+    config: WebViewWindow,
+    command_rx: mpsc::Receiver<WebViewCommand>,
+    closed: Arc<AtomicBool>,
+) -> Result<HWND, String> {
+    let _com_scope = ComScope::new()?;
+    let class_atom = desktop_webview_window_class()?;
+    let module = unsafe {
+        GetModuleHandleW(None)
+            .map(HINSTANCE::from)
+            .map_err(|err| format!("获取模块句柄失败: {err}"))?
+    };
+
+    let state = Box::new(DesktopWebViewState::new(
+        command_rx,
+        Arc::clone(&closed),
+        config.on_close.clone(),
+        config.fullscreen,
+    ));
+    let create_params = Box::new(DesktopWebViewCreateParams { state });
+    let title = HSTRING::from(config.title.clone());
+    let window_style = desktop_window_style(&config);
+
+    let hwnd = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(WS_EX_APPWINDOW.0),
+            PCWSTR(class_atom as usize as _),
+            PCWSTR(title.as_ptr()),
+            window_style,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            config.width as i32,
+            config.height as i32,
+            None,
+            None,
+            Some(module),
+            Some(Box::into_raw(create_params) as *const c_void),
+        )
+    }
+    .map_err(|err| format!("创建桌面模式原生窗口失败: {err}"))?;
+
+    if hwnd.0.is_null() {
+        closed.store(true, Ordering::SeqCst);
+        return Err("创建桌面模式原生窗口失败".into());
+    }
+
+    let native_window = NativeWindowHandle::new(hwnd)?;
+    let webview = build_webview(&native_window, &config)?;
+    let state = unsafe { desktop_webview_state(hwnd) }
+        .ok_or_else(|| "桌面模式窗口状态初始化失败".to_string())?;
+    state.webview = Some(webview);
+
+    if config.maximized {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_MAXIMIZE);
         }
+    } else {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOW);
+        }
+    }
+    if config.fullscreen {
+        apply_fullscreen(hwnd, true);
+    }
 
-        let Some(config) = self.config.take() else {
-            return;
-        };
-
-        let window_attributes = {
-            let mut attrs = Window::default_attributes()
-                .with_title(config.title.clone())
-                .with_resizable(config.resizable)
-                .with_maximized(config.maximized)
-                .with_decorations(config.decorations)
-                .with_inner_size(LogicalSize::new(
-                    f64::from(config.width),
-                    f64::from(config.height),
-                ));
-            if config.fullscreen {
-                attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
-            }
-            attrs
-        };
-
-        let window = match event_loop.create_window(window_attributes) {
-            Ok(window) => window,
-            Err(err) => {
-                self.mark_closed();
-                self.send_startup_result(Err(format!("创建 WebView 窗口失败: {err}")));
-                event_loop.exit();
-                return;
-            }
-        };
-
-        match build_webview(&window, &config) {
-            Ok(webview) => {
-                self.on_close = config.on_close.clone();
-                self.window = Some(window);
-                self.webview = Some(webview);
-                self.send_startup_result(Ok(()));
-            }
-            Err(err) => {
-                self.mark_closed();
-                self.send_startup_result(Err(err));
-                event_loop.exit();
-            }
+    let mut message = MSG::default();
+    loop {
+        let has_message = unsafe { GetMessageW(&mut message, None, 0, 0) };
+        if has_message.0 == 0 {
+            break;
+        }
+        unsafe {
+            let _ = TranslateMessage(&message);
+            DispatchMessageW(&message);
         }
     }
 
-    /// 处理来自宿主线程的控制命令。
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: WebViewCommand) {
-        match event {
-            WebViewCommand::BringToFront => {
-                if let Some(window) = &self.window {
-                    window.set_minimized(false);
-                    window.set_visible(true);
-                    window.focus_window();
-                }
-            }
-            WebViewCommand::Close => {
-                self.mark_closed();
-                self.fire_close_callback_once();
-                event_loop.exit();
-            }
-            WebViewCommand::SetFullscreen(enabled) => {
-                if let Some(window) = &self.window {
-                    let fullscreen = enabled.then_some(Fullscreen::Borderless(None));
-                    window.set_fullscreen(fullscreen);
-                }
-            }
-            WebViewCommand::EvaluateScript(script) => {
-                if let Some(webview) = &self.webview {
-                    let _ = webview.evaluate_script(&script);
-                }
-            }
-            WebViewCommand::Navigate(url) => {
-                if let Some(webview) = &self.webview {
-                    let _ = webview.load_url(&url);
-                }
-            }
+    Ok(hwnd)
+}
+
+/// 组装桌面模式顶层窗口样式。
+fn desktop_window_style(config: &WebViewWindow) -> WINDOW_STYLE {
+    let mut style = WINDOW_STYLE(WS_CLIPCHILDREN.0 | WS_CLIPSIBLINGS.0);
+    if config.decorations {
+        style |= WINDOW_STYLE(WS_OVERLAPPED.0 | WS_CAPTION.0 | WS_SYSMENU.0 | WS_MINIMIZEBOX.0);
+        if config.resizable {
+            style |= WINDOW_STYLE(WS_SIZEBOX.0 | WS_MAXIMIZEBOX.0);
         }
+    } else {
+        style |= WINDOW_STYLE(WS_POPUP.0);
+    }
+    style
+}
+
+/// 获取窗口状态指针。
+unsafe fn desktop_webview_state<'a>(hwnd: HWND) -> Option<&'a mut DesktopWebViewState> {
+    let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut DesktopWebViewState };
+    unsafe { ptr.as_mut() }
+}
+
+/// 应用全屏或退出全屏。
+fn apply_fullscreen(hwnd: HWND, enabled: bool) {
+    if !enabled {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
+        return;
     }
 
-    /// 处理原生窗口事件。
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: winit::window::WindowId,
-        event: WindowEvent,
-    ) {
-        if let WindowEvent::CloseRequested = event {
-            self.mark_closed();
-            self.fire_close_callback_once();
-            event_loop.exit();
+    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    if monitor.0.is_null() {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_MAXIMIZE);
         }
+        return;
     }
 
-    /// 事件循环退出时兜底标记关闭状态。
-    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        self.mark_closed();
+    let mut monitor_info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if unsafe { GetMonitorInfoW(monitor, &mut monitor_info) }.as_bool() {
+        let rect = monitor_info.rcMonitor;
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                rect.left,
+                rect.top,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE,
+            );
+        }
+    } else {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_MAXIMIZE);
+        }
+    }
+}
+
+/// 桌面模式窗口过程。
+extern "system" fn desktop_webview_wndproc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        WM_NCCREATE => {
+            let create_struct = unsafe { &*(lparam.0 as *const CREATESTRUCTW) };
+            let params = unsafe {
+                Box::from_raw(create_struct.lpCreateParams as *mut DesktopWebViewCreateParams)
+            };
+            let DesktopWebViewCreateParams { state } = *params;
+            unsafe {
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as _);
+            }
+            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+        }
+        WM_DESKTOP_WEBVIEW_COMMAND => {
+            if let Some(state) = unsafe { desktop_webview_state(hwnd) } {
+                state.process_commands(hwnd);
+            }
+            LRESULT(0)
+        }
+        WM_SIZE | WM_MOVE => LRESULT(0),
+        WM_CLOSE => {
+            unsafe {
+                let _ = DestroyWindow(hwnd);
+            }
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            if let Some(state) = unsafe { desktop_webview_state(hwnd) } {
+                state.mark_closed();
+                state.fire_close_callback_once();
+            }
+            unsafe {
+                PostQuitMessage(0);
+            }
+            LRESULT(0)
+        }
+        WM_NCDESTROY => {
+            let ptr = unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) };
+            if ptr != 0 {
+                drop(unsafe { Box::<DesktopWebViewState>::from_raw(ptr as _) });
+            }
+            unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+        }
+        _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
     }
 }
 
 /// 构建真正的 Wry WebView 实例。
-fn build_webview(window: &Window, config: &WebViewWindow) -> Result<WebView, String> {
+fn build_webview(window: &impl HasWindowHandle, config: &WebViewWindow) -> Result<WebView, String> {
     if let Some(path) = &config.export_path {
         DesktopWebView::set_export_path(&path.to_string_lossy());
     }
