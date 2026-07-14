@@ -150,6 +150,12 @@ pub struct SettingsState {
     /// 桌面模式：启动 WebView 时自动打开 DevTools
     #[serde(default)]
     pub auto_open_devtools_on_webview_start: bool,
+    /// 桌面模式：启动 WebView 时自动最大化窗口
+    #[serde(default)]
+    pub auto_maximize_webview_on_start: bool,
+    /// 桌面模式：启动 WebView 后自动隐藏启动器界面
+    #[serde(default)]
+    pub auto_hide_launcher_when_webview_opens: bool,
     /// 桌面模式：酒馆导出文件的默认保存路径
     #[serde(default = "default_export_path")]
     pub tavern_export_path: String,
@@ -301,6 +307,8 @@ impl Default for SettingsState {
             allow_tavern_background: false,
             auto_stop_tavern_on_webview_close: true,
             auto_open_devtools_on_webview_start: false,
+            auto_maximize_webview_on_start: true,
+            auto_hide_launcher_when_webview_opens: false,
             tavern_export_path: default_export_path(),
             show_startup_command: false,
             npm_registry: NpmRegistry::default(),
@@ -2395,6 +2403,32 @@ pub fn render(
                                 |ui| {
                                     ui.add(crate::ui::switch::toggle(
                                         &mut state.auto_open_devtools_on_webview_start,
+                                    ));
+                                },
+                            );
+                            ui.add_space(10.0);
+
+                            setting_row(
+                                ui,
+                                egui_phosphor::regular::SQUARE,
+                                lang::t("desktop_auto_maximize", &state.language),
+                                lang::t("desktop_auto_maximize_desc", &state.language),
+                                |ui| {
+                                    ui.add(crate::ui::switch::toggle(
+                                        &mut state.auto_maximize_webview_on_start,
+                                    ));
+                                },
+                            );
+                            ui.add_space(10.0);
+
+                            setting_row(
+                                ui,
+                                egui_phosphor::regular::EYE_SLASH,
+                                lang::t("desktop_auto_hide_launcher", &state.language),
+                                lang::t("desktop_auto_hide_launcher_desc", &state.language),
+                                |ui| {
+                                    ui.add(crate::ui::switch::toggle(
+                                        &mut state.auto_hide_launcher_when_webview_opens,
                                     ));
                                 },
                             );

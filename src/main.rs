@@ -135,6 +135,8 @@ struct MyApp {
     desktop_webview_ipc_rx: Option<std::sync::mpsc::Receiver<String>>,
     // 标记当前关闭是否由主程序主动发起，避免误触发自动停服
     desktop_webview_internal_close: bool,
+    // 标记当前启动器窗口是否由桌面模式自动隐藏，避免错误恢复用户自己的最小化状态
+    launcher_hidden_by_webview: bool,
     // 安装任务状态（Git/Node.js/Caddy/PM2/WebView2 安装弹窗）
     #[allow(dead_code)]
     git_install_state: pages::settings::InstallTaskState,
@@ -214,6 +216,7 @@ impl MyApp {
             desktop_webview_close_rx: None,
             desktop_webview_ipc_rx: None,
             desktop_webview_internal_close: false,
+            launcher_hidden_by_webview: false,
             git_install_state: pages::settings::InstallTaskState::new(),
             nodejs_install_state: pages::settings::InstallTaskState::new(),
             caddy_install_state: pages::settings::InstallTaskState::new(),
@@ -235,8 +238,27 @@ impl MyApp {
 }
 
 impl MyApp {
+    /// 按桌面模式设置最小化或恢复主启动器窗口。
+    fn set_launcher_hidden_by_webview(&mut self, ctx: &egui::Context, hidden: bool) {
+        if hidden {
+            if self.launcher_hidden_by_webview {
+                return;
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            self.launcher_hidden_by_webview = true;
+            return;
+        }
+
+        if !self.launcher_hidden_by_webview {
+            return;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        self.launcher_hidden_by_webview = false;
+    }
+
     /// 主动关闭当前桌面模式窗口。
-    fn close_desktop_webview(&mut self) {
+    fn close_desktop_webview(&mut self, ctx: &egui::Context) {
+        self.set_launcher_hidden_by_webview(ctx, false);
         if let Some(mut webview) = self.desktop_webview.take() {
             self.desktop_webview_internal_close = true;
             webview.close();
@@ -267,6 +289,7 @@ impl MyApp {
             .title("SillyTavern")
             .size(1280, 720)
             .resizable(true)
+            .maximized(self.settings_state.auto_maximize_webview_on_start)
             .decorations(true)
             .devtools(self.settings_state.auto_open_devtools_on_webview_start)
             .runtime(runtime)
@@ -291,6 +314,9 @@ impl MyApp {
                 self.desktop_webview = Some(webview);
                 self.desktop_webview_close_rx = Some(close_rx);
                 self.desktop_webview_ipc_rx = Some(ipc_rx);
+                if self.settings_state.auto_hide_launcher_when_webview_opens {
+                    self.set_launcher_hidden_by_webview(ctx, true);
+                }
                 self.toast_stack.push("桌面模式已打开".into(), ctx);
             }
             Err(err) => {
@@ -344,6 +370,7 @@ impl MyApp {
             }
 
             if closed {
+                self.set_launcher_hidden_by_webview(ctx, false);
                 self.desktop_webview = None;
                 self.desktop_webview_close_rx = None;
                 self.desktop_webview_ipc_rx = None;
@@ -390,7 +417,9 @@ impl MyApp {
         let is_desktop_mode = self.settings_state.start_mode == StartMode::Desktop;
         if !is_desktop_mode || self.console_state.status == pages::console::ConsoleStatus::Stopped {
             if self.desktop_webview.is_some() {
-                self.close_desktop_webview();
+                self.close_desktop_webview(ctx);
+            } else {
+                self.set_launcher_hidden_by_webview(ctx, false);
             }
             self.console_state.reopen_webview_triggered = false;
             return;
@@ -419,7 +448,7 @@ impl MyApp {
         }
 
         if self.desktop_webview.is_some() {
-            self.close_desktop_webview();
+            self.close_desktop_webview(ctx);
         }
 
         self.open_desktop_webview(ctx, url);

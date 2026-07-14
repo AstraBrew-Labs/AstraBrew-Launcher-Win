@@ -402,9 +402,12 @@ impl DesktopWebView {
         let thread = thread::Builder::new()
             .name("desktop-webview".into())
             .spawn(move || {
-                let result =
-                    run_webview_window_thread(config, command_rx, Arc::clone(&thread_closed));
-                let _ = startup_tx.send(result.map(|hwnd| hwnd.0 as isize));
+                run_webview_window_thread(
+                    config,
+                    command_rx,
+                    Arc::clone(&thread_closed),
+                    startup_tx,
+                );
             })
             .map_err(|err| format!("启动 WebView 线程失败: {err}"))?;
 
@@ -634,96 +637,109 @@ fn run_webview_window_thread(
     config: WebViewWindow,
     command_rx: mpsc::Receiver<WebViewCommand>,
     closed: Arc<AtomicBool>,
-) -> Result<HWND, String> {
-    let _com_scope = ComScope::new()?;
-    let class_atom = desktop_webview_window_class()?;
-    let module = unsafe {
-        GetModuleHandleW(None)
-            .map(HINSTANCE::from)
-            .map_err(|err| format!("获取模块句柄失败: {err}"))?
-    };
-    let icons = desktop_window_icons()?;
+    startup_tx: mpsc::SyncSender<Result<isize, String>>,
+) {
+    let run_result = (|| -> Result<(), String> {
+        let _com_scope = ComScope::new()?;
+        let class_atom = desktop_webview_window_class()?;
+        let module = unsafe {
+            GetModuleHandleW(None)
+                .map(HINSTANCE::from)
+                .map_err(|err| format!("获取模块句柄失败: {err}"))?
+        };
+        let icons = desktop_window_icons()?;
 
-    let state = Box::new(DesktopWebViewState::new(
-        command_rx,
-        Arc::clone(&closed),
-        config.on_close.clone(),
-        config.fullscreen,
-    ));
-    let create_params = Box::new(DesktopWebViewCreateParams { state });
-    let title = HSTRING::from(config.title.clone());
-    let window_style = desktop_window_style(&config);
+        let state = Box::new(DesktopWebViewState::new(
+            command_rx,
+            Arc::clone(&closed),
+            config.on_close.clone(),
+            config.fullscreen,
+        ));
+        let create_params = Box::new(DesktopWebViewCreateParams { state });
+        let title = HSTRING::from(config.title.clone());
+        let window_style = desktop_window_style(&config);
 
-    let hwnd = unsafe {
-        CreateWindowExW(
-            WINDOW_EX_STYLE(WS_EX_APPWINDOW.0),
-            PCWSTR(class_atom as usize as _),
-            PCWSTR(title.as_ptr()),
-            window_style,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            config.width as i32,
-            config.height as i32,
-            None,
-            None,
-            Some(module),
-            Some(Box::into_raw(create_params) as *const c_void),
-        )
-    }
-    .map_err(|err| format!("创建桌面模式原生窗口失败: {err}"))?;
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(WS_EX_APPWINDOW.0),
+                PCWSTR(class_atom as usize as _),
+                PCWSTR(title.as_ptr()),
+                window_style,
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                config.width as i32,
+                config.height as i32,
+                None,
+                None,
+                Some(module),
+                Some(Box::into_raw(create_params) as *const c_void),
+            )
+        }
+        .map_err(|err| format!("创建桌面模式原生窗口失败: {err}"))?;
 
-    if hwnd.0.is_null() {
+        if hwnd.0.is_null() {
+            closed.store(true, Ordering::SeqCst);
+            return Err("创建桌面模式原生窗口失败".into());
+        }
+
+        unsafe {
+            let _ = SendMessageW(
+                hwnd,
+                WM_SETICON,
+                Some(WPARAM(ICON_BIG as usize)),
+                Some(LPARAM(icons.big.0 as isize)),
+            );
+            let _ = SendMessageW(
+                hwnd,
+                WM_SETICON,
+                Some(WPARAM(ICON_SMALL as usize)),
+                Some(LPARAM(icons.small.0 as isize)),
+            );
+        }
+
+        let native_window = NativeWindowHandle::new(hwnd)?;
+        let webview = build_webview(&native_window, &config)?;
+        let state = unsafe { desktop_webview_state(hwnd) }
+            .ok_or_else(|| "桌面模式窗口状态初始化失败".to_string())?;
+        state.webview = Some(webview);
+
+        if config.maximized {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_MAXIMIZE);
+            }
+        } else {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_SHOW);
+            }
+        }
+        if config.fullscreen {
+            apply_fullscreen(hwnd, true);
+        }
+
+        // 在进入消息循环前就回传窗口句柄，避免主线程一直阻塞到 WebView 关闭。
+        startup_tx
+            .send(Ok(hwnd.0 as isize))
+            .map_err(|_| "WebView 启动结果通道已断开".to_string())?;
+
+        let mut message = MSG::default();
+        loop {
+            let has_message = unsafe { GetMessageW(&mut message, None, 0, 0) };
+            if has_message.0 == 0 {
+                break;
+            }
+            unsafe {
+                let _ = TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+
+        Ok(())
+    })();
+
+    if let Err(err) = run_result {
         closed.store(true, Ordering::SeqCst);
-        return Err("创建桌面模式原生窗口失败".into());
+        let _ = startup_tx.send(Err(err));
     }
-
-    unsafe {
-        let _ = SendMessageW(
-            hwnd,
-            WM_SETICON,
-            Some(WPARAM(ICON_BIG as usize)),
-            Some(LPARAM(icons.big.0 as isize)),
-        );
-        let _ = SendMessageW(
-            hwnd,
-            WM_SETICON,
-            Some(WPARAM(ICON_SMALL as usize)),
-            Some(LPARAM(icons.small.0 as isize)),
-        );
-    }
-
-    let native_window = NativeWindowHandle::new(hwnd)?;
-    let webview = build_webview(&native_window, &config)?;
-    let state = unsafe { desktop_webview_state(hwnd) }
-        .ok_or_else(|| "桌面模式窗口状态初始化失败".to_string())?;
-    state.webview = Some(webview);
-
-    if config.maximized {
-        unsafe {
-            let _ = ShowWindow(hwnd, SW_MAXIMIZE);
-        }
-    } else {
-        unsafe {
-            let _ = ShowWindow(hwnd, SW_SHOW);
-        }
-    }
-    if config.fullscreen {
-        apply_fullscreen(hwnd, true);
-    }
-
-    let mut message = MSG::default();
-    loop {
-        let has_message = unsafe { GetMessageW(&mut message, None, 0, 0) };
-        if has_message.0 == 0 {
-            break;
-        }
-        unsafe {
-            let _ = TranslateMessage(&message);
-            DispatchMessageW(&message);
-        }
-    }
-
-    Ok(hwnd)
 }
 
 /// 组装桌面模式顶层窗口样式。
