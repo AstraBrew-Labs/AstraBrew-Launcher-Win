@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
+use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 
 use crate::core::settings::git::{GitMirrorNode, GitNodeSelectMsg};
 use crate::core::settings::nodejs::{NodejsMirrorNode, NodejsNodeSelectMsg};
@@ -110,6 +111,44 @@ static AUTO_LAUNCH_CACHE: LazyLock<Mutex<AutoLaunchCache>> = LazyLock::new(|| {
     })
 });
 
+/// WebView 内存上限的最低值（MB）。
+const MIN_WEBVIEW_MEMORY_LIMIT_MB: u32 = 1024;
+/// WebView 内存上限的默认目标值（MB）。
+const DEFAULT_WEBVIEW_MEMORY_LIMIT_MB: u32 = 2048;
+
+/// 读取当前设备总物理内存（MB）。
+fn detect_total_system_memory_mb() -> Option<u32> {
+    let mut memory_status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    memory_status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+
+    let ok = unsafe { GlobalMemoryStatusEx(&mut memory_status) } != 0;
+    if !ok {
+        return None;
+    }
+
+    let total_mb = memory_status.ullTotalPhys / 1024 / 1024;
+    Some(total_mb.min(u32::MAX as u64) as u32)
+}
+
+/// 计算当前机器允许设置的 WebView 内存上限（MB）。
+///
+/// 说明：
+/// - 用户要求给系统和其他进程预留 5% 内存
+/// - 因此 WebView 最大可设为总内存的 95%
+/// - 同时要求最低值不低于 1024MB
+/// - 当低内存设备上 95% 仍小于 1024MB 时，这里以 1024MB 作为保底值，避免出现不可设置的矛盾区间
+fn webview_memory_limit_cap_mb() -> u32 {
+    detect_total_system_memory_mb()
+        .map(|total_mb| ((total_mb as u64 * 95) / 100) as u32)
+        .map(|cap_mb| cap_mb.max(MIN_WEBVIEW_MEMORY_LIMIT_MB))
+        .unwrap_or(DEFAULT_WEBVIEW_MEMORY_LIMIT_MB.max(MIN_WEBVIEW_MEMORY_LIMIT_MB))
+}
+
+/// WebView 内存上限默认值。
+fn default_webview_memory_limit_mb() -> u32 {
+    DEFAULT_WEBVIEW_MEMORY_LIMIT_MB.min(webview_memory_limit_cap_mb())
+}
+
 /// 当前激活的 SillyTavern 实例
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct CurrentInstance {
@@ -156,6 +195,9 @@ pub struct SettingsState {
     /// 桌面模式：启动 WebView 后自动隐藏启动器界面
     #[serde(default)]
     pub auto_hide_launcher_when_webview_opens: bool,
+    /// 桌面模式：WebView 可使用的内存上限（MB）
+    #[serde(default = "default_webview_memory_limit_mb")]
+    pub webview_memory_limit_mb: u32,
     /// 桌面模式：酒馆导出文件的默认保存路径
     #[serde(default = "default_export_path")]
     pub tavern_export_path: String,
@@ -309,6 +351,7 @@ impl Default for SettingsState {
             auto_open_devtools_on_webview_start: false,
             auto_maximize_webview_on_start: true,
             auto_hide_launcher_when_webview_opens: false,
+            webview_memory_limit_mb: default_webview_memory_limit_mb(),
             tavern_export_path: default_export_path(),
             show_startup_command: false,
             npm_registry: NpmRegistry::default(),
@@ -354,11 +397,33 @@ impl Default for SettingsState {
 }
 
 impl SettingsState {
+    /// 获取当前设备总内存（MB）。
+    pub fn total_system_memory_mb() -> Option<u32> {
+        detect_total_system_memory_mb()
+    }
+
+    /// 获取当前机器允许的 WebView 内存上限（MB）。
+    pub fn webview_memory_limit_cap_mb() -> u32 {
+        webview_memory_limit_cap_mb()
+    }
+
+    /// 获取当前实际生效的 WebView 内存上限（MB）。
+    pub fn effective_webview_memory_limit_mb(&self) -> u32 {
+        self.webview_memory_limit_mb
+            .clamp(MIN_WEBVIEW_MEMORY_LIMIT_MB, Self::webview_memory_limit_cap_mb())
+    }
+
+    /// 规范化会影响运行时行为的设置值，避免旧配置或手工编辑配置导致越界。
+    fn sanitize_runtime_settings(&mut self) {
+        self.webview_memory_limit_mb = self.effective_webview_memory_limit_mb();
+    }
+
     pub fn load() -> Self {
         let path = utils::app_paths().settings_file();
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(state) = serde_json::from_str(&content) {
+                if let Ok(mut state) = serde_json::from_str::<Self>(&content) {
+                    state.sanitize_runtime_settings();
                     return state;
                 }
             }
@@ -369,11 +434,13 @@ impl SettingsState {
     }
 
     pub fn save(&self) {
+        let mut state = self.clone();
+        state.sanitize_runtime_settings();
         let path = utils::app_paths().settings_file();
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        if let Ok(content) = serde_json::to_string_pretty(self) {
+        if let Ok(content) = serde_json::to_string_pretty(&state) {
             let _ = fs::write(path, content);
         }
     }
@@ -2430,6 +2497,38 @@ pub fn render(
                                     ui.add(crate::ui::switch::toggle(
                                         &mut state.auto_hide_launcher_when_webview_opens,
                                     ));
+                                },
+                            );
+                            ui.add_space(10.0);
+
+                            let total_memory_mb = SettingsState::total_system_memory_mb();
+                            let max_memory_limit_mb = SettingsState::webview_memory_limit_cap_mb();
+                            state.webview_memory_limit_mb = state
+                                .webview_memory_limit_mb
+                                .clamp(MIN_WEBVIEW_MEMORY_LIMIT_MB, max_memory_limit_mb);
+                            let memory_limit_desc = if let Some(total_mb) = total_memory_mb {
+                                lang::t("desktop_memory_limit_desc", &state.language)
+                                    .replace("{total_mb}", &total_mb.to_string())
+                                    .replace("{max_mb}", &max_memory_limit_mb.to_string())
+                            } else {
+                                lang::t("desktop_memory_limit_desc_fallback", &state.language)
+                                    .replace("{max_mb}", &max_memory_limit_mb.to_string())
+                            };
+                            setting_row(
+                                ui,
+                                egui_phosphor::regular::MEMORY,
+                                lang::t("desktop_memory_limit", &state.language),
+                                &memory_limit_desc,
+                                |ui| {
+                                    ui.add(
+                                        egui::DragValue::new(&mut state.webview_memory_limit_mb)
+                                            .range(
+                                                MIN_WEBVIEW_MEMORY_LIMIT_MB
+                                                    ..=max_memory_limit_mb,
+                                            )
+                                            .speed(32)
+                                            .suffix(" MB"),
+                                    );
                                 },
                             );
                             ui.add_space(10.0);

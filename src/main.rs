@@ -4,6 +4,11 @@
 use eframe::egui;
 use egui::{FontData, FontDefinitions, FontFamily};
 
+/// 控制台运行中的后台刷新节流间隔，避免主界面长期满帧重绘导致 CPU 占用过高。
+const ACTIVE_CONSOLE_REPAINT_INTERVAL_MS: u64 = 120;
+/// 其他后台任务的通用刷新节流间隔，兼顾进度可见性与空闲功耗。
+const BACKGROUND_TASK_REPAINT_INTERVAL_MS: u64 = 150;
+
 fn main() -> eframe::Result {
     let settings = pages::settings::SettingsState::load();
 
@@ -284,6 +289,7 @@ impl MyApp {
             env!("CARGO_PKG_VERSION"),
             env_mode_name
         );
+        let webview_memory_limit_mb = self.settings_state.effective_webview_memory_limit_mb();
 
         let webview = crate::core::desktop_webview::WebViewWindow::new(url.clone())
             .title("SillyTavern")
@@ -292,6 +298,9 @@ impl MyApp {
             .maximized(self.settings_state.auto_maximize_webview_on_start)
             .decorations(true)
             .devtools(self.settings_state.auto_open_devtools_on_webview_start)
+            .additional_browser_args(format!(
+                "--js-flags=--max-old-space-size={webview_memory_limit_mb}"
+            ))
             .runtime(runtime)
             .user_agent(user_agent)
             .export_path(export_path)
@@ -756,7 +765,9 @@ impl eframe::App for MyApp {
             crate::core::settings::github_proxy::NodeLoadState::Loading
         ) || crate::core::network::is_github_multi_test_in_progress()
         {
-            ctx.request_repaint();
+            ctx.request_repaint_after(std::time::Duration::from_millis(
+                BACKGROUND_TASK_REPAINT_INTERVAL_MS,
+            ));
         }
 
         // 每帧同步酒馆配置页的数据模式 & 实例 & 全局路径 & 代理设置
@@ -828,17 +839,23 @@ impl eframe::App for MyApp {
             || self.console_state.status == pages::console::ConsoleStatus::Starting
             || self.console_state.status == pages::console::ConsoleStatus::Stopping
         {
-            ctx.request_repaint();
+            ctx.request_repaint_after(std::time::Duration::from_millis(
+                ACTIVE_CONSOLE_REPAINT_INTERVAL_MS,
+            ));
         }
 
         // 在线下载中持续重绘
         if self.version_manage_state.is_downloading {
-            ctx.request_repaint();
+            ctx.request_repaint_after(std::time::Duration::from_millis(
+                BACKGROUND_TASK_REPAINT_INTERVAL_MS,
+            ));
         }
 
         // 酒馆配置下载中持续重绘
         if self.tavern_config_ui.gen_config_status.is_downloading() {
-            ctx.request_repaint();
+            ctx.request_repaint_after(std::time::Duration::from_millis(
+                BACKGROUND_TASK_REPAINT_INTERVAL_MS,
+            ));
         }
 
         // 异步全局检测：实例路径是否被手动删除（后台线程，每 5s 一次，不卡 UI）

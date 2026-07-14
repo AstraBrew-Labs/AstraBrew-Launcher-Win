@@ -53,6 +53,20 @@ const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
 /// WebView 用户数据目录名称。
 const WEBVIEW_USER_DATA_DIR: &str = "desktop-webview";
+/// WebView2 默认附加启动参数。
+///
+/// 这里优先关闭桌面模式不需要的浏览器后台能力，尽量压低额外进程数和常驻内存占用。
+const DEFAULT_WEBVIEW_BROWSER_ARGS: &str = concat!(
+    "--disable-extensions ",
+    "--disable-component-extensions-with-background-pages ",
+    "--disable-background-networking ",
+    "--disable-component-update ",
+    "--disable-sync ",
+    "--disable-features=Translate,OptimizationHints,MediaRouter ",
+    "--no-default-browser-check ",
+    "--no-first-run ",
+    "--renderer-process-limit=2"
+);
 /// 桌面模式窗口图标 ICO 资源。
 const SILLYTAVERN_WINDOW_ICON: &[u8] = include_bytes!("../../icons/logo_st.ico");
 
@@ -296,6 +310,16 @@ impl WebViewWindow {
             .join(WEBVIEW_USER_DATA_DIR)
             .join(self.runtime.user_data_dir_name())
     }
+
+    /// 合并默认浏览器参数与外部追加参数。
+    fn effective_browser_args(&self) -> String {
+        match &self.additional_browser_args {
+            Some(args) if !args.trim().is_empty() => {
+                format!("{DEFAULT_WEBVIEW_BROWSER_ARGS} {}", args.trim())
+            }
+            _ => DEFAULT_WEBVIEW_BROWSER_ARGS.to_string(),
+        }
+    }
 }
 
 /// 运行中的桌面模式窗口句柄。
@@ -521,6 +545,8 @@ impl DesktopWebViewState {
                     let _ = SetForegroundWindow(hwnd);
                 },
                 WebViewCommand::Close => unsafe {
+                    // 先主动释放 WebView，再销毁窗口，避免内存占用拖到消息循环退出后才回收。
+                    self.webview.take();
                     let _ = DestroyWindow(hwnd);
                 },
                 WebViewCommand::SetFullscreen(enabled) => {
@@ -837,6 +863,8 @@ extern "system" fn desktop_webview_wndproc(
         }
         WM_DESTROY => {
             if let Some(state) = unsafe { desktop_webview_state(hwnd) } {
+                // 关闭按钮直接销毁窗口时，也要确保 WebView 在退出消息循环前尽早释放。
+                state.webview.take();
                 state.mark_closed();
                 state.fire_close_callback_once();
             }
@@ -877,9 +905,8 @@ fn build_webview(window: &impl HasWindowHandle, config: &WebViewWindow) -> Resul
         builder = builder.with_user_agent(&user_agent);
     }
 
-    if let Some(args) = &config.additional_browser_args {
-        builder = builder.with_additional_browser_args(args);
-    }
+    let browser_args = config.effective_browser_args();
+    builder = builder.with_additional_browser_args(&browser_args);
 
     builder = builder
         .with_ipc_handler(move |request| {
