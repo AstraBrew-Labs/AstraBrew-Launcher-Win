@@ -398,6 +398,7 @@ impl Pm2Manager {
         &self,
         working_dir: &str,
         data_mode: &TavernDataMode,
+        global_data_path: Option<&str>,
         http_proxy: Option<&str>,
         github_proxy_url: Option<&str>,
         is_desktop_mode: bool,
@@ -412,6 +413,7 @@ impl Pm2Manager {
         let start_config = self.write_start_config(
             working_dir,
             data_mode,
+            global_data_path,
             http_proxy,
             github_proxy_url,
             is_desktop_mode,
@@ -672,6 +674,7 @@ impl Pm2Manager {
         &self,
         working_dir: &str,
         data_mode: &TavernDataMode,
+        global_data_path: Option<&str>,
         http_proxy: Option<&str>,
         github_proxy_url: Option<&str>,
         is_desktop_mode: bool,
@@ -688,11 +691,24 @@ impl Pm2Manager {
 
         let mut script_args: Vec<String> = Vec::new();
         if *data_mode == TavernDataMode::Global {
-            let paths = crate::utils::app_paths();
             script_args.push("--configPath".to_string());
-            script_args.push(paths.global_tavern_config_file().to_string_lossy().to_string());
+            script_args.push(
+                crate::core::settings::tavern::TavernConfig::resolve_path(
+                    crate::core::settings::tavern::ConfigMode::Global,
+                    None,
+                    global_data_path,
+                )
+                .to_string_lossy()
+                .to_string(),
+            );
             script_args.push("--dataRoot".to_string());
-            script_args.push(paths.default_global_data_dir().to_string_lossy().to_string());
+            script_args.push(
+                crate::core::settings::tavern::TavernConfig::resolve_global_data_dir(
+                    global_data_path,
+                )
+                .to_string_lossy()
+                .to_string(),
+            );
         }
 
         if let Some(proxy) = http_proxy {

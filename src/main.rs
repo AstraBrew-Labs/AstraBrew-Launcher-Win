@@ -979,7 +979,7 @@ impl eframe::App for MyApp {
                             _ => String::new(),
                         }
                     });
-                    
+
                     // 仅在有选中实例且尚未加载时触发加载
                     let has_instance = instance_path.as_ref().map_or(false, |p| !p.is_empty());
                     if has_instance
@@ -1005,8 +1005,11 @@ impl eframe::App for MyApp {
                         }
                     }).unwrap_or_default();
 
-                    self.resource_manage_state.instance_path = instance_path;
-                    self.resource_manage_state.data_mode = self.settings_state.data_mode.clone();
+                    self.resource_manage_state.sync_context(
+                        instance_path,
+                        self.settings_state.data_mode.clone(),
+                        self.settings_state.global_data_path.clone(),
+                    );
 
                     // 如果角色卡列表为空且没在加载，触发自动加载
                     if self.resource_manage_state.characters.is_empty() && !self.resource_manage_state.is_loading {

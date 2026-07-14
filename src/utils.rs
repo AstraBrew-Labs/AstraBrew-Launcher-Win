@@ -1277,11 +1277,6 @@ impl AppPaths {
         self.sillytavern_dir().join("config.yaml")
     }
 
-    /// 全局酒馆配置文件: `root/data/sillytavern/data/config.yaml`
-    pub fn global_tavern_config_file(&self) -> PathBuf {
-        self.data.join("sillytavern").join("data").join("config.yaml")
-    }
-
     /// 默认全局数据目录: `root/data/sillytavern/data/`
     pub fn default_global_data_dir(&self) -> PathBuf {
         self.data.join("sillytavern").join("data")

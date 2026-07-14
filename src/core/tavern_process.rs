@@ -14,6 +14,7 @@
 //! - GitHub 代理：通过 --import 预加载拦截器脚本，重写 GitHub URL
 
 use crate::core::settings::env_detect;
+use crate::core::settings::tavern::{ConfigMode, TavernConfig};
 use crate::pages::settings::{EnvSource, TavernDataMode};
 use std::io::{BufRead, BufReader};
 use std::os::windows::process::CommandExt;
@@ -229,6 +230,7 @@ pub fn normalize_proxy_url(proxy: &str) -> String {
 pub fn build_startup_command(
     _working_dir: &str,
     data_mode: &TavernDataMode,
+    global_data_path: Option<&str>,
     http_proxy: Option<&str>,
     _github_proxy_url: Option<&str>,
     is_desktop_mode: bool,
@@ -242,14 +244,13 @@ pub fn build_startup_command(
     }
 
     if *data_mode == TavernDataMode::Global {
-        let paths = crate::utils::app_paths();
         parts.push(format!(
             "--configPath {}",
-            paths.global_tavern_config_file().display()
+            TavernConfig::resolve_path(ConfigMode::Global, None, global_data_path).display()
         ));
         parts.push(format!(
             "--dataRoot {}",
-            paths.default_global_data_dir().display()
+            TavernConfig::resolve_global_data_dir(global_data_path).display()
         ));
     }
 
@@ -297,6 +298,7 @@ impl TavernProcess {
         &mut self,
         working_dir: &str,
         data_mode: &TavernDataMode,
+        global_data_path: Option<&str>,
         http_proxy: Option<&str>,
         github_proxy_url: Option<&str>,
         is_desktop_mode: bool,
@@ -327,18 +329,15 @@ impl TavernProcess {
 
         // 全局数据模式 → 附加配置路径参数
         if *data_mode == TavernDataMode::Global {
-            let paths = crate::utils::app_paths();
             cmd.arg("--configPath");
             cmd.arg(
-                paths
-                    .global_tavern_config_file()
+                TavernConfig::resolve_path(ConfigMode::Global, None, global_data_path)
                     .to_string_lossy()
                     .to_string(),
             );
             cmd.arg("--dataRoot");
             cmd.arg(
-                paths
-                    .default_global_data_dir()
+                TavernConfig::resolve_global_data_dir(global_data_path)
                     .to_string_lossy()
                     .to_string(),
             );

@@ -3,9 +3,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
+use crate::core::settings::tavern::TavernConfig;
 use crate::lang;
 use crate::pages::settings::{Language, TavernDataMode};
-use crate::utils;
 
 // ============================================================================
 // Tab 枚举
@@ -172,6 +172,8 @@ pub struct ResourceManageState {
     // 实例信息
     pub instance_path: String,
     pub data_mode: TavernDataMode,
+    pub global_data_path: Option<String>,
+    last_data_key: String,
     // 缓存信息：用于检测路径/模式变化时触发重新加载
     cached_chats_path: String,
     cached_chats_mode: TavernDataMode,
@@ -214,6 +216,8 @@ impl Default for ResourceManageState {
             is_loading_chats: false,
             instance_path: String::new(),
             data_mode: TavernDataMode::Current,
+            global_data_path: None,
+            last_data_key: String::new(),
             cached_chats_path: String::new(),
             cached_chats_mode: TavernDataMode::Current,
             cached_presets_path: String::new(),
@@ -242,29 +246,67 @@ impl ResourceManageState {
         Self::default()
     }
 
+    /// 同步当前资源页的上下文；当实例、数据模式或全局数据目录变化时自动清空缓存。
+    pub fn sync_context(
+        &mut self,
+        instance_path: String,
+        data_mode: TavernDataMode,
+        global_data_path: Option<String>,
+    ) {
+        let new_key = Self::build_context_key(
+            &instance_path,
+            &data_mode,
+            global_data_path.as_deref(),
+        );
+        let should_refresh = !self.last_data_key.is_empty() && self.last_data_key != new_key;
+
+        self.instance_path = instance_path;
+        self.data_mode = data_mode;
+        self.global_data_path = global_data_path;
+
+        if should_refresh {
+            self.refresh();
+        }
+
+        self.last_data_key = new_key;
+    }
+
     pub fn has_instance(&self) -> bool {
         !self.instance_path.is_empty()
     }
 
-    /// 获取角色卡目录路径
-    pub fn characters_dir(&self) -> Option<PathBuf> {
+    /// 生成当前资源上下文的唯一标识，用于判断是否需要重新加载。
+    fn build_context_key(
+        instance_path: &str,
+        data_mode: &TavernDataMode,
+        global_data_path: Option<&str>,
+    ) -> String {
+        let mode = match data_mode {
+            TavernDataMode::Current => "current",
+            TavernDataMode::Global => "global",
+        };
+        let global_path = global_data_path.unwrap_or_default();
+        format!("{}|{}|{}", instance_path, mode, global_path)
+    }
+
+    /// 获取当前生效的用户数据根目录。
+    fn user_data_root(&self) -> Option<PathBuf> {
         if self.instance_path.is_empty() {
             return None;
         }
-        match self.data_mode {
-            TavernDataMode::Current => Some(
-                PathBuf::from(&self.instance_path)
-                    .join("data")
-                    .join("default-user")
-                    .join("characters"),
-            ),
-            TavernDataMode::Global => Some(
-                utils::app_paths()
-                    .default_global_data_dir()
-                    .join("default-user")
-                    .join("characters"),
-            ),
-        }
+
+        Some(match self.data_mode {
+            TavernDataMode::Current => PathBuf::from(&self.instance_path).join("data"),
+            TavernDataMode::Global => {
+                TavernConfig::resolve_global_data_dir(self.global_data_path.as_deref())
+            }
+        })
+    }
+
+    /// 获取角色卡目录路径
+    pub fn characters_dir(&self) -> Option<PathBuf> {
+        self.user_data_root()
+            .map(|path| path.join("default-user").join("characters"))
     }
 
     /// 加载角色卡列表
@@ -383,23 +425,8 @@ impl ResourceManageState {
 
     /// 获取世界书目录路径
     pub fn worlds_dir(&self) -> Option<PathBuf> {
-        if self.instance_path.is_empty() {
-            return None;
-        }
-        match self.data_mode {
-            TavernDataMode::Current => Some(
-                PathBuf::from(&self.instance_path)
-                    .join("data")
-                    .join("default-user")
-                    .join("worlds"),
-            ),
-            TavernDataMode::Global => Some(
-                utils::app_paths()
-                    .default_global_data_dir()
-                    .join("default-user")
-                    .join("worlds"),
-            ),
-        }
+        self.user_data_root()
+            .map(|path| path.join("default-user").join("worlds"))
     }
 
     /// 加载世界书列表
@@ -771,44 +798,14 @@ impl ResourceManageState {
 
     /// 获取预设目录路径
     pub fn presets_dir(&self) -> Option<PathBuf> {
-        if self.instance_path.is_empty() {
-            return None;
-        }
-        match self.data_mode {
-            TavernDataMode::Current => Some(
-                PathBuf::from(&self.instance_path)
-                    .join("data")
-                    .join("default-user")
-                    .join("OpenAI Settings"),
-            ),
-            TavernDataMode::Global => Some(
-                utils::app_paths()
-                    .default_global_data_dir()
-                    .join("default-user")
-                    .join("OpenAI Settings"),
-            ),
-        }
+        self.user_data_root()
+            .map(|path| path.join("default-user").join("OpenAI Settings"))
     }
 
     /// 获取聊天记录目录路径
     fn chats_dir(&self) -> Option<PathBuf> {
-        if self.instance_path.is_empty() {
-            return None;
-        }
-        match self.data_mode {
-            TavernDataMode::Current => Some(
-                PathBuf::from(&self.instance_path)
-                    .join("data")
-                    .join("default-user")
-                    .join("chats"),
-            ),
-            TavernDataMode::Global => Some(
-                utils::app_paths()
-                    .default_global_data_dir()
-                    .join("default-user")
-                    .join("chats"),
-            ),
-        }
+        self.user_data_root()
+            .map(|path| path.join("default-user").join("chats"))
     }
 
     /// 解析聊天记录文件名: "Seraphina - 2023-5-12 @21h 32m 29s 224ms.jsonl"

@@ -404,6 +404,7 @@ impl ConsoleState {
             let cmd = crate::core::tavern_process::build_startup_command(
                 &self.instance_path,
                 &self.data_mode,
+                self.global_data_path.as_deref(),
                 proxy.as_deref(),
                 github_proxy.as_deref(),
                 self.is_desktop_mode || self.is_server_mode,
@@ -413,6 +414,7 @@ impl ConsoleState {
         match self.process.start(
             &self.instance_path,
             &self.data_mode,
+            self.global_data_path.as_deref(),
             proxy.as_deref(),
             github_proxy.as_deref(),
             self.is_desktop_mode || self.is_server_mode,
@@ -498,9 +500,22 @@ impl ConsoleState {
                 parts.push("--browserLaunchEnabled false".to_string());
             }
             if self.data_mode == TavernDataMode::Global {
-                let paths = crate::utils::app_paths();
-                parts.push(format!("--configPath {}", paths.global_tavern_config_file().display()));
-                parts.push(format!("--dataRoot {}", paths.default_global_data_dir().display()));
+                parts.push(format!(
+                    "--configPath {}",
+                    crate::core::settings::tavern::TavernConfig::resolve_path(
+                        crate::core::settings::tavern::ConfigMode::Global,
+                        None,
+                        self.global_data_path.as_deref(),
+                    )
+                    .display()
+                ));
+                parts.push(format!(
+                    "--dataRoot {}",
+                    crate::core::settings::tavern::TavernConfig::resolve_global_data_dir(
+                        self.global_data_path.as_deref(),
+                    )
+                    .display()
+                ));
             }
             if let Some(ref pd) = proxy_display {
                 parts.push("--requestProxyEnabled true".to_string());
@@ -524,12 +539,14 @@ impl ConsoleState {
         let pm2 = Pm2Manager::new();
         let instance_path = self.instance_path.clone();
         let data_mode = self.data_mode.clone();
+        let global_data_path = self.global_data_path.clone();
         let env_mode = self.env_mode;
         let is_desktop = self.is_desktop_mode || self.is_server_mode;
         std::thread::spawn(move || {
             let result = pm2.start(
                 &instance_path,
                 &data_mode,
+                global_data_path.as_deref(),
                 proxy.as_deref(),
                 github_proxy.as_deref(),
                 is_desktop,
@@ -994,6 +1011,7 @@ impl ConsoleState {
                     let cmd = crate::core::tavern_process::build_startup_command(
                         &self.instance_path,
                         &self.data_mode,
+                        self.global_data_path.as_deref(),
                         proxy.as_deref(),
                         github_proxy.as_deref(),
                         self.is_desktop_mode || self.is_server_mode,
@@ -1003,6 +1021,7 @@ impl ConsoleState {
                 match self.process.start(
                     &self.instance_path,
                     &self.data_mode,
+                    self.global_data_path.as_deref(),
                     proxy.as_deref(),
                     github_proxy.as_deref(),
                     self.is_desktop_mode || self.is_server_mode,

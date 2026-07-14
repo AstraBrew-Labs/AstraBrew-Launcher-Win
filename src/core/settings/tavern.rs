@@ -906,6 +906,20 @@ impl TavernConfig {
         utils::app_paths().sillytavern_dir()
     }
 
+    /// 解析全局数据根目录。
+    ///
+    /// 优先使用设置页中的自定义目录；如果未设置或值为空，则回退到程序默认目录。
+    pub fn resolve_global_data_dir(global_data_path: Option<&str>) -> PathBuf {
+        if let Some(custom) = global_data_path
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        {
+            PathBuf::from(custom)
+        } else {
+            utils::app_paths().default_global_data_dir()
+        }
+    }
+
     /// 根据数据模式和实例信息解析 config.yaml 路径
     pub fn resolve_path(mode: ConfigMode, instance: Option<&InstanceInfo>, global_data_path: Option<&str>) -> PathBuf {
         let paths = utils::app_paths();
@@ -923,13 +937,7 @@ impl TavernConfig {
                 }
                 paths.tavern_config_file()
             }
-            ConfigMode::Global => {
-                if let Some(custom) = global_data_path {
-                    PathBuf::from(custom).join("config.yaml")
-                } else {
-                    paths.global_tavern_config_file()
-                }
-            }
+            ConfigMode::Global => Self::resolve_global_data_dir(global_data_path).join("config.yaml"),
         }
     }
 

@@ -318,9 +318,20 @@ fn setup_proxy(settings: &SettingsState, tx: &Sender<ProcessMsg>) -> Option<Stri
     }
 }
 
-/// 获取全局配置文件的绝对路径
-fn get_global_config_path() -> PathBuf {
-    crate::utils::app_paths().global_tavern_config_file()
+/// 获取当前生效的全局数据根目录。
+fn get_global_data_root(settings: &SettingsState) -> PathBuf {
+    crate::core::settings::tavern::TavernConfig::resolve_global_data_dir(
+        settings.global_data_path.as_deref(),
+    )
+}
+
+/// 获取当前生效的全局配置文件路径。
+fn get_global_config_path(settings: &SettingsState) -> PathBuf {
+    crate::core::settings::tavern::TavernConfig::resolve_path(
+        crate::core::settings::tavern::ConfigMode::Global,
+        None,
+        settings.global_data_path.as_deref(),
+    )
 }
 
 /// 通过 PM2 启动酒馆
@@ -359,15 +370,23 @@ fn start_with_pm2(
 
     // 全局数据模式 → 传递 configPath
     if settings.data_mode == TavernDataMode::Global {
-        let config_path = get_global_config_path();
+        let config_path = get_global_config_path(settings);
+        let data_root = get_global_data_root(settings);
         let path_str = config_path.to_string_lossy().replace("\\\\", "\\");
+        let data_root_str = data_root.to_string_lossy().replace("\\\\", "\\");
         let _ = tx.send(ProcessMsg::Log(format!(
             "[系统] 全局数据模式，配置文件: {}",
             path_str
         )));
+        let _ = tx.send(ProcessMsg::Log(format!(
+            "[系统] 全局数据模式，数据目录: {}",
+            data_root_str
+        )));
         args.push("--".to_string());
         args.push("--configPath".to_string());
         args.push(path_str.to_string());
+        args.push("--dataRoot".to_string());
+        args.push(data_root_str);
     }
 
     let mut cmd = build_command(&pm2_path, &args);
@@ -422,14 +441,22 @@ fn start_direct(
     let mut args = vec!["server.js".to_string()];
 
     if settings.data_mode == TavernDataMode::Global {
-        let config_path = get_global_config_path();
+        let config_path = get_global_config_path(settings);
+        let data_root = get_global_data_root(settings);
         let path_str = config_path.to_string_lossy().replace("\\\\", "\\");
+        let data_root_str = data_root.to_string_lossy().replace("\\\\", "\\");
         let _ = tx.send(ProcessMsg::Log(format!(
             "[系统] 全局数据模式，配置文件: {}",
             path_str
         )));
+        let _ = tx.send(ProcessMsg::Log(format!(
+            "[系统] 全局数据模式，数据目录: {}",
+            data_root_str
+        )));
         args.push("--configPath".to_string());
         args.push(path_str);
+        args.push("--dataRoot".to_string());
+        args.push(data_root_str);
     }
 
     let mut cmd = build_command(node_path, &args);

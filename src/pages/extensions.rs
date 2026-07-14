@@ -183,7 +183,7 @@ impl ExtensionManageState {
 
         thread::spawn(move || {
             let mut results = Vec::new();
-            
+
             // 官方扩展目录
             let official_dir = base_path.join("public").join("scripts").join("extensions");
             // 第三方扩展目录
