@@ -4,6 +4,7 @@
 //! 为了便于后续扩展，这里采用 Builder 风格封装，并保留窗口控制句柄。
 
 use std::ffi::c_void;
+use std::io::Cursor;
 use std::num::NonZeroIsize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,6 +18,7 @@ use webview2_com::{
         ICoreWebView2EnvironmentOptions,
     },
 };
+use ico::IconDir;
 use windows::Win32::Foundation::{E_POINTER, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, HBRUSH, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
@@ -24,12 +26,13 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
-    DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, IDC_ARROW,
-    LoadCursorW, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SW_MAXIMIZE, SW_RESTORE,
-    SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, WM_APP,
-    WM_CLOSE, WM_DESTROY, WM_MOVE, WM_NCCREATE, WM_NCDESTROY, WM_SIZE, WNDCLASSW,
+    CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateIconFromResourceEx,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW,
+    GetWindowLongPtrW, HICON, ICON_BIG, ICON_SMALL, IDC_ARROW, LoadCursorW, MSG, PostMessageW,
+    PostQuitMessage, RegisterClassW, SW_MAXIMIZE, SW_RESTORE, SW_SHOW, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, TranslateMessage, WM_APP, WM_CLOSE, WM_DESTROY, WM_MOVE, WM_NCCREATE,
+    WM_NCDESTROY, WM_SETICON, WM_SIZE, WNDCLASSW,
     WS_CAPTION, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_APPWINDOW, WS_MAXIMIZEBOX,
     WS_MINIMIZEBOX, WS_OVERLAPPED, WS_POPUP, WS_SIZEBOX, WS_SYSMENU, WINDOW_EX_STYLE,
     WINDOW_STYLE,
@@ -50,6 +53,8 @@ const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
 /// WebView 用户数据目录名称。
 const WEBVIEW_USER_DATA_DIR: &str = "desktop-webview";
+/// 桌面模式窗口图标 ICO 资源。
+const SILLYTAVERN_WINDOW_ICON: &[u8] = include_bytes!("../../icons/logo_st.ico");
 
 /// 导出路径，下载处理器会优先把文件保存到这里。
 static EXPORT_PATH: LazyLock<Mutex<PathBuf>> = LazyLock::new(|| {
@@ -542,11 +547,57 @@ struct DesktopWebViewCreateParams {
 /// 已注册的桌面模式窗口类 Atom。
 static DESKTOP_WEBVIEW_WINDOW_CLASS: OnceLock<Result<u16, String>> = OnceLock::new();
 
+/// 桌面模式大小图标句柄。
+#[derive(Clone, Copy)]
+struct DesktopWindowIcons {
+    big: HICON,
+    small: HICON,
+}
+
 /// 获取并注册桌面模式窗口类。
 fn desktop_webview_window_class() -> Result<u16, String> {
     DESKTOP_WEBVIEW_WINDOW_CLASS
         .get_or_init(register_desktop_webview_window_class)
         .clone()
+}
+
+/// 获取桌面模式窗口图标。
+fn desktop_window_icons() -> Result<DesktopWindowIcons, String> {
+    load_desktop_window_icons()
+}
+
+/// 从内嵌 ICO 资源创建大小图标。
+fn load_desktop_window_icons() -> Result<DesktopWindowIcons, String> {
+    let icon_dir = IconDir::read(Cursor::new(SILLYTAVERN_WINDOW_ICON))
+        .map_err(|err| format!("解析桌面模式图标失败: {err}"))?;
+    let big = load_icon_from_icon_dir(&icon_dir, 48, "大图标")?;
+    let small = load_icon_from_icon_dir(&icon_dir, 16, "小图标")?;
+    Ok(DesktopWindowIcons { big, small })
+}
+
+/// 从 ICO 中挑选最合适尺寸的图标帧，并转换成 Win32 图标句柄。
+fn load_icon_from_icon_dir(icon_dir: &IconDir, target_size: u32, label: &str) -> Result<HICON, String> {
+    let entry = icon_dir
+        .entries()
+        .iter()
+        .min_by_key(|entry| {
+            let width = entry.width();
+            let score = width.abs_diff(target_size);
+            (score, width)
+        })
+        .ok_or_else(|| format!("桌面模式{label}不存在可用图标帧"))?;
+
+    unsafe {
+        CreateIconFromResourceEx(
+            entry.data(),
+            true,
+            0x0003_0000,
+            target_size as i32,
+            target_size as i32,
+            Default::default(),
+        )
+        .map_err(|err| format!("加载桌面模式{label}失败: {err}"))
+    }
 }
 
 /// 注册桌面模式原生窗口类。
@@ -556,12 +607,14 @@ fn register_desktop_webview_window_class() -> Result<u16, String> {
             .map(HINSTANCE::from)
             .map_err(|err| format!("获取模块句柄失败: {err}"))?
     };
+    let icons = desktop_window_icons()?;
 
     let class_name = HSTRING::from("AstraBrewDesktopWebViewWindow");
     let window_class = WNDCLASSW {
         style: CS_HREDRAW | CS_VREDRAW,
         hCursor: unsafe { LoadCursorW(None, IDC_ARROW).unwrap_or_default() },
         hInstance: module,
+        hIcon: icons.big,
         lpszClassName: PCWSTR(class_name.as_ptr()),
         lpfnWndProc: Some(desktop_webview_wndproc),
         hbrBackground: HBRUSH(std::ptr::null_mut()),
@@ -589,6 +642,7 @@ fn run_webview_window_thread(
             .map(HINSTANCE::from)
             .map_err(|err| format!("获取模块句柄失败: {err}"))?
     };
+    let icons = desktop_window_icons()?;
 
     let state = Box::new(DesktopWebViewState::new(
         command_rx,
@@ -621,6 +675,21 @@ fn run_webview_window_thread(
     if hwnd.0.is_null() {
         closed.store(true, Ordering::SeqCst);
         return Err("创建桌面模式原生窗口失败".into());
+    }
+
+    unsafe {
+        let _ = SendMessageW(
+            hwnd,
+            WM_SETICON,
+            Some(WPARAM(ICON_BIG as usize)),
+            Some(LPARAM(icons.big.0 as isize)),
+        );
+        let _ = SendMessageW(
+            hwnd,
+            WM_SETICON,
+            Some(WPARAM(ICON_SMALL as usize)),
+            Some(LPARAM(icons.small.0 as isize)),
+        );
     }
 
     let native_window = NativeWindowHandle::new(hwnd)?;

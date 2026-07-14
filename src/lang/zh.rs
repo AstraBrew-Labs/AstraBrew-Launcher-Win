@@ -95,6 +95,8 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "desktop_mode_desc" => "用 Webview 打开酒馆页面",
         "desktop_auto_stop" => "关闭酒馆窗口自动停止服务",
         "desktop_auto_stop_desc" => "关闭 Webview 窗口时，自动停止正在运行的酒馆服务",
+        "desktop_auto_devtools" => "启动 Webview 时自动打开 DevTools",
+        "desktop_auto_devtools_desc" => "仅在桌面模式下生效，启动 Webview 窗口时自动打开开发者工具",
         "desktop_mode_need_webview2" => "桌面模式依赖 WebView2 运行环境，请先安装",
         "desktop_export_path" => "导出保存目录",
         "desktop_export_path_desc" => "在酒馆页面里点击导出，文件自动保存的目录",

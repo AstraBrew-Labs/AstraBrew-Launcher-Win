@@ -258,12 +258,13 @@ dependencies = [
 
 [[package]]
 name = "astrabrew-launcher-win"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "eframe",
  "egui",
  "egui-phosphor",
  "egui_extras",
+ "ico",
  "jwalk",
  "qrcode",
  "reqwest",
@@ -2401,6 +2402,16 @@ dependencies = [
  "tower-service",
  "tracing",
  "windows-registry",
+]
+
+[[package]]
+name = "ico"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e795dff5605e0f04bff85ca41b51a96b83e80b281e96231bcaaf1ac35103371"
+dependencies = [
+ "byteorder",
+ "png 0.17.16",
 ]
 
 [[package]]

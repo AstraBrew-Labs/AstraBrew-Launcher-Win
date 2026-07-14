@@ -147,6 +147,9 @@ pub struct SettingsState {
     /// 桌面模式：关闭 WebView 窗口时自动停止酒馆服务（默认开启）
     #[serde(default = "default_auto_stop")]
     pub auto_stop_tavern_on_webview_close: bool,
+    /// 桌面模式：启动 WebView 时自动打开 DevTools
+    #[serde(default)]
+    pub auto_open_devtools_on_webview_start: bool,
     /// 桌面模式：酒馆导出文件的默认保存路径
     #[serde(default = "default_export_path")]
     pub tavern_export_path: String,
@@ -297,6 +300,7 @@ impl Default for SettingsState {
             auto_start: false,
             allow_tavern_background: false,
             auto_stop_tavern_on_webview_close: true,
+            auto_open_devtools_on_webview_start: false,
             tavern_export_path: default_export_path(),
             show_startup_command: false,
             npm_registry: NpmRegistry::default(),
@@ -2379,6 +2383,19 @@ pub fn render(
                                 lang::t("desktop_auto_stop_desc", &state.language),
                                 |ui| {
                                     ui.add(crate::ui::switch::toggle(&mut state.auto_stop_tavern_on_webview_close));
+                                },
+                            );
+                            ui.add_space(10.0);
+
+                            setting_row(
+                                ui,
+                                egui_phosphor::regular::CODE,
+                                lang::t("desktop_auto_devtools", &state.language),
+                                lang::t("desktop_auto_devtools_desc", &state.language),
+                                |ui| {
+                                    ui.add(crate::ui::switch::toggle(
+                                        &mut state.auto_open_devtools_on_webview_start,
+                                    ));
                                 },
                             );
                             ui.add_space(10.0);

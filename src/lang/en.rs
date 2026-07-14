@@ -95,6 +95,8 @@ pub fn translate<'a>(key: &'a str) -> &'a str {
         "desktop_mode_desc" => "Open Tavern page with WebView",
         "desktop_auto_stop" => "Stop service when closing tavern window",
         "desktop_auto_stop_desc" => "Automatically stop the running tavern service when closing the WebView window",
+        "desktop_auto_devtools" => "Open DevTools when starting WebView",
+        "desktop_auto_devtools_desc" => "Only applies in desktop mode and automatically opens developer tools when the WebView window starts",
         "desktop_mode_need_webview2" => "Desktop mode requires WebView2 runtime, please install first",
         "desktop_export_path" => "Export save directory",
         "desktop_export_path_desc" => "Directory where files exported from the tavern page are automatically saved",

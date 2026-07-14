@@ -268,7 +268,7 @@ impl MyApp {
             .size(1280, 720)
             .resizable(true)
             .decorations(true)
-            .devtools(cfg!(debug_assertions))
+            .devtools(self.settings_state.auto_open_devtools_on_webview_start)
             .runtime(runtime)
             .user_agent(user_agent)
             .export_path(export_path)
