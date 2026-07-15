@@ -5,12 +5,15 @@
 
 use std::ffi::c_void;
 use std::io::Cursor;
+use std::io::Write as _;
 use std::num::NonZeroIsize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, mpsc};
 use std::thread;
 
+use base64::Engine as _;
+use ico::IconDir;
 use webview2_com::{
     CoreWebView2EnvironmentOptions, CreateCoreWebView2EnvironmentCompletedHandler,
     Microsoft::Web::WebView2::Win32::{
@@ -18,24 +21,22 @@ use webview2_com::{
         ICoreWebView2EnvironmentOptions,
     },
 };
-use ico::IconDir;
 use windows::Win32::Foundation::{E_POINTER, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, HBRUSH, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
 };
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateIconFromResourceEx,
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW,
     GetWindowLongPtrW, HICON, ICON_BIG, ICON_SMALL, IDC_ARROW, LoadCursorW, MSG, PostMessageW,
     PostQuitMessage, RegisterClassW, SW_MAXIMIZE, SW_RESTORE, SW_SHOW, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
-    ShowWindow, TranslateMessage, WM_APP, WM_CLOSE, WM_DESTROY, WM_MOVE, WM_NCCREATE,
-    WM_NCDESTROY, WM_SETICON, WM_SIZE, WNDCLASSW,
-    WS_CAPTION, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_APPWINDOW, WS_MAXIMIZEBOX,
-    WS_MINIMIZEBOX, WS_OVERLAPPED, WS_POPUP, WS_SIZEBOX, WS_SYSMENU, WINDOW_EX_STYLE,
-    WINDOW_STYLE,
+    SWP_NOACTIVATE, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_DESTROY, WM_MOVE,
+    WM_NCCREATE, WM_NCDESTROY, WM_SETICON, WM_SIZE, WNDCLASSW, WS_CAPTION, WS_CLIPCHILDREN,
+    WS_CLIPSIBLINGS, WS_EX_APPWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_POPUP,
+    WS_SIZEBOX, WS_SYSMENU,
 };
 use windows::core::{Error as WindowsError, HSTRING, PCWSTR};
 use wry::WebView;
@@ -69,11 +70,74 @@ const DEFAULT_WEBVIEW_BROWSER_ARGS: &str = concat!(
 );
 /// 桌面模式窗口图标 ICO 资源。
 const SILLYTAVERN_WINDOW_ICON: &[u8] = include_bytes!("../../icons/logo_st.ico");
+/// 注入脚本通过 Wry IPC 发送导出文件时使用的消息类型。
+const DOWNLOAD_IPC_MESSAGE_TYPE: &str = "astrabrew-download";
+
+/// 捕获 SillyTavern / FileSaver.js 通过 Blob 或 Data URL 发起的导出。
+const BLOB_DOWNLOAD_BRIDGE_SCRIPT: &str = r#"
+(function () {
+    if (window.__astrabrewDownloadBridgeInstalled) return;
+    window.__astrabrewDownloadBridgeInstalled = true;
+
+    function isDownloadUrl(url) {
+        return typeof url === 'string' && (url.startsWith('blob:') || url.startsWith('data:'));
+    }
+
+    function download(url, filename) {
+        fetch(url)
+            .then(function (response) { return response.blob(); })
+            .then(function (blob) {
+                var reader = new FileReader();
+                reader.onloadend = function () {
+                    var result = typeof reader.result === 'string' ? reader.result : '';
+                    var separator = result.indexOf(',');
+                    if (separator < 0 || !window.ipc || typeof window.ipc.postMessage !== 'function') {
+                        console.error('AstraBrew export bridge is unavailable');
+                        return;
+                    }
+                    window.ipc.postMessage(JSON.stringify({
+                        type: 'astrabrew-download',
+                        filename: filename || 'download',
+                        base64: result.slice(separator + 1)
+                    }));
+                };
+                reader.readAsDataURL(blob);
+            })
+            .catch(function (error) { console.error('AstraBrew export failed:', error); });
+    }
+
+    window.addEventListener('click', function (event) {
+        var anchor = event.target && event.target.closest ? event.target.closest('a') : null;
+        if (anchor && isDownloadUrl(anchor.href)) {
+            event.preventDefault();
+            event.stopPropagation();
+            download(anchor.href, anchor.download || 'download');
+        }
+    }, true);
+
+    var originalClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+        if (isDownloadUrl(this.href)) {
+            download(this.href, this.download || 'download');
+            return;
+        }
+        return originalClick.apply(this, arguments);
+    };
+
+    var originalOpen = window.open;
+    window.open = function (url) {
+        if (isDownloadUrl(url)) {
+            download(url, 'download');
+            return null;
+        }
+        return originalOpen.apply(window, arguments);
+    };
+})();
+"#;
 
 /// 导出路径，下载处理器会优先把文件保存到这里。
-static EXPORT_PATH: LazyLock<Mutex<PathBuf>> = LazyLock::new(|| {
-    Mutex::new(crate::utils::app_paths().data.join("exports"))
-});
+static EXPORT_PATH: LazyLock<Mutex<PathBuf>> =
+    LazyLock::new(|| Mutex::new(crate::utils::app_paths().data.join("exports")));
 
 /// blob 下载结果通知队列，主线程可以按需轮询展示。
 pub static DOWNLOAD_NOTIFICATIONS: LazyLock<Mutex<Vec<String>>> =
@@ -296,6 +360,7 @@ impl WebViewWindow {
             "#,
             env!("CARGO_PKG_VERSION")
         )];
+        scripts.push(BLOB_DOWNLOAD_BRIDGE_SCRIPT.to_string());
         scripts.extend(self.init_scripts.iter().cloned());
         scripts.join("\n")
     }
@@ -331,7 +396,7 @@ pub struct DesktopWebView {
     title: String,
     /// 保留 URL 字段，便于后续扩展重定向检测与状态同步。
     url: String,
-    _thread: thread::JoinHandle<()>,
+    thread: Option<thread::JoinHandle<()>>,
 }
 
 #[allow(dead_code)]
@@ -409,7 +474,12 @@ impl DesktopWebView {
         }
         if self.command_tx.send(command).is_ok() {
             unsafe {
-                let _ = PostMessageW(Some(self.hwnd), WM_DESKTOP_WEBVIEW_COMMAND, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(
+                    Some(self.hwnd),
+                    WM_DESKTOP_WEBVIEW_COMMAND,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
             }
         }
     }
@@ -446,8 +516,21 @@ impl DesktopWebView {
             closed,
             title,
             url,
-            _thread: thread,
+            thread: Some(thread),
         })
+    }
+}
+
+impl Drop for DesktopWebView {
+    fn drop(&mut self) {
+        if !self.closed.load(Ordering::SeqCst) {
+            self.send_command(WebViewCommand::Close);
+        }
+        if let Some(thread) = self.thread.take()
+            && thread.thread().id() != thread::current().id()
+        {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -484,8 +567,7 @@ impl NativeWindowHandle {
 
 impl HasWindowHandle for NativeWindowHandle {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
-        let hwnd =
-            NonZeroIsize::new(self.hwnd.0 as isize).ok_or(HandleError::Unavailable)?;
+        let hwnd = NonZeroIsize::new(self.hwnd.0 as isize).ok_or(HandleError::Unavailable)?;
         let mut handle = Win32WindowHandle::new(hwnd);
         handle.hinstance = NonZeroIsize::new(self.hinstance.0 as isize);
         unsafe { Ok(WindowHandle::borrow_raw(RawWindowHandle::Win32(handle))) }
@@ -545,9 +627,9 @@ impl DesktopWebViewState {
                     let _ = SetForegroundWindow(hwnd);
                 },
                 WebViewCommand::Close => unsafe {
-                    // 先主动释放 WebView，再销毁窗口，避免内存占用拖到消息循环退出后才回收。
-                    self.webview.take();
-                    let _ = DestroyWindow(hwnd);
+                    // WebView2 在父窗口上安装了 subclass，不能在窗口回调链中直接析构。
+                    // 先退出消息循环，随后在 DispatchMessageW 之外完成清理。
+                    PostQuitMessage(0);
                 },
                 WebViewCommand::SetFullscreen(enabled) => {
                     self.fullscreen = enabled;
@@ -605,7 +687,11 @@ fn load_desktop_window_icons() -> Result<DesktopWindowIcons, String> {
 }
 
 /// 从 ICO 中挑选最合适尺寸的图标帧，并转换成 Win32 图标句柄。
-fn load_icon_from_icon_dir(icon_dir: &IconDir, target_size: u32, label: &str) -> Result<HICON, String> {
+fn load_icon_from_icon_dir(
+    icon_dir: &IconDir,
+    target_size: u32,
+    label: &str,
+) -> Result<HICON, String> {
     let entry = icon_dir
         .entries()
         .iter()
@@ -758,6 +844,14 @@ fn run_webview_window_thread(
                 DispatchMessageW(&message);
             }
         }
+        // 必须在窗口回调链之外释放 WebView。否则 Wry 会在自己的 subclass 回调仍在
+        // 执行时移除该 subclass，Windows 会以 0xc000041d 终止进程。
+        if let Some(state) = unsafe { desktop_webview_state(hwnd) } {
+            state.webview.take();
+        }
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+        }
 
         Ok(())
     })();
@@ -857,14 +951,13 @@ extern "system" fn desktop_webview_wndproc(
         WM_SIZE | WM_MOVE => LRESULT(0),
         WM_CLOSE => {
             unsafe {
-                let _ = DestroyWindow(hwnd);
+                // 延迟到消息循环退出后再释放 WebView 和销毁父窗口。
+                PostQuitMessage(0);
             }
             LRESULT(0)
         }
         WM_DESTROY => {
             if let Some(state) = unsafe { desktop_webview_state(hwnd) } {
-                // 关闭按钮直接销毁窗口时，也要确保 WebView 在退出消息循环前尽早释放。
-                state.webview.take();
                 state.mark_closed();
                 state.fire_close_callback_once();
             }
@@ -910,22 +1003,27 @@ fn build_webview(window: &impl HasWindowHandle, config: &WebViewWindow) -> Resul
 
     builder = builder
         .with_ipc_handler(move |request| {
+            if handle_download_ipc_message(request.body()) {
+                return;
+            }
             if let Some(handler) = &ipc_handler {
                 handler(request.body().clone());
             }
         })
         .with_download_started_handler(|url, path| {
-            let export_dir = current_export_path();
-            if ensure_directory(&export_dir).is_err() {
-                push_download_notification(format!("下载目录不可用，已使用默认保存路径: {url}"));
+            let export_dir = resolved_export_path();
+            if let Err(err) = ensure_directory(&export_dir) {
+                push_download_notification(format!("下载目录不可用，已使用默认保存路径: {err}"));
                 return true;
             }
 
-            let file_name = path
-                .file_name()
-                .map(|value| value.to_owned())
-                .unwrap_or_else(|| "download.bin".into());
-            *path = export_dir.join(file_name);
+            let file_name = sanitize_download_filename(
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("download.bin"),
+            );
+            *path = available_download_path(&export_dir, &file_name);
+            push_download_notification(format!("开始下载: {} <- {url}", path.display()));
             true
         })
         .with_download_completed_handler(|url, path, success| {
@@ -1013,6 +1111,156 @@ fn current_export_path() -> PathBuf {
         .unwrap_or_else(|_| crate::utils::app_paths().data.join("exports"))
 }
 
+/// 返回可供 WebView2 使用的绝对导出目录。
+fn resolved_export_path() -> PathBuf {
+    let configured = current_export_path();
+    if configured.is_absolute() && !configured.as_os_str().is_empty() {
+        configured
+    } else {
+        crate::utils::app_paths().data.join("exports")
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct DownloadIpcMessage {
+    #[serde(rename = "type")]
+    message_type: String,
+    filename: String,
+    base64: String,
+}
+
+/// 消费下载桥接消息，其他 IPC 消息继续交给调用方注册的 handler。
+fn handle_download_ipc_message(message: &str) -> bool {
+    let Ok(message) = serde_json::from_str::<DownloadIpcMessage>(message) else {
+        return false;
+    };
+    if message.message_type != DOWNLOAD_IPC_MESSAGE_TYPE {
+        return false;
+    }
+
+    thread::spawn(move || {
+        if message.base64.is_empty() {
+            push_download_notification("导出失败：文件数据为空".into());
+            return;
+        }
+
+        let data = match base64::engine::general_purpose::STANDARD.decode(message.base64) {
+            Ok(data) => data,
+            Err(err) => {
+                push_download_notification(format!("导出失败：文件数据损坏（{err}）"));
+                return;
+            }
+        };
+
+        match save_exported_file(&message.filename, &data) {
+            Ok(path) => push_download_notification(format!("已导出: {}", path.display())),
+            Err(err) => push_download_notification(format!("导出失败：{err}")),
+        }
+    });
+    true
+}
+
+fn save_exported_file(filename: &str, data: &[u8]) -> std::io::Result<PathBuf> {
+    let export_dir = resolved_export_path();
+    ensure_directory(&export_dir)?;
+    let filename = sanitize_download_filename(filename);
+    for counter in 0u32.. {
+        let path = numbered_download_path(&export_dir, &filename, counter);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(data)?;
+                return Ok(path);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    unreachable!()
+}
+
+/// 丢弃目录穿越和 Windows 不允许的字符，只保留一个安全的文件名。
+fn sanitize_download_filename(filename: &str) -> String {
+    let leaf = Path::new(filename)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("download");
+    let mut sanitized: String = leaf
+        .chars()
+        .map(|character| match character {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            character if character.is_control() => '_',
+            character => character,
+        })
+        .collect();
+    sanitized = sanitized.trim().trim_end_matches(['.', ' ']).to_string();
+    if sanitized.is_empty() || sanitized == "." || sanitized == ".." {
+        sanitized = "download".into();
+    }
+
+    let stem = Path::new(&sanitized)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    if matches!(
+        stem.to_ascii_uppercase().as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    ) {
+        sanitized.insert(0, '_');
+    }
+    sanitized
+}
+
+fn available_download_path(directory: &Path, filename: &str) -> PathBuf {
+    for counter in 0u32.. {
+        let candidate = numbered_download_path(directory, filename, counter);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+fn numbered_download_path(directory: &Path, filename: &str, counter: u32) -> PathBuf {
+    if counter == 0 {
+        return directory.join(filename);
+    }
+    let path = Path::new(filename);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("download");
+    let extension = path.extension().and_then(|value| value.to_str());
+    match extension {
+        Some(extension) => directory.join(format!("{stem} ({counter}).{extension}")),
+        None => directory.join(format!("{stem} ({counter})")),
+    }
+}
+
 /// 推送下载通知。
 fn push_download_notification(message: String) {
     if let Ok(mut notifications) = DOWNLOAD_NOTIFICATIONS.lock() {
@@ -1050,5 +1298,60 @@ impl Drop for ComScope {
         unsafe {
             CoUninitialize();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blob_bridge_covers_sillytavern_download_entry_points() {
+        assert!(BLOB_DOWNLOAD_BRIDGE_SCRIPT.contains("HTMLAnchorElement.prototype.click"));
+        assert!(BLOB_DOWNLOAD_BRIDGE_SCRIPT.contains("window.addEventListener('click'"));
+        assert!(BLOB_DOWNLOAD_BRIDGE_SCRIPT.contains("window.open = function"));
+        assert!(BLOB_DOWNLOAD_BRIDGE_SCRIPT.contains(DOWNLOAD_IPC_MESSAGE_TYPE));
+    }
+
+    #[test]
+    fn sanitizes_export_filenames_without_losing_extensions() {
+        assert_eq!(sanitize_download_filename("角色卡.png"), "角色卡.png");
+        assert_eq!(
+            sanitize_download_filename("世界书:测试.json"),
+            "世界书_测试.json"
+        );
+        assert_eq!(
+            sanitize_download_filename("../聊天记录.jsonl"),
+            "聊天记录.jsonl"
+        );
+        assert_eq!(sanitize_download_filename("CON.json"), "_CON.json");
+    }
+
+    #[test]
+    fn chooses_a_new_name_instead_of_overwriting_an_export() {
+        let directory = std::env::temp_dir().join(format!(
+            "astrabrew-download-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("预设.json"), b"first").unwrap();
+        std::fs::write(directory.join("预设 (1).json"), b"second").unwrap();
+
+        assert_eq!(
+            available_download_path(&directory, "预设.json"),
+            directory.join("预设 (2).json")
+        );
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn leaves_unrelated_ipc_messages_for_the_application() {
+        assert!(!handle_download_ipc_message(r#"{"type":"other"}"#));
+        assert!(!handle_download_ipc_message("plain text"));
     }
 }

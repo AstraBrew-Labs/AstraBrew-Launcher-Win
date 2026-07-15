@@ -38,7 +38,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
 
-    eframe::run_native(
+    let result = eframe::run_native(
         "星酿启动器 - AstraBrew Launcher",
         options,
         Box::new(|cc| {
@@ -47,7 +47,19 @@ fn main() -> eframe::Result {
             egui_extras::install_image_loaders(&cc.egui_ctx);
             Ok(Box::new(MyApp::new(settings)))
         }),
-    )
+    );
+    if result.is_ok() {
+        // eframe has already run on_exit and dropped the app state. Detached environment and
+        // network workers can still race DLL detach and make ExitProcess fail with 0xc000041d.
+        unsafe {
+            let _ = windows::Win32::System::Threading::TerminateProcess(
+                windows::Win32::System::Threading::GetCurrentProcess(),
+                0,
+            );
+        }
+        unreachable!("TerminateProcess returned after a successful shutdown");
+    }
+    result
 }
 
 fn setup_fonts(ctx: &egui::Context) {

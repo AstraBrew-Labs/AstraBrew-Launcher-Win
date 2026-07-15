@@ -1,6 +1,6 @@
 [package]
 name = "astrabrew-launcher-win"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 description = "星酿启动器 (AstraBrew Launcher) 原为 酒馆启动器GUI (SillyTavern Launcher GUI)，是一款专为小白打造的简单易用的酒馆(SillyTavern)启动器。基于 Rust 和 egui 开发，旨在为用户提供易用、快速、轻量、多功能的启动和管理体验。"
 authors = ["AstraBrew-Labs"]
@@ -17,7 +17,7 @@ homepage = "https://github.com/AstraBrew-Labs/AstraBrew-Launcher-Win"
 # ============================================================================
 [package.metadata.packager]
 productName = "AstraBrew Launcher"
-version = "0.0.2"
+version = "0.0.3"
 identifier = "cn.astrabrew.launcher"
 publisher = "AstraBrew-Labs"
 description = "星酿启动器 (AstraBrew Launcher) 原为 酒馆启动器GUI (SillyTavern Launcher GUI)，是一款专为小白打造的简单易用的酒馆(SillyTavern)启动器。基于 Rust 和 egui 开发，旨在为用户提供易用、快速、轻量、多功能的启动和管理体验。"
@@ -68,6 +68,7 @@ egui_extras = { version = "0.33", features = ["all_loaders"] }
 egui-phosphor = "0.11"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+base64 = "0.22"
 serde_yaml = "0.9"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 rfd = "0.15"
@@ -78,7 +79,7 @@ qrcode = "0.14"
 # Windows 注册表操作
 winreg = "0.54"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_SystemInformation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
 webview2-com = "0.38"
 ico = "0.5"
 winit = "0.30"
