@@ -1,7 +1,9 @@
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use zip::ZipArchive;
 
@@ -153,6 +155,15 @@ pub fn download_and_install_git_from_url(
     url: &str,
     progress_sender: Option<Sender<EnvInstallProgress>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    download_and_install_git_from_url_cancellable(url, progress_sender, None)
+}
+
+/// 使用指定 URL 下载并安装 Git，可通过取消令牌安全停止当前任务。
+pub fn download_and_install_git_from_url_cancellable(
+    url: &str,
+    progress_sender: Option<Sender<EnvInstallProgress>>,
+    cancel_flag: Option<Arc<AtomicBool>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let filename = "MinGit-2.55.0.2-64-bit.zip";
 
     if let Some(tx) = &progress_sender {
@@ -198,6 +209,14 @@ pub fn download_and_install_git_from_url(
         let mut last_speed_report = download_start;
 
         loop {
+            if cancel_flag
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Relaxed))
+            {
+                drop(dest);
+                let _ = fs::remove_file(&temp_file_path);
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "Git 安装已取消").into());
+            }
             let bytes_read = response.read(&mut buffer)?;
             if bytes_read == 0 {
                 break;
@@ -234,6 +253,14 @@ pub fn download_and_install_git_from_url(
         let _ = tx.send(EnvInstallProgress::Status("下载完成，正在解压...".to_string()));
     }
 
+    if cancel_flag
+        .as_ref()
+        .is_some_and(|flag| flag.load(Ordering::Relaxed))
+    {
+        let _ = fs::remove_file(&temp_file_path);
+        return Err(io::Error::new(io::ErrorKind::Interrupted, "Git 安装已取消").into());
+    }
+
     // 解压
     let git_dir = get_git_install_dir();
 
@@ -250,6 +277,15 @@ pub fn download_and_install_git_from_url(
     let mut extracted_bytes: u64 = 0;
 
     for i in 0..total_files {
+        if cancel_flag
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        {
+            drop(archive);
+            let _ = fs::remove_dir_all(&git_dir);
+            let _ = fs::remove_file(&temp_file_path);
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "Git 安装已取消").into());
+        }
         let mut file = archive.by_index(i)?;
         let outpath = match file.enclosed_name() {
             Some(path) => path.to_owned(),

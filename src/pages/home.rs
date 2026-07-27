@@ -231,9 +231,8 @@ pub fn render(
 
                         if btn_response.clicked() && !is_transitioning {
                             if is_stopped {
-                                // 一键启动 → 调用控制台启动服务
-                                console_state.start(lang);
-                                *current_page = Page::Console;
+                                // 交给主应用执行环境、酒馆安装与启动流水线。
+                                console_state.request_one_click_start();
                             } else if is_running {
                                 // 立即停止 → 调用控制台正常关闭
                                 console_state.stop(lang);

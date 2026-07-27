@@ -4,9 +4,11 @@ use crate::lang;
 use crate::pages::settings::{EnvSource, Language, ProxyType, ServerServiceMode, TavernDataMode};
 use egui::text::LayoutJob;
 use egui::{Color32, RichText, TextFormat, Vec2};
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::collections::VecDeque;
 use std::sync::mpsc;
+use std::sync::OnceLock;
 
 // 最大保留日志行数，超过时从头部修剪
 const MAX_LOG_LINES: usize = 2000;
@@ -14,6 +16,8 @@ const MAX_LOG_LINES: usize = 2000;
 const PM2_STATUS_POLL_INTERVAL_MS: u64 = 800;
 /// PM2 日志文件读取节流间隔，避免每帧文件 I/O 导致界面卡顿。
 const PM2_LOG_POLL_INTERVAL_MS: u64 = 250;
+const LAUNCHER_LOG_FILE: &str = "launcher.log";
+const TAVERN_LOG_FILE: &str = "tavern.log";
 
 /// PM2 异步操作消息（后台线程 → UI 线程）
 enum Pm2AsyncMsg {
@@ -44,6 +48,8 @@ pub struct ConsoleState {
     pub logs: VecDeque<String>,
     /// 缓存每条日志对应的解析结果（None 表示包含 URL，需要在渲染时动态处理）
     parsed_layouts: VecDeque<Option<LayoutJob>>,
+    launcher_log_writer: Option<BufWriter<std::fs::File>>,
+    tavern_log_writer: Option<BufWriter<std::fs::File>>,
 
     // 进程管理
     process: TavernProcess,
@@ -53,6 +59,8 @@ pub struct ConsoleState {
     use_pm2: bool,
     /// PM2 日志读取字节偏移量（追踪 out.log 文件已读位置）
     pm2_log_byte_offset: u64,
+    /// PM2 错误日志读取字节偏移量（追踪 error.log 文件已读位置）
+    pm2_error_log_byte_offset: u64,
     /// 上次 PM2 日志读取时间
     last_pm2_log_poll: std::time::Instant,
     /// 上次 PM2 轮询时间（节流用，避免每帧调用 pm2 CLI 导致 UI 卡顿）
@@ -97,6 +105,8 @@ pub struct ConsoleState {
     pub server_service_mode: ServerServiceMode,
     /// 待显示的连接通知队列（main.rs 每帧 drain 并推送到 NotificationStack）
     pub pending_connection_notifications: Vec<String>,
+    /// UI 提交的一键启动请求，由主应用的自动化流水线消费。
+    pub one_click_start_requested: bool,
     /// 已通知过的连接 IP+UA 哈希集合，避免同一连接重复通知
     notified_connections: std::collections::HashSet<String>,
     /// 优化后的 settings.json 是否已针对当前实例准备完毕
@@ -105,6 +115,12 @@ pub struct ConsoleState {
     global_data_path: Option<String>,
     /// 统一环境模式：系统 / 内置
     env_mode: EnvSource,
+    /// 启动被缺失的 Node.js 环境拦截后，通知主界面显示引导弹窗。
+    missing_env_prompt: Option<EnvSource>,
+    /// 从 Node.js ERR_MODULE_NOT_FOUND 日志中识别出的待修复 npm 依赖。
+    missing_dependency_prompt: Option<String>,
+    /// 本轮启动已经提示过的包名，避免同一段错误日志重复弹窗。
+    prompted_missing_dependencies: std::collections::HashSet<String>,
     /// PM2 异步操作：发送端（克隆给各后台线程）
     pm2_async_tx: mpsc::Sender<Pm2AsyncMsg>,
     /// PM2 异步操作：接收端（每帧 drain）
@@ -118,14 +134,19 @@ pub struct ConsoleState {
 impl ConsoleState {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
-        Self {
+        let (launcher_log_writer, tavern_log_writer) = initialize_latest_log_files();
+        let mut state = Self {
             status: ConsoleStatus::Stopped,
-            logs: VecDeque::from(vec![String::from("[系统] 控制台已就绪")]),
+            logs: VecDeque::new(),
+            parsed_layouts: VecDeque::new(),
+            launcher_log_writer,
+            tavern_log_writer,
             
             process: TavernProcess::new(),
             pm2_manager: Pm2Manager::new(),
             use_pm2: false,
             pm2_log_byte_offset: 0,
+            pm2_error_log_byte_offset: 0,
             last_pm2_log_poll: std::time::Instant::now()
                 .checked_sub(std::time::Duration::from_secs(1))
                 .unwrap_or_else(std::time::Instant::now),
@@ -152,19 +173,21 @@ impl ConsoleState {
             is_server_mode: false,
             server_service_mode: ServerServiceMode::default(),
             pending_connection_notifications: Vec::new(),
+            one_click_start_requested: false,
             notified_connections: std::collections::HashSet::new(),
             settings_prepared: false,
             global_data_path: None,
             env_mode: EnvSource::default(),
+            missing_env_prompt: None,
+            missing_dependency_prompt: None,
+            prompted_missing_dependencies: std::collections::HashSet::new(),
             pm2_async_tx: tx,
             pm2_async_rx: rx,
             pm2_status_poll_in_flight: false,
             pm2_installed_check_in_flight: false,
-            parsed_layouts: VecDeque::from(vec![Some(parse_ansi_line(
-                "[系统] 控制台已就绪",
-                egui::FontId::monospace(12.0),
-            ))]),
-        }
+        };
+        state.add_log("[系统] 控制台已就绪");
+        state
     }
 
     /// 同步来自 SettingsState 的配置（每帧调用）
@@ -254,6 +277,56 @@ impl ConsoleState {
     /// 是否有已选择的酒馆实例
     pub fn has_instance(&self) -> bool {
         !self.instance_path.is_empty()
+    }
+
+    /// 获取并清除待显示的环境缺失弹窗请求。
+    pub fn take_missing_env_prompt(&mut self) -> Option<EnvSource> {
+        self.missing_env_prompt.take()
+    }
+
+    pub fn request_one_click_start(&mut self) {
+        self.one_click_start_requested = true;
+    }
+
+    pub fn take_one_click_start_request(&mut self) -> bool {
+        std::mem::take(&mut self.one_click_start_requested)
+    }
+
+    pub fn take_missing_dependency_prompt(&mut self) -> Option<String> {
+        self.missing_dependency_prompt.take()
+    }
+
+    fn inspect_missing_dependency(&mut self, line: &str) {
+        let Some(package) = extract_missing_package(line) else {
+            return;
+        };
+        if self.prompted_missing_dependencies.insert(package.clone()) {
+            self.missing_dependency_prompt = Some(package);
+        }
+    }
+
+    /// 启动前严格按设置中的环境模式检测 Node.js，不允许跨来源回退。
+    fn ensure_nodejs_environment(&mut self, lang: &Language) -> bool {
+        let installed = match self.env_mode {
+            EnvSource::Builtin => {
+                crate::core::settings::env_detect::detect_nodejs_builtin().is_some()
+            }
+            EnvSource::System => {
+                crate::core::settings::env_detect::detect_nodejs_system().is_some()
+            }
+        };
+
+        if installed {
+            return true;
+        }
+
+        let log_key = match self.env_mode {
+            EnvSource::Builtin => "console_log_nodejs_missing_builtin",
+            EnvSource::System => "console_log_nodejs_missing_system",
+        };
+        self.add_log(&lang::t(log_key, lang));
+        self.missing_env_prompt = Some(self.env_mode);
+        false
     }
 
     // ---- 进程操作（供 UI 按钮和主页调用）----
@@ -348,10 +421,17 @@ impl ConsoleState {
 
     /// 启动酒馆
     pub fn start(&mut self, lang: &Language) {
+        if !self.ensure_nodejs_environment(lang) {
+            return;
+        }
+
         if !self.has_instance() {
             self.add_log("[错误] 未选择酒馆实例，请先前往版本管理选择");
             return;
         }
+
+        self.prompted_missing_dependencies.clear();
+        self.missing_dependency_prompt = None;
 
         if self.use_pm2 {
             self.start_with_pm2(lang);
@@ -362,7 +442,6 @@ impl ConsoleState {
             self.add_log("[警告] 酒馆已在运行中");
             return;
         }
-
         // 启动前清空日志
         self.logs.clear();
         self.parsed_layouts.clear();
@@ -376,7 +455,7 @@ impl ConsoleState {
 
         // GitHub 加速与 HTTP 代理互斥，加速优先
         let github_proxy = if self.github_proxy_url.is_some() {
-            if crate::core::tavern_process::node_supports_import() {
+            if crate::core::tavern_process::node_supports_import(self.env_mode) {
                 self.github_proxy_url.clone()
             } else {
                 self.add_log(&format!(
@@ -440,6 +519,7 @@ impl ConsoleState {
         self.tavern_url = None;
         self.webview_auto_opened = false;
         self.pm2_log_byte_offset = 0;
+        self.pm2_error_log_byte_offset = 0;
         self.schedule_pm2_refresh();
         // 重置连接去重记录：新进程会重新输出所有连接日志，避免重启后被误判为重复而漏掉通知
         self.notified_connections.clear();
@@ -449,7 +529,7 @@ impl ConsoleState {
 
         // GitHub 加速
         let github_proxy = if self.github_proxy_url.is_some() {
-            if crate::core::tavern_process::node_supports_import() {
+            if crate::core::tavern_process::node_supports_import(self.env_mode) {
                 self.github_proxy_url.clone()
             } else {
                 self.add_log("[警告] 当前 Node.js 版本不支持 GitHub 加速拦截器（需要 >= 19），已自动关闭加速");
@@ -612,12 +692,17 @@ impl ConsoleState {
 
     /// 重启酒馆
     pub fn restart(&mut self, lang: &Language) {
+        if !self.ensure_nodejs_environment(lang) {
+            return;
+        }
+
         if self.use_pm2 {
             // 清空 PM2 日志文件（仅删文件，不调 pm2 flush，无阻塞）
             self.pm2_manager.clear_logs_files_only();
             self.logs.clear();
             self.parsed_layouts.clear();
             self.pm2_log_byte_offset = 0;
+            self.pm2_error_log_byte_offset = 0;
             self.schedule_pm2_refresh();
             // 重置连接去重记录：新进程会重新输出所有连接日志，避免重启后被误判为重复而漏掉通知
             self.notified_connections.clear();
@@ -627,7 +712,7 @@ impl ConsoleState {
 
             // GitHub 加速
             let github_proxy = if self.github_proxy_url.is_some() {
-                if crate::core::tavern_process::node_supports_import() {
+                if crate::core::tavern_process::node_supports_import(self.env_mode) {
                     self.github_proxy_url.clone()
                 } else {
                     self.add_log("[警告] 当前 Node.js 版本不支持 GitHub 加速拦截器（需要 >= 19），已自动关闭加速");
@@ -729,23 +814,15 @@ impl ConsoleState {
             && now.duration_since(self.last_pm2_log_poll) >= log_poll_interval
         {
             self.last_pm2_log_poll = now;
-            let (new_logs, new_offset) =
+            let (out_logs, out_offset) =
                 self.pm2_manager.read_out_logs_since(self.pm2_log_byte_offset);
-            if !new_logs.is_empty() {
-                for line in &new_logs {
-                    let cleaned = strip_osc(line);
-
-                    if self.tavern_url.is_none() {
-                        let plain = strip_ansi(&cleaned);
-                        if let Some(url) = extract_tavern_url(&plain) {
-                            self.tavern_url = Some(url);
-                        }
-                    }
-
-                    self.add_log(&cleaned);
-                }
-                self.pm2_log_byte_offset = new_offset;
-            }
+            let (error_logs, error_offset) = self
+                .pm2_manager
+                .read_error_logs_since(self.pm2_error_log_byte_offset);
+            self.pm2_log_byte_offset = out_offset;
+            self.pm2_error_log_byte_offset = error_offset;
+            self.process_tavern_log_lines(&out_logs);
+            self.process_tavern_log_lines(&error_logs);
         }
     }
 
@@ -831,19 +908,14 @@ impl ConsoleState {
                 if self.status != ConsoleStatus::Running {
                     self.status = ConsoleStatus::Running;
                     self.add_log("[系统] 检测到 PM2 托管进程正在运行，已恢复控制");
-                    let (existing_logs, new_offset) =
+                    let (out_logs, out_offset) =
                         self.pm2_manager.read_out_logs_since(0);
-                    for line in &existing_logs {
-                        let cleaned = strip_osc(line);
-                        if self.tavern_url.is_none() {
-                            let plain = strip_ansi(&cleaned);
-                            if let Some(url) = extract_tavern_url(&plain) {
-                                self.tavern_url = Some(url);
-                            }
-                        }
-                        self.add_log(&cleaned);
-                    }
-                    self.pm2_log_byte_offset = new_offset;
+                    let (error_logs, error_offset) =
+                        self.pm2_manager.read_error_logs_since(0);
+                    self.pm2_log_byte_offset = out_offset;
+                    self.pm2_error_log_byte_offset = error_offset;
+                    self.process_tavern_log_lines(&out_logs);
+                    self.process_tavern_log_lines(&error_logs);
                 }
             }
             Pm2Status::Stopped => {
@@ -923,6 +995,7 @@ impl ConsoleState {
         let new_logs = self.process.poll_logs();
         for line in new_logs {
             let cleaned = strip_osc(&line);
+            self.inspect_missing_dependency(&cleaned);
 
             // 解析酒馆访问地址: "Go to: http://localhost:11451/ to open SillyTavern"
             if self.tavern_url.is_none() {
@@ -933,7 +1006,7 @@ impl ConsoleState {
                 }
             }
 
-            self.add_log(&cleaned);
+            self.add_tavern_log(&cleaned);
         }
 
         // 检查进程是否已退出
@@ -974,6 +1047,12 @@ impl ConsoleState {
             }
 
             if self.restart_pending {
+                if !self.ensure_nodejs_environment(lang) {
+                    self.restart_pending = false;
+                    self.status = ConsoleStatus::Stopped;
+                    return;
+                }
+
                 // 重启流程：停止已完成 → 清空日志并自动启动
                 self.restart_pending = false;
                 self.logs.clear();
@@ -983,7 +1062,7 @@ impl ConsoleState {
                 self.add_log(&lang::t("console_log_restarting_start", lang));
 
                 let github_proxy = if self.github_proxy_url.is_some() {
-                    if crate::core::tavern_process::node_supports_import() {
+                    if crate::core::tavern_process::node_supports_import(self.env_mode) {
                         self.github_proxy_url.clone()
                     } else {
                         self.add_log(&format!(
@@ -1051,18 +1130,23 @@ impl ConsoleState {
 
     // ---- 日志 ----
 
+    /// 添加启动器自身日志，并同步显示到控制台。
     pub fn add_log(&mut self, msg: &str) {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| {
-                let secs = d.as_secs();
-                let h = (secs / 3600) % 24 + 8; // UTC+8
-                let m = (secs / 60) % 60;
-                let s = secs % 60;
-                format!("{:02}:{:02}:{:02}", h, m, s)
-            })
-            .unwrap_or_else(|_| String::from("--:--:--"));
-        let full = format!("[{}] {}", timestamp, msg);
+        let file_line = format!("[{}] {}", current_log_timestamp(), strip_ansi(msg));
+        write_log_line(&mut self.launcher_log_writer, &file_line);
+        let full = format!("[{}] {}", current_console_timestamp(), msg);
+        self.push_console_log(msg, full);
+    }
+
+    /// 添加酒馆进程 stdout/stderr，并同步显示到控制台。
+    fn add_tavern_log(&mut self, msg: &str) {
+        let file_line = format!("[{}] {}", current_log_timestamp(), strip_ansi(msg));
+        write_log_line(&mut self.tavern_log_writer, &file_line);
+        let full = format!("[{}] {}", current_console_timestamp(), msg);
+        self.push_console_log(msg, full);
+    }
+
+    fn push_console_log(&mut self, msg: &str, full: String) {
         // 推入原始文本
         self.logs.push_back(full.clone());
 
@@ -1121,6 +1205,161 @@ impl ConsoleState {
             }
         }
     }
+
+    fn process_tavern_log_lines(&mut self, lines: &[String]) {
+        for line in lines {
+            let cleaned = strip_osc(line);
+            self.inspect_missing_dependency(&cleaned);
+
+            if self.tavern_url.is_none() {
+                let plain = strip_ansi(&cleaned);
+                if let Some(url) = extract_tavern_url(&plain) {
+                    self.tavern_url = Some(url);
+                }
+            }
+
+            self.add_tavern_log(&cleaned);
+        }
+    }
+
+    fn reset_latest_log_files(&mut self) {
+        self.launcher_log_writer.take();
+        self.tavern_log_writer.take();
+        let (launcher, tavern) = initialize_latest_log_files();
+        self.launcher_log_writer = launcher;
+        self.tavern_log_writer = tavern;
+    }
+
+    pub fn clear_console_logs(&mut self) {
+        self.logs.clear();
+        self.parsed_layouts.clear();
+        self.pm2_log_byte_offset = 0;
+        self.pm2_error_log_byte_offset = 0;
+        if self.use_pm2 {
+            self.pm2_manager.clear_logs_files_only();
+        }
+        self.reset_latest_log_files();
+    }
+
+    /// 将启动器与酒馆日志导出为 ZIP，返回最终文件路径。
+    pub fn export_logs(&mut self) -> Result<PathBuf, String> {
+        if let Some(writer) = &mut self.launcher_log_writer {
+            writer.flush().map_err(|error| error.to_string())?;
+        }
+        if let Some(writer) = &mut self.tavern_log_writer {
+            writer.flush().map_err(|error| error.to_string())?;
+        }
+
+        let downloads = std::env::var("USERPROFILE")
+            .map(std::path::PathBuf::from)
+            .map(|path| path.join("Downloads"))
+            .map_err(|_| "无法获取系统下载目录".to_string())?;
+        std::fs::create_dir_all(&downloads).map_err(|error| error.to_string())?;
+        let timestamp = current_filename_timestamp();
+        let mut destination = downloads.join(format!("AstraBrew-logs-{}.zip", timestamp));
+        let mut suffix = 1u32;
+        while destination.exists() {
+            destination = downloads.join(format!(
+                "AstraBrew-logs-{}-{}.zip",
+                timestamp, suffix
+            ));
+            suffix += 1;
+        }
+        create_logs_archive(&crate::utils::app_paths().logs, &destination)?;
+        Ok(destination)
+    }
+}
+
+fn initialize_latest_log_files() -> (
+    Option<BufWriter<std::fs::File>>,
+    Option<BufWriter<std::fs::File>>,
+) {
+    let logs_dir = &crate::utils::app_paths().logs;
+    initialize_latest_log_files_in(logs_dir)
+}
+
+fn initialize_latest_log_files_in(logs_dir: &std::path::Path) -> (
+    Option<BufWriter<std::fs::File>>,
+    Option<BufWriter<std::fs::File>>,
+) {
+    let _ = std::fs::create_dir_all(logs_dir);
+    if let Ok(entries) = std::fs::read_dir(logs_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let _ = std::fs::remove_dir_all(path);
+            } else {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+    let launcher = std::fs::File::create(logs_dir.join(LAUNCHER_LOG_FILE))
+        .ok()
+        .map(BufWriter::new);
+    let tavern = std::fs::File::create(logs_dir.join(TAVERN_LOG_FILE))
+        .ok()
+        .map(BufWriter::new);
+    (launcher, tavern)
+}
+
+fn write_log_line(writer: &mut Option<BufWriter<std::fs::File>>, line: &str) {
+    if let Some(writer) = writer {
+        let _ = writeln!(writer, "{}", line);
+        let _ = writer.flush();
+    }
+}
+
+fn current_console_timestamp() -> String {
+    let (_, _, _, hour, minute, second) = current_local_datetime_parts();
+    format!("{:02}:{:02}:{:02}", hour, minute, second)
+}
+
+fn current_log_timestamp() -> String {
+    let (year, month, day, hour, minute, second) = current_local_datetime_parts();
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        year, month, day, hour, minute, second
+    )
+}
+
+fn current_filename_timestamp() -> String {
+    let (year, month, day, hour, minute, second) = current_local_datetime_parts();
+    format!(
+        "{:04}{:02}{:02}-{:02}{:02}{:02}",
+        year, month, day, hour, minute, second
+    )
+}
+
+fn current_local_datetime_parts() -> (i32, u32, u32, u32, u32, u32) {
+    let mut time: windows_sys::Win32::Foundation::SYSTEMTIME = unsafe { std::mem::zeroed() };
+    unsafe {
+        windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut time);
+    }
+    (
+        time.wYear as i32,
+        time.wMonth as u32,
+        time.wDay as u32,
+        time.wHour as u32,
+        time.wMinute as u32,
+        time.wSecond as u32,
+    )
+}
+
+fn create_logs_archive(logs_dir: &std::path::Path, destination: &std::path::Path) -> Result<(), String> {
+    let file = std::fs::File::create(destination).map_err(|error| error.to_string())?;
+    let mut archive = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for name in [LAUNCHER_LOG_FILE, TAVERN_LOG_FILE] {
+        archive
+            .start_file(name, options)
+            .map_err(|error| error.to_string())?;
+        let mut source = std::fs::File::open(logs_dir.join(name))
+            .map_err(|error| error.to_string())?;
+        std::io::copy(&mut source, &mut archive).map_err(|error| error.to_string())?;
+    }
+    archive.finish().map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 /// 剥离 OSC 终端序列（窗口标题设置等），例如 `\x1b]2;...\x07` 或 `\x1b]2;...\x1b\\`
@@ -1154,6 +1393,22 @@ fn strip_osc(line: &str) -> String {
         }
     }
     result
+}
+
+/// 从 Node.js ERR_MODULE_NOT_FOUND 文本中提取 npm 包名。
+/// 支持普通包（`yargs`）和 scoped 包（`@scope/name`），拒绝路径及命令参数。
+fn extract_missing_package(line: &str) -> Option<String> {
+    static PACKAGE_RE: OnceLock<regex::Regex> = OnceLock::new();
+    let regex = PACKAGE_RE.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?i)Cannot\s+find\s+package\s+['\"]((?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*)['\"]"#,
+        )
+        .expect("missing-package regex must be valid")
+    });
+    regex
+        .captures(line)
+        .and_then(|captures| captures.get(1))
+        .map(|package| package.as_str().to_ascii_lowercase())
 }
 
 /// 解析日志行中的 ANSI 颜色转义码，生成 egui LayoutJob
@@ -1652,7 +1907,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut ConsoleState, lang: &Language) {
                     ui.add_space(6.0);
 
                     // 启动
-                    let start_enabled = is_stopped && state.has_instance();
+                    let start_enabled = is_stopped;
                     let start_btn = egui::Button::new(
                         RichText::new(lang::t("console_btn_start", lang)).size(13.0),
                     )
@@ -1663,7 +1918,7 @@ pub fn render(ui: &mut egui::Ui, state: &mut ConsoleState, lang: &Language) {
                         Color32::from_rgb(30, 60, 35)
                     });
                     if ui.add_enabled(start_enabled, start_btn).clicked() {
-                        state.start(lang);
+                        state.request_one_click_start();
                     }
                 });
             });
@@ -1696,12 +1951,36 @@ pub fn render(ui: &mut egui::Ui, state: &mut ConsoleState, lang: &Language) {
                         )
                         .clicked()
                     {
-                        state.logs.clear();
-                        state.pm2_log_byte_offset = 0;
-                        if state.use_pm2 {
-                            state.pm2_manager.clear_logs_files_only();
-                        }
+                        state.clear_console_logs();
                         state.add_log(lang::t("console_log_cleared", lang));
+                    }
+                    ui.add_space(6.0);
+                    if ui
+                        .add_sized(
+                            [110.0, 22.0],
+                            egui::Button::new(
+                                RichText::new(format!(
+                                    "{}  {}",
+                                    egui_phosphor::regular::FILE_ZIP,
+                                    lang::t("console_btn_export_logs", lang)
+                                ))
+                                .size(11.0),
+                            ),
+                        )
+                        .clicked()
+                    {
+                        match state.export_logs() {
+                            Ok(path) => state.add_log(&lang::t(
+                                "console_logs_exported",
+                                lang,
+                            )
+                            .replace("{path}", &path.to_string_lossy())),
+                            Err(error) => state.add_log(&lang::t(
+                                "console_logs_export_failed",
+                                lang,
+                            )
+                            .replace("{error}", &error)),
+                        }
                     }
                 });
             });
@@ -1802,4 +2081,105 @@ fn extract_tavern_url(line: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod missing_dependency_tests {
+    use super::{
+        create_logs_archive, extract_missing_package, initialize_latest_log_files_in,
+        LAUNCHER_LOG_FILE, TAVERN_LOG_FILE,
+    };
+
+    fn temp_test_dir(label: &str) -> std::path::PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "astrabrew-{}-{}-{}",
+            label,
+            std::process::id(),
+            nonce
+        ))
+    }
+
+    #[test]
+    fn extracts_regular_and_scoped_npm_packages() {
+        assert_eq!(
+            extract_missing_package(
+                "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'yargs' imported from C:\\app\\src\\command-line.js"
+            ),
+            Some("yargs".to_string())
+        );
+        assert_eq!(
+            extract_missing_package("Cannot find package \"@scope/tool-kit\" imported from file.js"),
+            Some("@scope/tool-kit".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_paths_and_shell_content() {
+        assert_eq!(extract_missing_package("Cannot find package '../../evil'"), None);
+        assert_eq!(extract_missing_package("Cannot find package 'yargs && calc'"), None);
+        assert_eq!(extract_missing_package("Cannot find module 'C:\\temp\\file.js'"), None);
+    }
+
+    #[test]
+    fn log_initialization_keeps_only_the_two_latest_files() {
+        let dir = temp_test_dir("log-init");
+        std::fs::create_dir_all(dir.join("old-session")).unwrap();
+        std::fs::write(dir.join("old.log"), "old").unwrap();
+        std::fs::write(dir.join("old-session").join("nested.log"), "old").unwrap();
+
+        let writers = initialize_latest_log_files_in(&dir);
+        drop(writers);
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![LAUNCHER_LOG_FILE.to_string(), TAVERN_LOG_FILE.to_string()]
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn exported_archive_contains_launcher_and_tavern_logs() {
+        use std::io::{Read, Write};
+
+        let dir = temp_test_dir("log-export");
+        let (mut launcher_writer, mut tavern_writer) = initialize_latest_log_files_in(&dir);
+        writeln!(launcher_writer.as_mut().unwrap(), "launcher-entry").unwrap();
+        writeln!(tavern_writer.as_mut().unwrap(), "tavern-entry").unwrap();
+        launcher_writer.as_mut().unwrap().flush().unwrap();
+        tavern_writer.as_mut().unwrap().flush().unwrap();
+        let destination = dir.join("export.zip");
+        create_logs_archive(&dir, &destination).unwrap();
+
+        let file = std::fs::File::open(&destination).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let mut launcher = String::new();
+        archive
+            .by_name(LAUNCHER_LOG_FILE)
+            .unwrap()
+            .read_to_string(&mut launcher)
+            .unwrap();
+        let mut tavern = String::new();
+        archive
+            .by_name(TAVERN_LOG_FILE)
+            .unwrap()
+            .read_to_string(&mut tavern)
+            .unwrap();
+        assert_eq!(launcher, "launcher-entry\n");
+        assert_eq!(tavern, "tavern-entry\n");
+        assert_eq!(archive.len(), 2);
+        drop(archive);
+        drop(launcher_writer);
+        drop(tavern_writer);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
 }

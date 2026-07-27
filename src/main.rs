@@ -126,6 +126,88 @@ pub enum EnvInstallProgress {
     Finished,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum OneClickStage {
+    #[default]
+    Idle,
+    CheckingEnvironment,
+    SelectingGitMirror,
+    InstallingGit,
+    SelectingNodeMirror,
+    InstallingNode,
+    CheckingTavern,
+    FetchingTavern,
+    InstallingTavern,
+    StartingTavern,
+    WaitingForTavern,
+}
+
+#[derive(Default)]
+struct OneClickFlow {
+    stage: OneClickStage,
+    cancel_requested: bool,
+    cancel_dispatched: bool,
+}
+
+struct DependencyRepairTask {
+    package: String,
+    receiver: std::sync::mpsc::Receiver<Result<(), String>>,
+}
+
+impl OneClickFlow {
+    fn is_active(&self) -> bool {
+        self.stage != OneClickStage::Idle
+    }
+}
+
+fn system_environment_error(
+    git_ready: bool,
+    node_ready: bool,
+    npm_ready: bool,
+) -> Option<&'static str> {
+    if !git_ready {
+        Some("one_click_system_git_missing")
+    } else if !node_ready || !npm_ready {
+        Some("one_click_system_node_missing")
+    } else {
+        None
+    }
+}
+
+fn next_environment_stage(git_ready: bool, node_ready: bool) -> OneClickStage {
+    if !git_ready {
+        OneClickStage::SelectingGitMirror
+    } else if !node_ready {
+        OneClickStage::SelectingNodeMirror
+    } else {
+        OneClickStage::CheckingTavern
+    }
+}
+
+fn should_use_first_launch_automation(
+    first_launch_available: bool,
+    selected_environment_ready: bool,
+) -> bool {
+    first_launch_available && !selected_environment_ready
+}
+
+fn tavern_installation_is_ready(path: &std::path::Path) -> bool {
+    let package = std::fs::read_to_string(path.join("package.json"))
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok());
+    let Some(dependencies) = package
+        .as_ref()
+        .and_then(|json| json.get("dependencies"))
+        .and_then(|dependencies| dependencies.as_object())
+    else {
+        return false;
+    };
+    !dependencies.is_empty()
+        && dependencies
+            .keys()
+            .all(|dependency| path.join("node_modules").join(dependency).exists())
+}
+
 struct MyApp {
     current_page: Page,
     last_monitor_size: Option<egui::Vec2>,
@@ -188,6 +270,19 @@ struct MyApp {
     last_path_check: Option<std::time::Instant>,
     // 自动更新检测通道
     updater_rx: Option<std::sync::mpsc::Receiver<crate::core::updater::UpdateStatus>>,
+    // 启动时缺少所选 Node.js 环境的引导弹窗。
+    missing_env_dialog: Option<pages::settings::EnvSource>,
+    // 从环境缺失弹窗进入设置后，将环境依赖区域滚动到视口中央。
+    focus_env_dependencies: bool,
+    // 小白模式的一键环境准备、酒馆安装与启动流水线。
+    one_click_flow: OneClickFlow,
+    // 仅配置文件首次创建的当前进程可消费一次。
+    first_launch_auto_setup_available: bool,
+    // ERR_MODULE_NOT_FOUND 缺失依赖确认与异步修复状态。
+    missing_dependency_dialog: Option<String>,
+    dependency_repair_task: Option<DependencyRepairTask>,
+    dependency_repair_waiting: Option<String>,
+    dependency_repair_error: Option<(String, String)>,
 }
 
 /// 后台路径检查结果
@@ -200,6 +295,9 @@ struct PathCheckResult {
 
 impl MyApp {
     fn new(mut settings_state: SettingsState) -> Self {
+        let first_launch_auto_setup_available =
+            settings_state.first_launch_auto_setup_available;
+        settings_state.first_launch_auto_setup_available = false;
         // 检测环境依赖版本
         settings_state.detect_all_env();
 
@@ -250,6 +348,14 @@ impl MyApp {
             path_check_rx: None,
             last_path_check: None,
             updater_rx: None,
+            missing_env_dialog: None,
+            focus_env_dependencies: false,
+            one_click_flow: OneClickFlow::default(),
+            first_launch_auto_setup_available,
+            missing_dependency_dialog: None,
+            dependency_repair_task: None,
+            dependency_repair_waiting: None,
+            dependency_repair_error: None,
         }
     }
 }
@@ -474,6 +580,811 @@ impl MyApp {
 
         self.open_desktop_webview(ctx, url);
     }
+
+    fn begin_one_click_start(&mut self) {
+        if self.one_click_flow.is_active() {
+            return;
+        }
+        self.missing_env_dialog = None;
+        self.one_click_flow = OneClickFlow {
+            stage: OneClickStage::CheckingEnvironment,
+            cancel_requested: false,
+            cancel_dispatched: false,
+        };
+        self.current_page = Page::Settings;
+        self.settings_tab = SettingsTab::General;
+        self.focus_env_dependencies = true;
+    }
+
+    fn selected_environment_is_ready(&self) -> bool {
+        match self.settings_state.env_mode {
+            pages::settings::EnvSource::Builtin => {
+                crate::core::settings::env_detect::detect_git_builtin().is_some()
+                    && crate::core::settings::env_detect::detect_nodejs_builtin().is_some()
+                    && crate::core::env::get_builtin_npm_path().is_some()
+            }
+            pages::settings::EnvSource::System => {
+                crate::core::settings::env_detect::detect_git_system().is_some()
+                    && crate::core::settings::env_detect::detect_nodejs_system().is_some()
+                    && crate::core::env::get_system_cmd_path("npm").is_some()
+            }
+        }
+    }
+
+    fn handle_user_start_request(&mut self) {
+        let use_automation = should_use_first_launch_automation(
+            self.first_launch_auto_setup_available,
+            self.selected_environment_is_ready(),
+        );
+        self.first_launch_auto_setup_available = false;
+
+        if use_automation {
+            self.begin_one_click_start();
+        } else {
+            self.current_page = Page::Console;
+            self.console_state.start(&self.settings_state.language);
+        }
+    }
+
+    fn finish_one_click_cancel(&mut self, ctx: &egui::Context) {
+        self.git_install_state.show = false;
+        self.nodejs_install_state.show = false;
+        self.git_node_select.show = false;
+        self.git_node_select.receiver = None;
+        self.nodejs_node_select.show = false;
+        self.nodejs_node_select.receiver = None;
+        self.version_manage_state.release_receiver = None;
+        self.version_manage_state.is_fetching_releases = false;
+        self.version_manage_state.is_downloading = false;
+        self.one_click_flow = OneClickFlow::default();
+        self.notification_stack.push(
+            lang::t("one_click_cancelled_title", &self.settings_state.language).to_string(),
+            lang::t("one_click_cancelled_desc", &self.settings_state.language).to_string(),
+            ctx,
+        );
+    }
+
+    fn fail_one_click_start(&mut self, error: String, ctx: &egui::Context) {
+        self.git_install_state.show = false;
+        self.nodejs_install_state.show = false;
+        self.version_manage_state.is_downloading = false;
+        self.one_click_flow = OneClickFlow::default();
+        self.notification_stack.push(
+            lang::t("one_click_failed_title", &self.settings_state.language).to_string(),
+            error,
+            ctx,
+        );
+    }
+
+    fn selected_tavern_is_ready(&mut self) -> bool {
+        let selected_path = self.settings_state.sillytavern.as_ref().and_then(|instance| {
+            match instance.instance_type.as_str() {
+                "builtin" => Some(crate::utils::app_paths().sillytavern_dir()),
+                "local" => instance.path.as_ref().map(std::path::PathBuf::from),
+                _ => None,
+            }
+        });
+
+        if let Some(path) = selected_path
+            && tavern_installation_is_ready(&path)
+        {
+            return true;
+        }
+
+        let builtin_path = crate::utils::app_paths().sillytavern_dir();
+        if !tavern_installation_is_ready(&builtin_path) {
+            return false;
+        }
+
+        let version = std::fs::read_to_string(builtin_path.join("package.json"))
+            .ok()
+            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .and_then(|json| json.get("version")?.as_str().map(str::to_string))
+            .unwrap_or_else(|| "Unknown".to_string());
+        self.version_manage_state.online_installed_version = Some(version.clone());
+        pages::version_manage::save_current_to_settings(
+            "builtin",
+            None,
+            &version,
+            &mut self.settings_state,
+        );
+        true
+    }
+
+    fn handle_one_click_cancel(&mut self, ctx: &egui::Context) -> bool {
+        if !self.one_click_flow.cancel_requested {
+            return false;
+        }
+
+        if !self.one_click_flow.cancel_dispatched {
+            match self.one_click_flow.stage {
+                OneClickStage::InstallingGit => self.git_install_state.cancel(),
+                OneClickStage::InstallingNode => self.nodejs_install_state.cancel(),
+                OneClickStage::InstallingTavern => {
+                    self.version_manage_state.cancel_active_install()
+                }
+                OneClickStage::StartingTavern | OneClickStage::WaitingForTavern => {
+                    self.console_state
+                        .force_kill(&self.settings_state.language)
+                }
+                _ => {}
+            }
+            self.one_click_flow.cancel_dispatched = true;
+        }
+
+        let stopped = match self.one_click_flow.stage {
+            OneClickStage::InstallingGit => {
+                self.git_install_state.poll();
+                !self.git_install_state.running
+            }
+            OneClickStage::InstallingNode => {
+                self.nodejs_install_state.poll();
+                !self.nodejs_install_state.running
+            }
+            OneClickStage::InstallingTavern => {
+                let _ = self
+                    .version_manage_state
+                    .poll_install_messages(&mut self.settings_state);
+                self.version_manage_state.download_receiver.is_none()
+            }
+            OneClickStage::StartingTavern | OneClickStage::WaitingForTavern => {
+                self.console_state.status == pages::console::ConsoleStatus::Stopped
+            }
+            _ => true,
+        };
+
+        if stopped {
+            self.finish_one_click_cancel(ctx);
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        true
+    }
+
+    fn advance_one_click_start(&mut self, ctx: &egui::Context) {
+        if !self.one_click_flow.is_active() || self.handle_one_click_cancel(ctx) {
+            return;
+        }
+
+        match self.one_click_flow.stage {
+            OneClickStage::Idle => {}
+            OneClickStage::CheckingEnvironment => {
+                if self.settings_state.env_mode == pages::settings::EnvSource::System {
+                    let git_version = crate::core::settings::env_detect::detect_git_system();
+                    let node_version = crate::core::settings::env_detect::detect_nodejs_system();
+                    let npm_ready = crate::core::env::get_system_cmd_path("npm").is_some();
+                    self.settings_state.git_version = git_version.clone();
+                    self.settings_state.nodejs_version =
+                        node_version.clone().unwrap_or_default();
+                    if let Some(error_key) = system_environment_error(
+                        git_version.is_some(),
+                        node_version.is_some(),
+                        npm_ready,
+                    ) {
+                        self.fail_one_click_start(
+                            lang::t(error_key, &self.settings_state.language).to_string(),
+                            ctx,
+                        );
+                    } else {
+                        self.one_click_flow.stage = OneClickStage::CheckingTavern;
+                    }
+                    return;
+                }
+
+                let git_version = crate::core::settings::env_detect::detect_git_builtin();
+                let builtin_git_ready = git_version.is_some();
+                if let Some(version) = &git_version {
+                    self.settings_state.git_version_builtin = Some(version.clone());
+                }
+
+                let node_version = crate::core::settings::env_detect::detect_nodejs_builtin();
+                let node_ready = node_version.is_some()
+                    && crate::core::env::get_builtin_npm_path().is_some();
+                if let Some(version) = node_version {
+                    self.settings_state.nodejs_version_builtin = version;
+                }
+                let next_stage = next_environment_stage(builtin_git_ready, node_ready);
+                match next_stage {
+                    OneClickStage::SelectingGitMirror => {
+                        self.git_node_select.open();
+                        self.git_node_select.show = false;
+                    }
+                    OneClickStage::SelectingNodeMirror => {
+                        self.nodejs_node_select.open();
+                        self.nodejs_node_select.show = false;
+                    }
+                    _ => {}
+                }
+                self.one_click_flow.stage = next_stage;
+            }
+            OneClickStage::SelectingGitMirror => {
+                self.git_node_select.poll();
+                if self.git_node_select.loading {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                    return;
+                }
+                let url = self
+                    .git_node_select
+                    .nodes
+                    .iter()
+                    .find(|node| {
+                        node.latency_ms.is_some() && !node.blocked && !node.timed_out
+                    })
+                    .or_else(|| self.git_node_select.nodes.first())
+                    .map(|node| node.url.clone());
+                let Some(url) = url else {
+                    self.fail_one_click_start(
+                        lang::t("one_click_no_git_source", &self.settings_state.language)
+                            .to_string(),
+                        ctx,
+                    );
+                    return;
+                };
+                self.git_install_state.start_git_install(&url);
+                self.git_install_state.show = false;
+                self.one_click_flow.stage = OneClickStage::InstallingGit;
+            }
+            OneClickStage::InstallingGit => {
+                self.git_install_state.poll();
+                self.git_install_state.show = false;
+                if self.git_install_state.running {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                    return;
+                }
+                if self.git_install_state.installed_version.is_some() {
+                    self.settings_state.git_version_builtin =
+                        crate::core::settings::env_detect::detect_git_builtin();
+                    self.git_install_state.done_at = None;
+                    self.one_click_flow.stage = OneClickStage::CheckingEnvironment;
+                } else if self.git_install_state.receiver.is_none() {
+                    self.fail_one_click_start(
+                        lang::t("one_click_git_install_failed", &self.settings_state.language)
+                            .to_string(),
+                        ctx,
+                    );
+                }
+            }
+            OneClickStage::SelectingNodeMirror => {
+                self.nodejs_node_select.poll();
+                if self.nodejs_node_select.loading {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                    return;
+                }
+                let url = self
+                    .nodejs_node_select
+                    .nodes
+                    .iter()
+                    .find(|node| {
+                        node.latency_ms.is_some() && !node.blocked && !node.timed_out
+                    })
+                    .or_else(|| self.nodejs_node_select.nodes.first())
+                    .map(|node| node.url.clone());
+                let Some(url) = url else {
+                    self.fail_one_click_start(
+                        lang::t("one_click_no_node_source", &self.settings_state.language)
+                            .to_string(),
+                        ctx,
+                    );
+                    return;
+                };
+                self.nodejs_install_state.start_nodejs_install(&url);
+                self.nodejs_install_state.show = false;
+                self.one_click_flow.stage = OneClickStage::InstallingNode;
+            }
+            OneClickStage::InstallingNode => {
+                self.nodejs_install_state.poll();
+                self.nodejs_install_state.show = false;
+                if self.nodejs_install_state.running {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                    return;
+                }
+                if self.nodejs_install_state.installed_version.is_some() {
+                    self.settings_state.nodejs_version_builtin =
+                        crate::core::settings::env_detect::detect_nodejs_builtin()
+                            .unwrap_or_default();
+                    self.nodejs_install_state.done_at = None;
+                    self.one_click_flow.stage = OneClickStage::CheckingEnvironment;
+                } else if self.nodejs_install_state.receiver.is_none() {
+                    self.fail_one_click_start(
+                        lang::t("one_click_node_install_failed", &self.settings_state.language)
+                            .to_string(),
+                        ctx,
+                    );
+                }
+            }
+            OneClickStage::CheckingTavern => {
+                if self.selected_tavern_is_ready() {
+                    self.one_click_flow.stage = OneClickStage::StartingTavern;
+                } else {
+                    self.version_manage_state.fetch_error = None;
+                    self.version_manage_state.fetch_forbidden = false;
+                    self.version_manage_state
+                        .fetch_releases(false, &self.settings_state);
+                    self.one_click_flow.stage = OneClickStage::FetchingTavern;
+                }
+            }
+            OneClickStage::FetchingTavern => {
+                self.version_manage_state.poll_release_messages();
+                if self.version_manage_state.is_fetching_releases {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                    return;
+                }
+                let api_unavailable = self.version_manage_state.fetch_error.take().is_some()
+                    || self.version_manage_state.fetch_forbidden
+                    || self.version_manage_state.latest_release.is_none();
+                let install_result = if api_unavailable {
+                    self.version_manage_state
+                        .start_release_branch_install(&mut self.settings_state)
+                } else {
+                    self.version_manage_state
+                        .start_latest_install(&mut self.settings_state)
+                };
+                if let Err(error) = install_result {
+                    self.fail_one_click_start(error, ctx);
+                    return;
+                }
+                self.one_click_flow.stage = OneClickStage::InstallingTavern;
+            }
+            OneClickStage::InstallingTavern => {
+                if let Some(outcome) = self
+                    .version_manage_state
+                    .poll_install_messages(&mut self.settings_state)
+                {
+                    self.version_manage_state.is_downloading = false;
+                    match outcome {
+                        Ok(()) => self.one_click_flow.stage = OneClickStage::StartingTavern,
+                        Err(error) => self.fail_one_click_start(error, ctx),
+                    }
+                } else {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                }
+            }
+            OneClickStage::StartingTavern => {
+                self.current_page = Page::Console;
+                self.console_state.start(&self.settings_state.language);
+                self.one_click_flow.stage = OneClickStage::WaitingForTavern;
+            }
+            OneClickStage::WaitingForTavern => match self.console_state.status {
+                pages::console::ConsoleStatus::Running => {
+                    self.one_click_flow = OneClickFlow::default();
+                    self.current_page = Page::Console;
+                }
+                pages::console::ConsoleStatus::Stopped => {
+                    let error = self
+                        .console_state
+                        .logs
+                        .back()
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            lang::t(
+                                "one_click_tavern_start_failed",
+                                &self.settings_state.language,
+                            )
+                            .to_string()
+                        });
+                    self.fail_one_click_start(error, ctx);
+                }
+                _ => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
+            },
+        }
+    }
+
+    fn one_click_capsule_state(&self) -> (&'static str, f32) {
+        let (stage_key, progress) = match self.one_click_flow.stage {
+            OneClickStage::Idle => ("one_click_stage_checking", 0.0),
+            OneClickStage::CheckingEnvironment => ("one_click_stage_checking_env", 0.05),
+            OneClickStage::SelectingGitMirror => ("one_click_stage_selecting_git", 0.10),
+            OneClickStage::InstallingGit => {
+                ("one_click_stage_installing_git", 0.10 + self.git_install_state.progress * 0.23)
+            }
+            OneClickStage::SelectingNodeMirror => ("one_click_stage_selecting_node", 0.35),
+            OneClickStage::InstallingNode => (
+                "one_click_stage_installing_node",
+                0.35 + self.nodejs_install_state.progress * 0.23,
+            ),
+            OneClickStage::CheckingTavern => ("one_click_stage_checking_tavern", 0.60),
+            OneClickStage::FetchingTavern => ("one_click_stage_fetching_tavern", 0.64),
+            OneClickStage::InstallingTavern => (
+                "one_click_stage_installing_tavern",
+                0.66 + self.version_manage_state.download_progress * 0.28,
+            ),
+            OneClickStage::StartingTavern => ("one_click_stage_starting_tavern", 0.96),
+            OneClickStage::WaitingForTavern => ("one_click_stage_waiting_tavern", 0.98),
+        };
+        if self.one_click_flow.cancel_requested {
+            ("one_click_stage_cancelling", progress)
+        } else {
+            (stage_key, progress)
+        }
+    }
+
+    fn render_one_click_capsule(&mut self, ctx: &egui::Context) {
+        if !self.one_click_flow.is_active() {
+            return;
+        }
+
+        let screen_size = ctx.content_rect().size();
+        egui::Area::new(egui::Id::new("one_click_interaction_lock"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::Pos2::ZERO)
+            .show(ctx, |ui| {
+                let _ = ui.allocate_exact_size(screen_size, egui::Sense::click_and_drag());
+            });
+
+        let (stage_key, progress) = self.one_click_capsule_state();
+        let mut cancel_clicked = false;
+        egui::Area::new(egui::Id::new("one_click_progress_capsule"))
+            .order(egui::Order::Tooltip)
+            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-18.0, -18.0))
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .corner_radius(18.0)
+                    .inner_margin(egui::Margin::symmetric(16, 12))
+                    .show(ui, |ui| {
+                        ui.set_width(390.0);
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    egui::RichText::new(lang::t(
+                                        "one_click_running",
+                                        &self.settings_state.language,
+                                    ))
+                                    .strong()
+                                    .size(14.0),
+                                );
+                                ui.label(
+                                    egui::RichText::new(lang::t(
+                                        stage_key,
+                                        &self.settings_state.language,
+                                    ))
+                                    .color(ui.visuals().weak_text_color())
+                                    .size(12.0),
+                                );
+                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let button = egui::Button::new(format!(
+                                        "{}  {}",
+                                        egui_phosphor::regular::X,
+                                        lang::t("cancel", &self.settings_state.language)
+                                    ));
+                                    if ui
+                                        .add_enabled(
+                                            !self.one_click_flow.cancel_requested,
+                                            button,
+                                        )
+                                        .clicked()
+                                    {
+                                        cancel_clicked = true;
+                                    }
+                                },
+                            );
+                        });
+                        ui.add_space(8.0);
+                        ui.add(
+                            egui::ProgressBar::new(progress.clamp(0.0, 1.0))
+                                .desired_width(ui.available_width()),
+                        );
+                    });
+            });
+
+        if cancel_clicked {
+            self.one_click_flow.cancel_requested = true;
+            self.one_click_flow.cancel_dispatched = false;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+
+    fn current_tavern_instance_path(&self) -> Option<std::path::PathBuf> {
+        self.settings_state.sillytavern.as_ref().and_then(|instance| {
+            match instance.instance_type.as_str() {
+                "builtin" => Some(crate::utils::app_paths().sillytavern_dir()),
+                "local" => instance.path.as_ref().map(std::path::PathBuf::from),
+                _ => None,
+            }
+        })
+    }
+
+    fn start_dependency_repair_task(&mut self, package: String) -> Result<(), String> {
+        let working_dir = self
+            .current_tavern_instance_path()
+            .ok_or_else(|| "未选择酒馆实例".to_string())?;
+        if !working_dir.join("package.json").exists() {
+            return Err("酒馆实例缺少 package.json".to_string());
+        }
+
+        let npm_path = match self.settings_state.env_mode {
+            pages::settings::EnvSource::Builtin => crate::core::env::get_builtin_npm_path(),
+            pages::settings::EnvSource::System => crate::core::env::get_system_cmd_path("npm"),
+        }
+        .ok_or_else(|| "当前环境模式下未找到 npm".to_string())?;
+
+        let package_declared = std::fs::read_to_string(working_dir.join("package.json"))
+            .ok()
+            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .is_some_and(|json| {
+                ["dependencies", "optionalDependencies"]
+                    .iter()
+                    .filter_map(|key| json.get(*key).and_then(|value| value.as_object()))
+                    .any(|dependencies| dependencies.contains_key(&package))
+            });
+        let registry = crate::core::settings::pm2::npm_registry_url(
+            &self.settings_state.npm_registry,
+        );
+        let env_mode = self.settings_state.env_mode;
+        let package_for_thread = package.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        self.console_state.add_log(&format!(
+            "[系统] 正在修复缺失依赖: {}",
+            package
+        ));
+        std::thread::spawn(move || {
+            let is_script = npm_path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("cmd")
+                        || extension.eq_ignore_ascii_case("bat")
+                });
+            let mut command = if is_script {
+                let mut command = std::process::Command::new("cmd");
+                command.arg("/d").arg("/c").arg(&npm_path);
+                command
+            } else {
+                std::process::Command::new(&npm_path)
+            };
+            crate::core::env::apply_no_window_to_command(&mut command);
+            command.arg("install");
+            if !package_declared {
+                command.arg(&package_for_thread);
+            }
+            command
+                .arg("--no-save")
+                .arg("--package-lock=false")
+                .arg("--omit=dev")
+                .arg("--no-audit")
+                .arg("--no-fund")
+                .env("NODE_ENV", "production")
+                .current_dir(&working_dir);
+            if let Some(registry) = registry {
+                command.arg("--registry").arg(registry);
+            }
+            if env_mode == pages::settings::EnvSource::Builtin {
+                crate::core::env::apply_builtin_path_to_command(&mut command);
+            }
+
+            let result = command.output().map_err(|error| error.to_string()).and_then(|output| {
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    let detail = if stderr.is_empty() { stdout } else { stderr };
+                    let detail = detail.chars().rev().take(2000).collect::<Vec<_>>();
+                    let detail: String = detail.into_iter().rev().collect();
+                    Err(if detail.is_empty() {
+                        format!("npm 退出码: {}", output.status)
+                    } else {
+                        detail
+                    })
+                }
+            });
+            let _ = tx.send(result);
+        });
+
+        self.dependency_repair_task = Some(DependencyRepairTask {
+            package,
+            receiver: rx,
+        });
+        Ok(())
+    }
+
+    fn poll_dependency_repair(&mut self, ctx: &egui::Context) {
+        if self.console_state.status == pages::console::ConsoleStatus::Stopped {
+            if let Some(package) = self.dependency_repair_waiting.take() {
+                if let Err(error) = self.start_dependency_repair_task(package.clone()) {
+                    self.dependency_repair_error = Some((package, error));
+                }
+            }
+        }
+
+        let outcome = self.dependency_repair_task.as_ref().and_then(|task| {
+            match task.receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Some(Err("依赖修复任务意外中断".to_string()))
+                }
+            }
+        });
+        if let Some(outcome) = outcome {
+            let Some(task) = self.dependency_repair_task.take() else {
+                return;
+            };
+            match outcome {
+                Ok(()) => {
+                    self.console_state.add_log(&format!(
+                        "[系统] 依赖 {} 修复完成，正在重新启动酒馆...",
+                        task.package
+                    ));
+                    self.console_state.start(&self.settings_state.language);
+                    self.current_page = Page::Console;
+                }
+                Err(error) => {
+                    self.console_state.add_log(&format!(
+                        "[错误] 依赖 {} 修复失败: {}",
+                        task.package, error
+                    ));
+                    self.dependency_repair_error = Some((task.package, error));
+                }
+            }
+        }
+
+        if self.dependency_repair_task.is_some()
+            || self.dependency_repair_waiting.is_some()
+        {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
+
+    fn render_dependency_repair_dialogs(&mut self, ctx: &egui::Context) {
+        if let Some(package) = self.missing_dependency_dialog.clone() {
+            let mut repair = false;
+            let mut dismiss = false;
+            egui::Modal::new(egui::Id::new("missing_dependency_repair_prompt")).show(ctx, |ui| {
+                ui.set_width(430.0);
+                ui.heading(lang::t(
+                    "dependency_missing_title",
+                    &self.settings_state.language,
+                ));
+                ui.add_space(8.0);
+                ui.label(
+                    lang::t("dependency_missing_desc", &self.settings_state.language)
+                        .replace("{package}", &package),
+                );
+                ui.add_space(14.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button(lang::t(
+                            "dependency_repair_now",
+                            &self.settings_state.language,
+                        ))
+                        .clicked()
+                    {
+                        repair = true;
+                    }
+                    if ui
+                        .button(lang::t(
+                            "dependency_repair_later",
+                            &self.settings_state.language,
+                        ))
+                        .clicked()
+                    {
+                        dismiss = true;
+                    }
+                });
+            });
+            if repair {
+                self.missing_dependency_dialog = None;
+                if self.console_state.status == pages::console::ConsoleStatus::Stopped {
+                    if let Err(error) = self.start_dependency_repair_task(package.clone()) {
+                        self.dependency_repair_error = Some((package, error));
+                    }
+                } else {
+                    self.console_state
+                        .force_kill(&self.settings_state.language);
+                    self.dependency_repair_waiting = Some(package);
+                }
+            } else if dismiss {
+                self.missing_dependency_dialog = None;
+            }
+        }
+
+        if let Some(package) = self
+            .dependency_repair_task
+            .as_ref()
+            .map(|task| task.package.clone())
+            .or_else(|| self.dependency_repair_waiting.clone())
+        {
+            egui::Modal::new(egui::Id::new("dependency_repair_progress")).show(ctx, |ui| {
+                ui.set_width(400.0);
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(
+                        lang::t("dependency_repairing", &self.settings_state.language)
+                            .replace("{package}", &package),
+                    );
+                });
+            });
+        }
+
+        if let Some((package, error)) = self.dependency_repair_error.clone() {
+            let mut close = false;
+            egui::Modal::new(egui::Id::new("dependency_repair_failed")).show(ctx, |ui| {
+                ui.set_width(460.0);
+                ui.heading(lang::t(
+                    "dependency_repair_failed_title",
+                    &self.settings_state.language,
+                ));
+                ui.label(
+                    lang::t("dependency_repair_failed_desc", &self.settings_state.language)
+                        .replace("{package}", &package),
+                );
+                ui.add_space(8.0);
+                egui::ScrollArea::vertical()
+                    .max_height(180.0)
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new(error).monospace().size(12.0));
+                    });
+                ui.add_space(10.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(lang::t("close", &self.settings_state.language)).clicked() {
+                        close = true;
+                    }
+                });
+            });
+            if close {
+                self.dependency_repair_error = None;
+            }
+        }
+    }
+
+    /// 显示 Node.js 环境缺失提示，并为内置环境提供直达安装区域的入口。
+    fn render_missing_env_dialog(&mut self, ctx: &egui::Context) {
+        let Some(source) = self.missing_env_dialog else {
+            return;
+        };
+
+        let is_builtin = source == pages::settings::EnvSource::Builtin;
+        let desc_key = if is_builtin {
+            "env_missing_builtin_desc"
+        } else {
+            "env_missing_system_desc"
+        };
+        let language = self.settings_state.language;
+        let mut close = false;
+        let mut go_install = false;
+
+        egui::Modal::new(egui::Id::new("missing_nodejs_environment_modal")).show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(egui_phosphor::regular::WARNING_CIRCLE)
+                        .size(24.0)
+                        .color(egui::Color32::from_rgb(235, 165, 45)),
+                );
+                ui.heading(lang::t("env_missing_title", &language));
+            });
+            ui.add_space(10.0);
+            ui.label(egui::RichText::new(lang::t(desc_key, &language)).size(14.0));
+            ui.add_space(16.0);
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if is_builtin
+                    && ui
+                        .button(lang::t("env_go_install", &language))
+                        .clicked()
+                {
+                    go_install = true;
+                }
+                if ui.button(lang::t("close", &language)).clicked() {
+                    close = true;
+                }
+            });
+        });
+
+        if go_install {
+            self.missing_env_dialog = None;
+            self.current_page = Page::Settings;
+            self.settings_tab = SettingsTab::General;
+            self.focus_env_dependencies = true;
+        } else if close {
+            self.missing_env_dialog = None;
+        }
+    }
 }
 
 impl eframe::App for MyApp {
@@ -524,6 +1435,9 @@ impl eframe::App for MyApp {
             .resizable(false)
             .exact_width(panel_width)
             .show(ctx, |ui| {
+                if self.one_click_flow.is_active() {
+                    ui.disable();
+                }
                 ui.add_space(10.0);
 
                 ui.vertical_centered(|ui| {
@@ -845,6 +1759,7 @@ impl eframe::App for MyApp {
 
         // 每帧轮询酒馆进程状态
         self.console_state.poll(&self.settings_state.language);
+        self.advance_one_click_start(ctx);
         self.drain_desktop_webview_events(ctx);
         self.sync_desktop_webview(ctx);
         if self.console_state.status == pages::console::ConsoleStatus::Running
@@ -950,6 +1865,9 @@ impl eframe::App for MyApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            if self.one_click_flow.is_active() {
+                ui.disable();
+            }
             match self.current_page {
                 Page::OneClickStart => {
                     let version = self
@@ -1073,10 +1991,37 @@ impl eframe::App for MyApp {
                         &mut self.git_node_select,
                         &mut self.nodejs_node_select,
                         &mut self.caddy_node_select,
+                        &mut self.focus_env_dependencies,
                     );
                 }
             }
         });
+
+        if self.console_state.take_one_click_start_request() {
+            self.handle_user_start_request();
+        }
+        if let Some(source) = self.console_state.take_missing_env_prompt() {
+            match source {
+                pages::settings::EnvSource::Builtin => {
+                    self.settings_state.nodejs_version_builtin.clear();
+                }
+                pages::settings::EnvSource::System => {
+                    self.settings_state.nodejs_version.clear();
+                }
+            }
+            self.missing_env_dialog = Some(source);
+        }
+        self.render_missing_env_dialog(ctx);
+        if let Some(package) = self.console_state.take_missing_dependency_prompt() {
+            if self.missing_dependency_dialog.is_none()
+                && self.dependency_repair_task.is_none()
+                && self.dependency_repair_waiting.is_none()
+            {
+                self.missing_dependency_dialog = Some(package);
+            }
+        }
+        self.poll_dependency_repair(ctx);
+        self.render_dependency_repair_dialogs(ctx);
 
         // 同步 transient 更新字段，避免误触发"设置已保存"
         old_state.update_confirm_open = self.settings_state.update_confirm_open;
@@ -1088,6 +2033,18 @@ impl eframe::App for MyApp {
         old_state.check_update_trigger = self.settings_state.check_update_trigger;
         old_state.do_update_trigger.clone_from(&self.settings_state.do_update_trigger);
         old_state.has_seen_scan_warning = self.settings_state.has_seen_scan_warning;
+        // 环境版本是运行时检测缓存，不属于用户设置；缺失检查刷新缓存时不应提示“设置已保存”。
+        old_state.nodejs_version.clone_from(&self.settings_state.nodejs_version);
+        old_state
+            .nodejs_version_builtin
+            .clone_from(&self.settings_state.nodejs_version_builtin);
+        old_state.git_version.clone_from(&self.settings_state.git_version);
+        old_state
+            .git_version_builtin
+            .clone_from(&self.settings_state.git_version_builtin);
+        if self.one_click_flow.is_active() {
+            old_state.env_mode = self.settings_state.env_mode;
+        }
 
         // 设置变化时保存
         if old_state != self.settings_state {
@@ -1118,6 +2075,7 @@ impl eframe::App for MyApp {
 
         // 访问酒馆弹窗（服务器模式）
         crate::pages::access_tavern_popup::render_access_tavern_popup(ctx, &self.settings_state.language);
+        self.render_one_click_capsule(ctx);
 
         // 文件夹选择器处理
         if self.settings_state.trigger_folder_picker {
@@ -1165,7 +2123,11 @@ impl eframe::App for MyApp {
 
         // 关闭时保存窗口位置
         if ctx.input(|i| i.viewport().close_requested()) {
-            if self.settings_state.remember_window_pos {
+            if self.one_click_flow.is_active() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.one_click_flow.cancel_requested = true;
+                self.one_click_flow.cancel_dispatched = false;
+            } else if self.settings_state.remember_window_pos {
                 if let Some(pos) = ctx.input(|i| i.viewport().inner_rect).map(|r| r.min) {
                     let pos_array = [pos.x, pos.y];
                     if self.settings_state.window_position != Some(pos_array) {
@@ -1175,5 +2137,70 @@ impl eframe::App for MyApp {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod one_click_flow_tests {
+    use super::*;
+
+    #[test]
+    fn complete_system_environment_is_accepted() {
+        assert!(system_environment_error(true, true, true).is_none());
+    }
+
+    #[test]
+    fn automation_is_only_used_for_first_launch_with_missing_environment() {
+        assert!(should_use_first_launch_automation(true, false));
+        assert!(!should_use_first_launch_automation(true, true));
+        assert!(!should_use_first_launch_automation(false, false));
+    }
+
+    #[test]
+    fn first_launch_automation_eligibility_is_not_persisted() {
+        let settings = pages::settings::SettingsState::default();
+        let json = serde_json::to_value(settings).expect("settings should serialize");
+        assert!(json.get("first_launch_auto_setup_available").is_none());
+    }
+
+    #[test]
+    fn incomplete_system_environment_does_not_fall_back_to_builtin() {
+        assert_eq!(
+            system_environment_error(false, true, true),
+            Some("one_click_system_git_missing")
+        );
+        assert_eq!(
+            system_environment_error(true, false, false),
+            Some("one_click_system_node_missing")
+        );
+    }
+
+    #[test]
+    fn missing_builtin_components_are_installed_in_dependency_order() {
+        assert!(matches!(
+            next_environment_stage(false, false),
+            OneClickStage::SelectingGitMirror
+        ));
+        assert!(matches!(
+            next_environment_stage(true, false),
+            OneClickStage::SelectingNodeMirror
+        ));
+        assert!(matches!(
+            next_environment_stage(true, true),
+            OneClickStage::CheckingTavern
+        ));
+    }
+
+    #[test]
+    fn cancelling_an_environment_task_sets_its_shared_token() {
+        let mut task = pages::settings::InstallTaskState::new();
+        task.running = true;
+        task.show = true;
+        task.cancel();
+
+        assert!(!task.show);
+        assert!(task
+            .cancel_flag
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 }

@@ -6,28 +6,6 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 // ─── 路径解析 ─────────────────────────────────────────────────────────────────
 
-/// 解析命令的完整路径（内置优先，回退系统 PATH）
-pub fn resolve_command(name: &str) -> String {
-    // 先检查内置路径
-    let builtin_dir = crate::core::env::get_data_dir().join("lib");
-    for sub_dir in &["git/cmd", "git/bin", "nodejs"] {
-        let exe_name = if *sub_dir == "nodejs" {
-            "node.exe"
-        } else {
-            &format!("{}.exe", name)
-        };
-        let full = builtin_dir.join(sub_dir).join(exe_name);
-        if full.exists() {
-            return full.to_string_lossy().to_string();
-        }
-    }
-    // 回退到系统 PATH
-    if let Some(p) = crate::core::env::get_system_cmd_path(name) {
-        return p.to_string_lossy().to_string();
-    }
-    name.to_string()
-}
-
 /// 仅在系统 PATH 中查找命令（`where` 命令）
 fn resolve_command_system(name: &str) -> String {
     if let Some(p) = crate::core::env::get_system_cmd_path(name) {
@@ -100,7 +78,10 @@ pub fn detect_git_system() -> Option<String> {
 
 /// 检测 Node.js 版本（系统 PATH）
 pub fn detect_nodejs_system() -> Option<String> {
-    let output = cmd_system("node").arg("--version").output().ok()?;
+    let node_path = crate::core::env::get_system_cmd_path("node")?;
+    let mut cmd = Command::new(node_path);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = cmd.arg("--version").output().ok()?;
     if !output.status.success() { return None; }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let version = stdout.trim().to_string();

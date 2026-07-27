@@ -1,0 +1,188 @@
+name: 构建并发布新版本
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - Cargo.toml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: 构建 Windows 版本
+    runs-on: windows-2022
+
+    steps:
+      - name: 检出仓库代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: 读取发布版本信息
+        id: metadata
+        shell: pwsh
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          $cargo = Get-Content Cargo.toml -Raw
+          $match = [regex]::Match($cargo, '(?ms)^\[package\][^\[]*?^version\s*=\s*"([^"]+)"')
+          if (-not $match.Success) {
+            throw 'Unable to read [package].version from Cargo.toml'
+          }
+
+          $version = $match.Groups[1].Value
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-beta)?$') {
+            throw "Version '$version' must use X.Y.Z or X.Y.Z-beta"
+          }
+
+          $isBeta = $version.EndsWith('-beta')
+          $baseVersion = $version -replace '-beta$', ''
+          $tag = if ($isBeta) { "beta-v$baseVersion" } else { "v$baseVersion" }
+          $releaseName = if ($isBeta) {
+            "AstraBrew Launcher $baseVersion Beta"
+          } else {
+            "AstraBrew Launcher $baseVersion"
+          }
+
+          $shouldRelease = $true
+          if ($env:EVENT_NAME -eq 'push' -and $env:BEFORE_SHA -and $env:BEFORE_SHA -notmatch '^0+$') {
+            $previousCargo = & git show "${env:BEFORE_SHA}:Cargo.toml" 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              $previousMatch = [regex]::Match(
+                ($previousCargo -join "`n"),
+                '(?ms)^\[package\][^\[]*?^version\s*=\s*"([^"]+)"'
+              )
+              if ($previousMatch.Success -and $previousMatch.Groups[1].Value -eq $version) {
+                $shouldRelease = $false
+              }
+            }
+          }
+
+          if ($shouldRelease) {
+            if (-not (Test-Path UPDATELOGS.md)) {
+              throw 'UPDATELOGS.md does not exist.'
+            }
+            $updateLogs = Get-Content UPDATELOGS.md -Raw
+            $logVersions = @($version)
+            if ($isBeta -and $baseVersion -ne $version) {
+              $logVersions += $baseVersion
+            }
+            $releaseNotes = $null
+            foreach ($logVersion in $logVersions) {
+              $escapedVersion = [regex]::Escape($logVersion)
+              $logMatch = [regex]::Match(
+                $updateLogs,
+                "(?ms)^##\s+\[$escapedVersion\](?:\s+-[^\r\n]*)?\s*\r?\n.*?(?=^##\s+\[|\z)"
+              )
+              if ($logMatch.Success) {
+                $releaseNotes = $logMatch.Value.Trim()
+                break
+              }
+            }
+            if (-not $releaseNotes) {
+              throw "UPDATELOGS.md does not contain a section for version '$version'."
+            }
+            [System.IO.File]::WriteAllText(
+              (Join-Path $PWD '.release-notes.md'),
+              "$releaseNotes`n",
+              [System.Text.UTF8Encoding]::new($false)
+            )
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "base_version=$baseVersion" >> $env:GITHUB_OUTPUT
+          "is_beta=$($isBeta.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "release_name=$releaseName" >> $env:GITHUB_OUTPUT
+          "should_release=$($shouldRelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: 跳过未更新的版本
+        if: steps.metadata.outputs.should_release != 'true'
+        shell: pwsh
+        run: Write-Host 'Cargo.toml changed, but [package].version did not. No release is needed.'
+
+      - name: 检查发布标签是否已存在
+        if: steps.metadata.outputs.should_release == 'true'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+        run: |
+          $existingTag = & git ls-remote --tags origin "refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to query existing release tags.'
+          }
+          if ($existingTag) {
+            throw "Release tag '$env:RELEASE_TAG' already exists. Bump [package].version first."
+          }
+
+      - name: 安装 Rust 稳定版工具链
+        if: steps.metadata.outputs.should_release == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: 缓存 Rust 构建文件
+        if: steps.metadata.outputs.should_release == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: 安装 NSIS 和 cargo-packager
+        if: steps.metadata.outputs.should_release == 'true'
+        shell: pwsh
+        run: |
+          choco install nsis --no-progress -y
+          cargo install cargo-packager --locked
+
+      - name: 构建安装包和免安装压缩包
+        if: steps.metadata.outputs.should_release == 'true'
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: .\build.ps1 -Clean -Version $env:RELEASE_VERSION
+
+      - name: 生成 SHA-256 校验文件
+        if: steps.metadata.outputs.should_release == 'true'
+        shell: pwsh
+        run: |
+          $lines = Get-ChildItem dist -File | Sort-Object Name | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          }
+          [System.IO.File]::WriteAllLines(
+            (Join-Path $PWD 'dist\SHA256SUMS.txt'),
+            $lines,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+      - name: 上传构建产物
+        if: steps.metadata.outputs.should_release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AstraBrew-Launcher-${{ steps.metadata.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: 发布 GitHub Release
+        if: steps.metadata.outputs.should_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.metadata.outputs.tag }}
+          name: ${{ steps.metadata.outputs.release_name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: false
+          body_path: .release-notes.md
+          files: |
+            dist/*.exe
+            dist/*.zip
+            dist/SHA256SUMS.txt

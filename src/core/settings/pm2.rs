@@ -605,41 +605,16 @@ impl Pm2Manager {
             Some(p) => p,
             None => return (Vec::new(), byte_offset),
         };
+        read_pm2_log_file_since(&path, byte_offset)
+    }
 
-        use std::io::{Read, Seek, SeekFrom};
-        let mut file = match std::fs::File::open(&path) {
-            Ok(f) => f,
-            Err(_) => return (Vec::new(), byte_offset),
+    /// 读取 stderr 日志文件从指定字节偏移开始的新内容。
+    pub fn read_error_logs_since(&self, byte_offset: u64) -> (Vec<String>, u64) {
+        let path = match self.error_log_path() {
+            Some(path) => path,
+            None => return (Vec::new(), byte_offset),
         };
-
-        let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
-
-        // 文件被截断（pm2 flush / 删除后重建），重置到开头
-        let start = if byte_offset > file_size {
-            0
-        } else {
-            byte_offset
-        };
-
-        if start > 0 {
-            if file.seek(SeekFrom::Start(start)).is_err() {
-                return (Vec::new(), byte_offset);
-            }
-        }
-
-        let mut content = String::new();
-        if file.read_to_string(&mut content).is_err() {
-            return (Vec::new(), byte_offset);
-        }
-
-        let new_offset = start + content.len() as u64;
-        let lines: Vec<String> = content
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect();
-
-        (lines, new_offset)
+        read_pm2_log_file_since(&path, byte_offset)
     }
 
     /// 仅删除日志文件（不调用 `pm2 flush`，无阻塞）。
@@ -681,13 +656,14 @@ impl Pm2Manager {
         interceptor_path: Option<&str>,
         env_mode: EnvSource,
     ) -> Result<PathBuf, String> {
-        let pm2_path = crate::core::env::get_pm2_path()
-            .ok_or_else(|| "未找到 PM2 命令".to_string())?;
-        let pm2_root = pm2_path
-            .parent()
-            .ok_or_else(|| format!("PM2 路径无效: {}", pm2_path.display()))?;
-        let interpreter = resolve_pm2_node_path(pm2_root)
-            .ok_or_else(|| "未找到 PM2 对应的 Node.js 解释器".to_string())?;
+        let interpreter = match env_mode {
+            EnvSource::Builtin => crate::core::env::get_builtin_node_path(),
+            EnvSource::System => crate::core::env::get_system_cmd_path("node"),
+        }
+        .ok_or_else(|| match env_mode {
+            EnvSource::Builtin => "未找到内置 Node.js 环境".to_string(),
+            EnvSource::System => "未找到系统 Node.js 环境".to_string(),
+        })?;
 
         let mut script_args: Vec<String> = Vec::new();
         if *data_mode == TavernDataMode::Global {
@@ -809,6 +785,40 @@ impl Pm2Manager {
 
         Ok(config_path)
     }
+}
+
+fn read_pm2_log_file_since(path: &Path, byte_offset: u64) -> (Vec<String>, u64) {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return (Vec::new(), byte_offset),
+    };
+
+    let file_size = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+    let start = if byte_offset > file_size {
+        0
+    } else {
+        byte_offset
+    };
+
+    if start > 0 && file.seek(SeekFrom::Start(start)).is_err() {
+        return (Vec::new(), byte_offset);
+    }
+
+    let mut content = String::new();
+    if file.read_to_string(&mut content).is_err() {
+        return (Vec::new(), byte_offset);
+    }
+
+    let new_offset = start + content.len() as u64;
+    let lines = content
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    (lines, new_offset)
 }
 
 /// 过滤 npm 输出的噪音日志

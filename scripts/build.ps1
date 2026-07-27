@@ -79,14 +79,48 @@ Write-Ok "版本号: $Version"
 
 # 根据 -Beta / -Release 参数计算最终版本号并设置编译时环境变量
 # （build.rs 读取 ASTRABREW_BUILD_TYPE 控制 BETA 角标渲染）
+$Version = $Version.Trim()
+if ($Version.EndsWith('-beta', [System.StringComparison]::OrdinalIgnoreCase)) {
+    $Beta = $true
+}
 if ($Beta) {
-    $Version = "$Version-beta"
+    if (-not $Version.EndsWith('-beta', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $Version = "$Version-beta"
+    }
     $env:ASTRABREW_BUILD_TYPE = 'beta'
-    Write-Ok "构建模式: Beta（版本号追加 -beta，UI 渲染 BETA 角标）"
+    Write-Ok "构建模式: Beta（版本号 $Version，UI 渲染 BETA 角标）"
 } else {
     $env:ASTRABREW_BUILD_TYPE = 'release'
     Write-Ok "构建模式: Release（正式版，无 BETA 角标）"
 }
+
+function Set-ManifestSectionVersion([string]$Content, [string]$Section, [string]$NewVersion) {
+    $pattern = '(?ms)(^\[{0}\][^\[]*?^version\s*=\s*")[^"]+(")' -f [regex]::Escape($Section)
+    $regex = [regex]::new($pattern)
+    if (-not $regex.IsMatch($Content)) {
+        Die "Cargo.toml 缺少 [$Section] version"
+    }
+    return $regex.Replace(
+        $Content,
+        { param($match) $match.Groups[1].Value + $NewVersion + $match.Groups[2].Value },
+        1
+    )
+}
+
+$OriginalCargoContent = Get-Content $CargoToml -Raw
+$BuildCargoContent = Set-ManifestSectionVersion $OriginalCargoContent 'package' $Version
+$BuildCargoContent = Set-ManifestSectionVersion $BuildCargoContent 'package.metadata.packager' $Version
+$CargoTomlChanged = $BuildCargoContent -cne $OriginalCargoContent
+
+try {
+    if ($CargoTomlChanged) {
+        [System.IO.File]::WriteAllText(
+            $CargoToml,
+            $BuildCargoContent,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        Write-Ok "构建期间已同步 Cargo 与打包器版本: $Version"
+    }
 
 # ============================================================================
 # 2. 检查工具链
@@ -186,3 +220,13 @@ if (Test-Path $DistDir) {
 Write-Host "`n========================================" -ForegroundColor Green
 Write-Host " 构建打包完成 - 版本 $Version" -ForegroundColor Green
 Write-Host "========================================`n" -ForegroundColor Green
+} finally {
+    if ($CargoTomlChanged) {
+        [System.IO.File]::WriteAllText(
+            $CargoToml,
+            $OriginalCargoContent,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        Write-Ok 'Cargo.toml 已恢复构建前版本'
+    }
+}

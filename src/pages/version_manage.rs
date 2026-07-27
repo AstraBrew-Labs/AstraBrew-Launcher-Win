@@ -55,6 +55,7 @@ pub enum ReleaseMsg {
     Recent(Vec<GithubRelease>),
     Error(String),
     Forbidden, // API rate limit or 403
+    Done,
 }
 
 #[allow(dead_code)]
@@ -122,6 +123,7 @@ pub struct VersionManageState {
     pub show_already_latest: bool,
     pub update_target: Option<(String, String)>,
     pub active_pid: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
+    pub cancel_install_flag: Arc<AtomicBool>,
     pub download_finished_time: Option<std::time::Instant>,
 
     // Scan state
@@ -183,6 +185,7 @@ impl VersionManageState {
             show_already_latest: false,
             update_target: None,
             active_pid: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            cancel_install_flag: Arc::new(AtomicBool::new(false)),
             download_finished_time: None,
             is_scanning: false,
             scan_receiver: None,
@@ -321,7 +324,144 @@ impl VersionManageState {
                     let _ = tx.send(ReleaseMsg::Error(e.to_string()));
                 }
             }
+            let _ = tx.send(ReleaseMsg::Done);
         });
+    }
+
+    /// 轮询版本信息请求。返回 true 表示本轮请求已经结束。
+    pub fn poll_release_messages(&mut self) -> bool {
+        let mut finished = false;
+        if let Some(rx) = &self.release_receiver {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    ReleaseMsg::Latest(release) => self.latest_release = release,
+                    ReleaseMsg::Recent(releases) => {
+                        self.recent_releases = releases;
+                        let cache = ReleasesCache {
+                            timestamp: SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                            latest: self.latest_release.clone(),
+                            recent: self.recent_releases.clone(),
+                        };
+                        if let Ok(content) = serde_json::to_string(&cache) {
+                            let path = utils::app_paths().caches.join("releases_cache.json");
+                            let _ = fs::write(path, content);
+                        }
+                    }
+                    ReleaseMsg::Error(err) => {
+                        self.fetch_error = Some(err);
+                        finished = true;
+                    }
+                    ReleaseMsg::Forbidden => {
+                        self.fetch_forbidden = true;
+                        finished = true;
+                    }
+                    ReleaseMsg::Done => finished = true,
+                }
+            }
+        }
+        if finished {
+            self.is_fetching_releases = false;
+            self.release_receiver = None;
+        }
+        finished
+    }
+
+    /// 安装当前已获取到的最新酒馆版本。
+    pub fn start_latest_install(&mut self, settings: &mut SettingsState) -> Result<(), String> {
+        let release = self
+            .latest_release
+            .clone()
+            .ok_or_else(|| "未获取到可安装的酒馆版本".to_string())?;
+        start_install(self, &release.zipball_url, &release.tag_name, settings, false);
+        if let Some(error) = self.install_error_alert.take() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// GitHub API 不可用时直接安装官方 release 分支。
+    pub fn start_release_branch_install(
+        &mut self,
+        settings: &mut SettingsState,
+    ) -> Result<(), String> {
+        start_install(self, "", "release", settings, false);
+        if let Some(error) = self.install_error_alert.take() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// 轮询酒馆安装任务，任务结束时返回最终结果。
+    pub fn poll_install_messages(
+        &mut self,
+        settings: &mut SettingsState,
+    ) -> Option<Result<(), String>> {
+        let mut outcome = None;
+        if let Some(rx) = &self.download_receiver {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    DownloadMsg::Log(log) => self.download_logs.push(log),
+                    DownloadMsg::Progress(progress, status) => {
+                        self.download_progress = progress;
+                        self.download_status = status;
+                    }
+                    DownloadMsg::Finished { version, path: _ } => {
+                        self.download_progress = 1.0;
+                        self.download_status =
+                            lang::t("download_finished", &settings.language).to_string();
+                        self.online_installed_version = Some(version.clone());
+                        self.npm_install_failed = false;
+                        self.download_finished_time = Some(std::time::Instant::now());
+                        for instance in &mut self.local_instances {
+                            instance.is_current = false;
+                        }
+                        save_current_to_settings("builtin", None, &version, settings);
+                        outcome = Some(Ok(()));
+                    }
+                    DownloadMsg::NpmError { error, version: _, path: _ } => {
+                        self.download_status = format!(
+                            "{}: {}",
+                            lang::t("download_error", &settings.language),
+                            error
+                        );
+                        let _ = fs::remove_dir_all(
+                            utils::app_paths().sillytavern_dir().join("node_modules"),
+                        );
+                        self.online_installed_version = None;
+                        self.npm_install_failed = true;
+                        outcome = Some(Err(error));
+                    }
+                    DownloadMsg::Error(error) => {
+                        self.download_status = format!(
+                            "{}: {}",
+                            lang::t("download_error", &settings.language),
+                            error
+                        );
+                        outcome = Some(Err(error));
+                    }
+                }
+            }
+        }
+        if outcome.is_some() {
+            self.download_receiver = None;
+        }
+        outcome
+    }
+
+    /// 中断当前酒馆安装子进程，并让后台任务在安全检查点退出。
+    pub fn cancel_active_install(&mut self) {
+        self.cancel_install_flag.store(true, Ordering::Relaxed);
+        let pid = *self.active_pid.lock().unwrap();
+        if let Some(pid) = pid {
+            let mut command = Command::new("taskkill");
+            apply_hidden_command(&mut command);
+            let _ = command
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .spawn();
+        }
     }
 }
 
@@ -336,14 +476,7 @@ fn npm_registry_url(registry: &crate::pages::settings::NpmRegistry) -> &'static 
 
 /// 查找系统命令的完整路径（通过 `which`）
 fn find_command(cmd: &str) -> Option<PathBuf> {
-    let output = Command::new("which").arg(cmd).output().ok()?;
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Some(PathBuf::from(path));
-        }
-    }
-    None
+    crate::core::env::get_system_cmd_path(cmd)
 }
 
 /// 保存本地实例列表（仅保留 is_online == false 的本地实例）
@@ -564,6 +697,9 @@ pub fn render(ui: &mut egui::Ui, state: &mut VersionManageState, settings: &mut 
                 }
                 ReleaseMsg::Forbidden => {
                     state.fetch_forbidden = true;
+                    state.is_fetching_releases = false;
+                }
+                ReleaseMsg::Done => {
                     state.is_fetching_releases = false;
                 }
             }
@@ -1859,6 +1995,7 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
     state.download_logs.clear();
     state.download_status = lang::t("status_preparing", &settings.language).to_string();
     state.download_finished_time = None;
+    state.cancel_install_flag = Arc::new(AtomicBool::new(false));
 
     let (tx, rx) = mpsc::channel();
     state.download_receiver = Some(rx);
@@ -1866,6 +2003,7 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
     let version_str = version.to_string();
     let target_dir = st_dir.clone();
     let active_pid = state.active_pid.clone();
+    let cancel_flag = state.cancel_install_flag.clone();
 
     let github_proxy_url = if settings.github_proxy_enabled {
         Some(settings.github_proxy_url.clone())
@@ -1881,6 +2019,10 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
         .unwrap_or_else(|| "https://github.com/SillyTavern/SillyTavern.git".to_string());
 
     thread::spawn(move || {
+        if cancel_flag.load(Ordering::Relaxed) {
+            let _ = tx.send(DownloadMsg::Error("安装已取消".to_string()));
+            return;
+        }
         let _ = tx.send(DownloadMsg::Log("Starting installation...".to_string()));
 
         if !skip_clone {
@@ -1930,6 +2072,11 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
 
                 let status = child.wait().unwrap_or_else(|_| std::process::ExitStatus::default());
                 *active_pid.lock().unwrap() = None;
+                if cancel_flag.load(Ordering::Relaxed) {
+                    let _ = fs::remove_dir_all(&target_dir);
+                    let _ = tx.send(DownloadMsg::Error("安装已取消".to_string()));
+                    return;
+                }
                 if !status.success() {
                     let _ = tx.send(DownloadMsg::Error("Git clone failed.".to_string()));
                     return;
@@ -1987,6 +2134,10 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                 }
                 let status = child.wait().unwrap_or_else(|_| std::process::ExitStatus::default());
                 *active_pid.lock().unwrap() = None;
+                if cancel_flag.load(Ordering::Relaxed) {
+                    let _ = tx.send(DownloadMsg::Error("安装已取消".to_string()));
+                    return;
+                }
                 if !status.success() {
                     let _ = tx.send(DownloadMsg::Error("Git fetch failed.".to_string()));
                     return;
@@ -2022,6 +2173,10 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
                 }
                 let status = child.wait().unwrap_or_else(|_| std::process::ExitStatus::default());
                 *active_pid.lock().unwrap() = None;
+                if cancel_flag.load(Ordering::Relaxed) {
+                    let _ = tx.send(DownloadMsg::Error("安装已取消".to_string()));
+                    return;
+                }
                 if !status.success() {
                     let _ = tx.send(DownloadMsg::Error("Git checkout failed.".to_string()));
                     return;
@@ -2030,6 +2185,10 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
         }
 
         // 2. NPM install
+        if cancel_flag.load(Ordering::Relaxed) {
+            let _ = tx.send(DownloadMsg::Error("安装已取消".to_string()));
+            return;
+        }
         let _ = tx.send(DownloadMsg::Progress(0.5, "Installing dependencies...".to_string()));
 
         let mut npm_cmd = Command::new(&npm_path);
@@ -2109,6 +2268,11 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
 
         let status = child.wait().unwrap_or_else(|_| std::process::ExitStatus::default());
         *active_pid.lock().unwrap() = None;
+        if cancel_flag.load(Ordering::Relaxed) {
+            let _ = fs::remove_dir_all(target_dir.join("node_modules"));
+            let _ = tx.send(DownloadMsg::Error("安装已取消".to_string()));
+            return;
+        }
         if !status.success() {
             let _ = tx.send(DownloadMsg::NpmError {
                 error: "NPM install failed.".to_string(),
@@ -2118,9 +2282,14 @@ fn start_install(state: &mut VersionManageState, _url: &str, version: &str, sett
             return;
         }
 
+        let installed_version = fs::read_to_string(target_dir.join("package.json"))
+            .ok()
+            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .and_then(|json| json.get("version")?.as_str().map(str::to_string))
+            .unwrap_or(version_str);
         let _ = tx.send(DownloadMsg::Progress(1.0, "Finished".to_string()));
         let _ = tx.send(DownloadMsg::Finished {
-            version: version_str,
+            version: installed_version,
             path: target_dir.to_string_lossy().to_string(),
         });
     });

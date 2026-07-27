@@ -13,7 +13,6 @@
 //! - Drop 时自动 kill 子进程（启动器关闭 → 酒馆也关闭）
 //! - GitHub 代理：通过 --import 预加载拦截器脚本，重写 GitHub URL
 
-use crate::core::settings::env_detect;
 use crate::core::settings::tavern::{ConfigMode, TavernConfig};
 use crate::pages::settings::{EnvSource, TavernDataMode};
 use std::io::{BufRead, BufReader};
@@ -190,9 +189,20 @@ pub fn prepare_interceptor() -> std::io::Result<PathBuf> {
     Ok(path)
 }
 
-/// 检查当前 Node.js 是否支持 `--import` 标志（Node.js >= 19.0.0）
-pub fn node_supports_import() -> bool {
-    let mut cmd = Command::new(env_detect::resolve_command("node"));
+/// 严格按环境模式解析 Node.js 路径，不在内置与系统环境之间回退。
+fn node_path_for_source(env_mode: EnvSource) -> Option<PathBuf> {
+    match env_mode {
+        EnvSource::Builtin => crate::core::env::get_builtin_node_path(),
+        EnvSource::System => crate::core::env::get_system_cmd_path("node"),
+    }
+}
+
+/// 检查所选环境的 Node.js 是否支持 `--import` 标志（Node.js >= 19.0.0）。
+pub fn node_supports_import(env_mode: EnvSource) -> bool {
+    let Some(node_path) = node_path_for_source(env_mode) else {
+        return false;
+    };
+    let mut cmd = Command::new(node_path);
     cmd.creation_flags(CREATE_NO_WINDOW);
     let output = cmd.arg("--version")
         .output()
@@ -308,7 +318,11 @@ impl TavernProcess {
             return Err("进程已在运行".into());
         }
 
-        let mut cmd = Command::new(env_detect::resolve_command("node"));
+        let node_path = node_path_for_source(env_mode).ok_or_else(|| match env_mode {
+            EnvSource::Builtin => "未找到内置 Node.js 环境".to_string(),
+            EnvSource::System => "未找到系统 Node.js 环境".to_string(),
+        })?;
+        let mut cmd = Command::new(node_path);
         cmd.creation_flags(CREATE_NO_WINDOW);
 
         // GitHub 加速代理：通过 --import 预加载拦截器脚本

@@ -109,6 +109,19 @@
 
 > `-beta` 模式会临时修改 `Cargo.toml` 的 `version` 字段并设置 `ASTRABREW_BUILD_TYPE=beta` 环境变量，`build.rs` 读取后设置 `cfg(beta)` 编译标识，UI 中的 `#[cfg(beta)]` 代码块渲染 BETA 角标。打包完成后自动恢复 `Cargo.toml`（即使中途报错也能恢复）。
 
+### GitHub 自动发布
+
+向 `master` 或 `main` 分支推送新的 `[package].version` 后，GitHub Actions 会自动构建 NSIS 安装包和免安装 ZIP，并创建对应的 GitHub Release：
+
+| `Cargo.toml` 版本 | 发布类型 | Release 标签 |
+|------------------|----------|--------------|
+| `0.0.5` | 正式版 | `v0.0.5` |
+| `0.0.5-beta` | 测试版（正式 Release） | `beta-v0.0.5` |
+
+正式版和测试版都会创建普通 GitHub Release，不使用 Pre-release 类型。Release 正文来自 `UPDATELOGS.md` 中对应版本的 `## [版本号] - 日期` 段落；beta 优先匹配完整版本号，找不到时匹配不带 `-beta` 的基础版本。缺少对应更新日志、或已存在同名标签时，工作流会停止发布。
+
+仅修改 `Cargo.toml` 的其他字段不会重复发布。也可以在 GitHub Actions 页面手动运行“构建并发布新版本”工作流。
+
 ### 一键打包
 
 项目提供三种构建方式，功能完全等价，按习惯选择：

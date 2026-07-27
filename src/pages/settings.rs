@@ -2,6 +2,8 @@ use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::{LazyLock, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 
@@ -242,6 +244,10 @@ pub struct SettingsState {
     #[serde(default)]
     pub has_seen_scan_warning: bool,
 
+    /// 配置文件不存在时仅在本次进程内启用，不写入配置文件。
+    #[serde(skip)]
+    pub first_launch_auto_setup_available: bool,
+
     // Node.js 运行时版本（不持久化）
     #[serde(skip)]
     pub nodejs_version: String,
@@ -370,6 +376,7 @@ impl Default for SettingsState {
             reverse_proxy_ssl_key: String::new(),
             sillytavern: None,
             has_seen_scan_warning: false,
+            first_launch_auto_setup_available: false,
             nodejs_version: String::new(),
             env_mode: EnvSource::default(),
             git_version: None,
@@ -420,6 +427,7 @@ impl SettingsState {
 
     pub fn load() -> Self {
         let path = utils::app_paths().settings_file();
+        let is_first_launch = !path.exists();
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
                 if let Ok(mut state) = serde_json::from_str::<Self>(&content) {
@@ -428,7 +436,8 @@ impl SettingsState {
                 }
             }
         }
-        let default_state = Self::default();
+        let mut default_state = Self::default();
+        default_state.first_launch_auto_setup_available = is_first_launch;
         default_state.save();
         default_state
     }
@@ -497,6 +506,8 @@ pub struct InstallTaskState {
     pub progress_mode: bool,
     /// 安装成功后检测到的版本号（用于验证 + 自动刷新设置页）
     pub installed_version: Option<String>,
+    /// 一键启动流程用于中断下载与解压的取消令牌。
+    pub cancel_flag: Arc<AtomicBool>,
 }
 
 /// 安装/更新任务的超时时间（5 分钟）
@@ -517,6 +528,7 @@ impl InstallTaskState {
             speed_text: String::new(),
             progress_mode: false,
             installed_version: None,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -577,6 +589,8 @@ impl InstallTaskState {
         self.installed_version = None;
         self.progress_mode = true;
         self.started_at = Some(std::time::Instant::now());
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_flag = self.cancel_flag.clone();
 
         // 先发送初始信息到日志
         let _ = tx.send(format!("__LOG__:下载地址: {}", url));
@@ -587,9 +601,10 @@ impl InstallTaskState {
             let (prog_tx, prog_rx) = std::sync::mpsc::channel();
 
             let download_thread = std::thread::spawn(move || {
-                crate::core::settings::git::download_and_install_git_from_url(
+                crate::core::settings::git::download_and_install_git_from_url_cancellable(
                     &url,
                     Some(prog_tx),
+                    Some(cancel_flag),
                 )
                 .map_err(|e| e.to_string())
             });
@@ -671,6 +686,8 @@ impl InstallTaskState {
         self.installed_version = None;
         self.progress_mode = true;
         self.started_at = Some(std::time::Instant::now());
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_flag = self.cancel_flag.clone();
 
         let _ = tx.send(format!("__LOG__:下载地址: {}", url));
         let _ = tx.send(format!("__LOG__:临时文件: {}", temp_path.display()));
@@ -680,9 +697,10 @@ impl InstallTaskState {
             let (prog_tx, prog_rx) = std::sync::mpsc::channel();
 
             let download_thread = std::thread::spawn(move || {
-                crate::core::settings::nodejs::download_and_install_nodejs_from_url(
+                crate::core::settings::nodejs::download_and_install_nodejs_from_url_cancellable(
                     &url,
                     Some(prog_tx),
+                    Some(cancel_flag),
                 )
                 .map_err(|e| e.to_string())
             });
@@ -1017,6 +1035,16 @@ impl InstallTaskState {
             }
         }
         new_version
+    }
+
+    /// 请求中断当前安装。调用方应继续轮询，直到后台线程确认结束。
+    pub fn cancel(&mut self) {
+        if self.running {
+            self.cancel_flag.store(true, Ordering::Relaxed);
+            self.progress_text = "正在取消...".to_string();
+            self.speed_text.clear();
+        }
+        self.show = false;
     }
 }
 
@@ -2148,21 +2176,22 @@ fn setting_section(
     icon: &str,
     title: &str,
     add_content: impl FnOnce(&mut egui::Ui),
-) {
+) -> egui::Response {
     ui.add_space(10.0);
-    ui.horizontal(|ui| {
+    let heading = ui.horizontal(|ui| {
         ui.label(egui::RichText::new(icon).size(18.0).color(ui.visuals().text_color()));
         ui.heading(egui::RichText::new(title).strong());
     });
     ui.add_space(5.0);
 
-    egui::Frame::NONE
+    let content = egui::Frame::NONE
         .fill(ui.visuals().faint_bg_color)
         .corner_radius(8.0)
         .inner_margin(15.0)
         .show(ui, |ui| {
             add_content(ui);
         });
+    heading.response.union(content.response)
 }
 
 fn setting_row(
@@ -2210,6 +2239,7 @@ pub fn render(
     git_node_select: &mut GitNodeSelectState,
     nodejs_node_select: &mut NodejsNodeSelectState,
     caddy_node_select: &mut CaddyNodeSelectState,
+    focus_env_dependencies: &mut bool,
 ) {
     ui.horizontal(|ui| {
         ui.selectable_value(tab, SettingsTab::General, lang::t("general_settings", &state.language));
@@ -2720,7 +2750,7 @@ pub fn render(
                         let is_system = state.env_mode == EnvSource::System;
                         let is_builtin = state.env_mode == EnvSource::Builtin;
 
-                        setting_section(ui, egui_phosphor::regular::PACKAGE, lang::t("env_dependencies", &state.language), |ui| {
+                        let env_section = setting_section(ui, egui_phosphor::regular::PACKAGE, lang::t("env_dependencies", &state.language), |ui| {
                         // 环境模式
                         setting_row(
                             ui,
@@ -2924,6 +2954,10 @@ pub fn render(
                             );
                         }
                     });
+                    if *focus_env_dependencies {
+                        env_section.scroll_to_me(Some(egui::Align::Center));
+                        *focus_env_dependencies = false;
+                    }
 
                     // Git 节点选择弹窗（安装前选择下载源）
                     {

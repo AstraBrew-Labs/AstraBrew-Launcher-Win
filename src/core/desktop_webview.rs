@@ -79,14 +79,76 @@ const BLOB_DOWNLOAD_BRIDGE_SCRIPT: &str = r#"
     if (window.__astrabrewDownloadBridgeInstalled) return;
     window.__astrabrewDownloadBridgeInstalled = true;
 
+    var objectUrlBlobs = new Map();
+    var originalCreateObjectURL = URL.createObjectURL;
+    var originalRevokeObjectURL = URL.revokeObjectURL;
+
+    if (typeof originalCreateObjectURL === 'function') {
+        URL.createObjectURL = function (value) {
+            var url = originalCreateObjectURL.apply(URL, arguments);
+            if (isBlob(value)) objectUrlBlobs.set(url, value);
+            return url;
+        };
+    }
+
+    if (typeof originalRevokeObjectURL === 'function') {
+        URL.revokeObjectURL = function (url) {
+            originalRevokeObjectURL.apply(URL, arguments);
+            // Extensions commonly revoke immediately after click. Keep only the Blob reference
+            // briefly so the asynchronous IPC conversion can still finish.
+            window.setTimeout(function () { objectUrlBlobs.delete(String(url)); }, 60000);
+        };
+    }
+
     function isDownloadUrl(url) {
         return typeof url === 'string' && (url.startsWith('blob:') || url.startsWith('data:'));
     }
 
-    function download(url, filename) {
-        fetch(url)
-            .then(function (response) { return response.blob(); })
+    function isBlob(value) {
+        if (typeof Blob === 'undefined' || !value) return false;
+        var tag = Object.prototype.toString.call(value);
+        return value instanceof Blob || tag === '[object Blob]' || tag === '[object File]';
+    }
+
+    function blobForDownload(value) {
+        if (isBlob(value)) return Promise.resolve(value);
+        var cached = objectUrlBlobs.get(String(value));
+        if (cached) return Promise.resolve(cached);
+        return fetch(value).then(function (response) { return response.blob(); });
+    }
+
+    function extensionForMime(mime) {
+        var normalized = String(mime || '').split(';', 1)[0].toLowerCase();
+        return ({
+            'application/json': '.json',
+            'application/ld+json': '.json',
+            'application/zip': '.zip',
+            'application/x-zip-compressed': '.zip',
+            'application/yaml': '.yaml',
+            'application/x-yaml': '.yaml',
+            'text/yaml': '.yaml',
+            'text/csv': '.csv',
+            'text/plain': '.txt',
+            'text/html': '.html',
+            'image/png': '.png',
+            'image/jpeg': '.jpg',
+            'image/webp': '.webp',
+            'image/gif': '.gif',
+            'application/pdf': '.pdf'
+        })[normalized] || '';
+    }
+
+    function download(value, filename) {
+        blobForDownload(value)
             .then(function (blob) {
+                var resolvedFilename = filename;
+                if (!resolvedFilename || resolvedFilename === 'download') {
+                    resolvedFilename = typeof blob.name === 'string' && blob.name
+                        ? blob.name
+                        : 'download' + extensionForMime(blob.type);
+                } else if (!/\.[^./\\]+$/.test(resolvedFilename)) {
+                    resolvedFilename += extensionForMime(blob.type);
+                }
                 var reader = new FileReader();
                 reader.onloadend = function () {
                     var result = typeof reader.result === 'string' ? reader.result : '';
@@ -97,17 +159,34 @@ const BLOB_DOWNLOAD_BRIDGE_SCRIPT: &str = r#"
                     }
                     window.ipc.postMessage(JSON.stringify({
                         type: 'astrabrew-download',
-                        filename: filename || 'download',
+                        filename: resolvedFilename || 'download',
                         base64: result.slice(separator + 1)
                     }));
+                };
+                reader.onerror = function () {
+                    console.error('AstraBrew export failed: unable to read Blob');
                 };
                 reader.readAsDataURL(blob);
             })
             .catch(function (error) { console.error('AstraBrew export failed:', error); });
     }
 
-    window.addEventListener('click', function (event) {
+    function downloadAnchorFromEvent(event) {
         var anchor = event.target && event.target.closest ? event.target.closest('a') : null;
+        if (!anchor && typeof event.composedPath === 'function') {
+            var path = event.composedPath();
+            for (var index = 0; index < path.length; index += 1) {
+                if (path[index] instanceof HTMLAnchorElement) {
+                    anchor = path[index];
+                    break;
+                }
+            }
+        }
+        return anchor;
+    }
+
+    window.addEventListener('click', function (event) {
+        var anchor = downloadAnchorFromEvent(event);
         if (anchor && isDownloadUrl(anchor.href)) {
             event.preventDefault();
             event.stopPropagation();
@@ -123,6 +202,35 @@ const BLOB_DOWNLOAD_BRIDGE_SCRIPT: &str = r#"
         }
         return originalClick.apply(this, arguments);
     };
+
+    // FileSaver-style helpers can dispatch a click on an anchor that was never attached to DOM.
+    var originalDispatchEvent = HTMLAnchorElement.prototype.dispatchEvent;
+    HTMLAnchorElement.prototype.dispatchEvent = function (event) {
+        if (event && event.type === 'click' && isDownloadUrl(this.href)) {
+            download(this.href, this.download || 'download');
+            return true;
+        }
+        return originalDispatchEvent.apply(this, arguments);
+    };
+
+    // Some older extensions prefer the legacy Microsoft Blob-saving API when available.
+    try {
+        if (typeof navigator.msSaveBlob !== 'function') {
+            Object.defineProperty(navigator, 'msSaveBlob', {
+                configurable: true,
+                value: function (blob, filename) {
+                    download(blob, filename || 'download');
+                    return true;
+                }
+            });
+        }
+        if (typeof navigator.msSaveOrOpenBlob !== 'function') {
+            Object.defineProperty(navigator, 'msSaveOrOpenBlob', {
+                configurable: true,
+                value: navigator.msSaveBlob
+            });
+        }
+    } catch (_) {}
 
     var originalOpen = window.open;
     window.open = function (url) {
@@ -1308,8 +1416,13 @@ mod tests {
     #[test]
     fn blob_bridge_covers_sillytavern_download_entry_points() {
         assert!(BLOB_DOWNLOAD_BRIDGE_SCRIPT.contains("HTMLAnchorElement.prototype.click"));
+        assert!(BLOB_DOWNLOAD_BRIDGE_SCRIPT.contains("HTMLAnchorElement.prototype.dispatchEvent"));
         assert!(BLOB_DOWNLOAD_BRIDGE_SCRIPT.contains("window.addEventListener('click'"));
+        assert!(BLOB_DOWNLOAD_BRIDGE_SCRIPT.contains("event.composedPath()"));
         assert!(BLOB_DOWNLOAD_BRIDGE_SCRIPT.contains("window.open = function"));
+        assert!(BLOB_DOWNLOAD_BRIDGE_SCRIPT.contains("URL.createObjectURL"));
+        assert!(BLOB_DOWNLOAD_BRIDGE_SCRIPT.contains("URL.revokeObjectURL"));
+        assert!(BLOB_DOWNLOAD_BRIDGE_SCRIPT.contains("navigator.msSaveBlob"));
         assert!(BLOB_DOWNLOAD_BRIDGE_SCRIPT.contains(DOWNLOAD_IPC_MESSAGE_TYPE));
     }
 
