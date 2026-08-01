@@ -154,6 +154,19 @@ struct DependencyRepairTask {
     receiver: std::sync::mpsc::Receiver<Result<(), String>>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UpdaterOperation {
+    AutomaticCheck,
+    ManualCheck,
+    Install,
+}
+
+impl UpdaterOperation {
+    fn reports_non_actionable_result(self) -> bool {
+        self != Self::AutomaticCheck
+    }
+}
+
 impl OneClickFlow {
     fn is_active(&self) -> bool {
         self.stage != OneClickStage::Idle
@@ -189,6 +202,14 @@ fn should_use_first_launch_automation(
     selected_environment_ready: bool,
 ) -> bool {
     first_launch_available && !selected_environment_ready
+}
+
+fn theme_preference(theme: Theme) -> egui::ThemePreference {
+    match theme {
+        Theme::System => egui::ThemePreference::System,
+        Theme::Light => egui::ThemePreference::Light,
+        Theme::Dark => egui::ThemePreference::Dark,
+    }
 }
 
 fn tavern_installation_is_ready(path: &std::path::Path) -> bool {
@@ -270,6 +291,7 @@ struct MyApp {
     last_path_check: Option<std::time::Instant>,
     // 自动更新检测通道
     updater_rx: Option<std::sync::mpsc::Receiver<crate::core::updater::UpdateStatus>>,
+    updater_operation: Option<UpdaterOperation>,
     // 启动时缺少所选 Node.js 环境的引导弹窗。
     missing_env_dialog: Option<pages::settings::EnvSource>,
     // 从环境缺失弹窗进入设置后，将环境依赖区域滚动到视口中央。
@@ -303,6 +325,7 @@ impl MyApp {
 
         // 同步自启动状态：以系统实际注册状态为准（用户可能在系统设置中手动关闭）
         settings_state.auto_start = crate::core::auto_launch::is_auto_launch_enabled();
+        settings_state.update_checking = true;
         settings_state.save();
 
         let global_data_path = settings_state.global_data_path.clone();
@@ -347,7 +370,8 @@ impl MyApp {
             export_path_picker_rx: None,
             path_check_rx: None,
             last_path_check: None,
-            updater_rx: None,
+            updater_rx: Some(crate::core::updater::start_check()),
+            updater_operation: Some(UpdaterOperation::AutomaticCheck),
             missing_env_dialog: None,
             focus_env_dependencies: false,
             one_click_flow: OneClickFlow::default(),
@@ -1389,17 +1413,8 @@ impl MyApp {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 应用主题
-        let visuals = match self.settings_state.theme {
-            Theme::System => match ctx.system_theme() {
-                Some(egui::Theme::Dark) => egui::Visuals::dark(),
-                Some(egui::Theme::Light) => egui::Visuals::light(),
-                None => egui::Visuals::dark(), // 无法检测时默认深色
-            },
-            Theme::Light => egui::Visuals::light(),
-            Theme::Dark => egui::Visuals::dark(),
-        };
-        ctx.set_visuals(visuals);
+        // 由 egui 保留独立的明暗样式，并响应 Windows 的主题变更事件。
+        ctx.set_theme(theme_preference(self.settings_state.theme));
 
         // 动态适配屏幕比例
         if let Some(monitor_size) = ctx.input(|i| i.viewport().monitor_size) {
@@ -1606,6 +1621,7 @@ impl eframe::App for MyApp {
                 ctx,
             );
             self.updater_rx = Some(crate::core::updater::check_update_manual());
+            self.updater_operation = Some(UpdaterOperation::ManualCheck);
         }
 
         // 处理下载安装触发
@@ -1616,6 +1632,7 @@ impl eframe::App for MyApp {
                 ctx,
             );
             self.updater_rx = Some(crate::core::updater::do_install(endpoint));
+            self.updater_operation = Some(UpdaterOperation::Install);
         }
 
         // 轮询自动更新状态
@@ -1627,11 +1644,16 @@ impl eframe::App for MyApp {
                     match status {
                         UpdateStatus::Checking => {}
                         UpdateStatus::UpToDate => {
-                            self.notification_stack.push(
-                                lang::t("check_update", &self.settings_state.language).to_string(),
-                                lang::t("update_up_to_date", &self.settings_state.language).to_string(),
-                                ctx,
-                            );
+                            if self
+                                .updater_operation
+                                .is_some_and(UpdaterOperation::reports_non_actionable_result)
+                            {
+                                self.notification_stack.push(
+                                    lang::t("check_update", &self.settings_state.language).to_string(),
+                                    lang::t("update_up_to_date", &self.settings_state.language).to_string(),
+                                    ctx,
+                                );
+                            }
                             self.settings_state.update_checking = false;
                             self.settings_state.update_downloading = false;
                             clear_rx = true;
@@ -1657,12 +1679,17 @@ impl eframe::App for MyApp {
                             clear_rx = true;
                         }
                         UpdateStatus::Error(e) => {
-                            self.notification_stack.push(
-                                lang::t("check_update", &self.settings_state.language).to_string(),
-                                lang::t("update_failed", &self.settings_state.language)
-                                    .replace("{error}", &e),
-                                ctx,
-                            );
+                            if self
+                                .updater_operation
+                                .is_some_and(UpdaterOperation::reports_non_actionable_result)
+                            {
+                                self.notification_stack.push(
+                                    lang::t("check_update", &self.settings_state.language).to_string(),
+                                    lang::t("update_failed", &self.settings_state.language)
+                                        .replace("{error}", &e),
+                                    ctx,
+                                );
+                            }
                             self.settings_state.update_checking = false;
                             self.settings_state.update_downloading = false;
                             clear_rx = true;
@@ -1672,7 +1699,14 @@ impl eframe::App for MyApp {
             }
             if clear_rx {
                 self.updater_rx = None;
+                self.updater_operation = None;
             }
+        }
+
+        if self.updater_rx.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(
+                BACKGROUND_TASK_REPAINT_INTERVAL_MS,
+            ));
         }
 
         // 处理刷新节点请求
@@ -2147,6 +2181,23 @@ mod one_click_flow_tests {
     #[test]
     fn complete_system_environment_is_accepted() {
         assert!(system_environment_error(true, true, true).is_none());
+    }
+
+    #[test]
+    fn theme_settings_map_to_egui_theme_preferences() {
+        assert_eq!(
+            theme_preference(Theme::System),
+            egui::ThemePreference::System
+        );
+        assert_eq!(theme_preference(Theme::Light), egui::ThemePreference::Light);
+        assert_eq!(theme_preference(Theme::Dark), egui::ThemePreference::Dark);
+    }
+
+    #[test]
+    fn automatic_update_checks_only_report_actionable_results() {
+        assert!(!UpdaterOperation::AutomaticCheck.reports_non_actionable_result());
+        assert!(UpdaterOperation::ManualCheck.reports_non_actionable_result());
+        assert!(UpdaterOperation::Install.reports_non_actionable_result());
     }
 
     #[test]

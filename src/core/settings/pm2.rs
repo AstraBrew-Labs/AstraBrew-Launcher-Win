@@ -759,10 +759,12 @@ impl Pm2Manager {
             app.insert("args".to_string(), serde_json::json!(script_args));
         }
         if let Some(interceptor) = interceptor_path {
-            let escaped = interceptor.replace('\\', "/").replace('"', "\\\"");
+            let import_specifier = crate::core::tavern_process::node_import_specifier(
+                Path::new(interceptor),
+            )?;
             app.insert(
                 "node_args".to_string(),
-                serde_json::Value::String(format!("--import \"{}\"", escaped)),
+                serde_json::Value::String(format!("--import \"{}\"", import_specifier)),
             );
         }
         if !env_map.is_empty() {

@@ -4,15 +4,28 @@
 
 use semver::Version;
 use serde::Deserialize;
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
-const RELEASES_API: &str =
-    "https://api.github.com/repos/AstraBrew-Labs/AstraBrew-Launcher-Win/releases?per_page=20";
-const RELEASE_DOWNLOAD_PREFIX: &str =
-    "https://github.com/AstraBrew-Labs/AstraBrew-Launcher-Win/releases/download/";
+const RELEASE_REPOSITORY: &str = "AstraBrew-Labs/AstraBrew-Launcher-Win";
+const UPDATE_PROXY_PREFIX: &str = "https://gh-proxy.org/";
+
+fn releases_api_url() -> String {
+    format!("https://api.github.com/repos/{RELEASE_REPOSITORY}/releases?per_page=20")
+}
+
+fn release_download_prefix() -> String {
+    format!("https://github.com/{RELEASE_REPOSITORY}/releases/download/")
+}
+
+fn update_url_candidates(original_url: &str) -> [String; 2] {
+    [
+        format!("{UPDATE_PROXY_PREFIX}{original_url}"),
+        original_url.to_string(),
+    ]
+}
 
 #[derive(Debug, Clone)]
 pub enum UpdateStatus {
@@ -86,16 +99,35 @@ fn check_latest_release() -> Result<Option<AvailableUpdate>, String> {
         .map_err(|error| format!("当前版本号无效: {error}"))?;
     let beta_channel = cfg!(beta) || !current.pre.is_empty();
     let client = github_client()?;
-    let releases = client
-        .get(RELEASES_API)
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-        .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .map_err(|error| format!("无法获取 GitHub Releases: {error}"))?
-        .json::<Vec<GithubRelease>>()
-        .map_err(|error| format!("无法解析 GitHub Releases: {error}"))?;
+    let releases = fetch_releases(&client)?;
 
     Ok(select_available_update(&releases, &current, beta_channel))
+}
+
+fn fetch_releases(client: &reqwest::blocking::Client) -> Result<Vec<GithubRelease>, String> {
+    let mut errors = Vec::new();
+    for (index, endpoint) in update_url_candidates(&releases_api_url())
+        .into_iter()
+        .enumerate()
+    {
+        let source = if index == 0 { "GitHub 加速" } else { "GitHub 直连" };
+        let result = client
+            .get(endpoint)
+            .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+            .send()
+            .and_then(reqwest::blocking::Response::error_for_status)
+            .and_then(reqwest::blocking::Response::json::<Vec<GithubRelease>>);
+
+        match result {
+            Ok(releases) => return Ok(releases),
+            Err(error) => errors.push(format!("{source}: {error}")),
+        }
+    }
+
+    Err(format!(
+        "无法获取 GitHub Releases（加速与直连均失败）: {}",
+        errors.join("; ")
+    ))
 }
 
 fn select_available_update(
@@ -168,16 +200,11 @@ pub fn do_install(endpoint: String) -> mpsc::Receiver<UpdateStatus> {
 }
 
 fn download_and_launch_installer(endpoint: &str) -> Result<(), String> {
-    if !endpoint.starts_with(RELEASE_DOWNLOAD_PREFIX) {
+    if !endpoint.starts_with(&release_download_prefix()) {
         return Err("更新地址不是受信任的 AstraBrew GitHub Release".into());
     }
 
     let client = github_client()?;
-    let mut response = client
-        .get(endpoint)
-        .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .map_err(|error| format!("下载安装包失败: {error}"))?;
     let installer_path = update_installer_path();
     if let Some(parent) = installer_path.parent() {
         std::fs::create_dir_all(parent)
@@ -185,13 +212,28 @@ fn download_and_launch_installer(endpoint: &str) -> Result<(), String> {
     }
 
     let temporary_path = installer_path.with_extension("exe.download");
-    let mut file = std::fs::File::create(&temporary_path)
-        .map_err(|error| format!("无法创建安装包文件: {error}"))?;
-    std::io::copy(&mut response, &mut file)
-        .map_err(|error| format!("无法保存安装包: {error}"))?;
-    file.flush()
-        .map_err(|error| format!("无法写入安装包: {error}"))?;
-    drop(file);
+    let mut errors = Vec::new();
+    let mut downloaded = false;
+    for (index, candidate) in update_url_candidates(endpoint).into_iter().enumerate() {
+        let source = if index == 0 { "GitHub 加速" } else { "GitHub 直连" };
+        match download_installer_candidate(&client, &candidate, &temporary_path) {
+            Ok(()) => {
+                downloaded = true;
+                break;
+            }
+            Err(error) => {
+                let _ = std::fs::remove_file(&temporary_path);
+                errors.push(format!("{source}: {error}"));
+            }
+        }
+    }
+    if !downloaded {
+        return Err(format!(
+            "下载安装包失败（加速与直连均失败）: {}",
+            errors.join("; ")
+        ));
+    }
+
     if installer_path.exists() {
         let _ = std::fs::remove_file(&installer_path);
     }
@@ -201,6 +243,36 @@ fn download_and_launch_installer(endpoint: &str) -> Result<(), String> {
     std::process::Command::new(&installer_path)
         .spawn()
         .map_err(|error| format!("无法启动更新安装程序: {error}"))?;
+    Ok(())
+}
+
+fn download_installer_candidate(
+    client: &reqwest::blocking::Client,
+    endpoint: &str,
+    temporary_path: &Path,
+) -> Result<(), String> {
+    let mut response = client
+        .get(endpoint)
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|error| error.to_string())?;
+    let mut file = std::fs::File::create(temporary_path)
+        .map_err(|error| format!("无法创建安装包文件: {error}"))?;
+    std::io::copy(&mut response, &mut file)
+        .map_err(|error| format!("无法保存安装包: {error}"))?;
+    file.flush()
+        .map_err(|error| format!("无法写入安装包: {error}"))?;
+    drop(file);
+
+    let mut file = std::fs::File::open(temporary_path)
+        .map_err(|error| format!("无法校验安装包: {error}"))?;
+    let mut magic = [0_u8; 2];
+    file.read_exact(&mut magic)
+        .map_err(|error| format!("安装包内容不完整: {error}"))?;
+    if &magic != b"MZ" {
+        return Err("下载内容不是有效的 Windows 安装程序".to_string());
+    }
+
     Ok(())
 }
 
@@ -236,9 +308,42 @@ mod tests {
             prerelease,
             assets: vec![GithubAsset {
                 name: asset.into(),
-                browser_download_url: format!("{RELEASE_DOWNLOAD_PREFIX}{tag}/{asset}"),
+                browser_download_url: format!("{}{tag}/{asset}", release_download_prefix()),
             }],
         }
+    }
+
+    #[test]
+    fn updater_urls_target_the_windows_repository() {
+        assert_eq!(
+            releases_api_url(),
+            "https://api.github.com/repos/AstraBrew-Labs/AstraBrew-Launcher-Win/releases?per_page=20"
+        );
+        assert_eq!(
+            release_download_prefix(),
+            "https://github.com/AstraBrew-Labs/AstraBrew-Launcher-Win/releases/download/"
+        );
+    }
+
+    #[test]
+    fn updater_uses_gh_proxy_before_the_original_url() {
+        let original_api = releases_api_url();
+        assert_eq!(
+            update_url_candidates(&original_api),
+            [
+                format!("https://gh-proxy.org/{original_api}"),
+                original_api,
+            ]
+        );
+
+        let original_download = format!("{}v1.2.3/setup.exe", release_download_prefix());
+        assert_eq!(
+            update_url_candidates(&original_download),
+            [
+                format!("https://gh-proxy.org/{original_download}"),
+                original_download,
+            ]
+        );
     }
 
     #[test]

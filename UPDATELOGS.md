@@ -5,6 +5,13 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 规范。
 
 ---
+## [0.0.5-beta] - 2026-08-02
+
+- 修复 Windows 路径直接传入 Node.js `--import` 导致的 `ERR_UNSUPPORTED_ESM_URL_SCHEME`，直接启动与 PM2 模式均改用标准 `file://` URL。
+- 修复语言和主题的“跟随系统”功能，语言改为读取 Windows 用户界面语言，主题可正确响应系统明暗模式切换。
+- 修复自动更新未在启动时执行的问题，并统一从 Windows 版仓库 `AstraBrew-Labs/AstraBrew-Launcher-Win` 检查和下载更新。
+- 更新检查和安装包下载优先使用 `gh-proxy.org` 加速，失败时自动回退 GitHub 原地址，并增加 Windows 安装包格式校验。
+
 ## [0.0.4] - 2026-07-28
 
 - 新增首次启动的一键自动化流程，可按环境模式安装缺失的 Git、Node.js 和酒馆实例后自动启动。

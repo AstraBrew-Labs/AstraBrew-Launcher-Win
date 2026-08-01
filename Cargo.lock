@@ -267,7 +267,7 @@ dependencies = [
 
 [[package]]
 name = "astrabrew-launcher-win"
-version = "0.0.4"
+version = "0.0.5-beta"
 dependencies = [
  "base64",
  "eframe",
@@ -284,6 +284,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "url",
  "webview2-com",
  "windows 0.61.3",
  "windows-sys 0.59.0",

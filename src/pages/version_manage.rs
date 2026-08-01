@@ -235,7 +235,7 @@ impl VersionManageState {
 
         thread::spawn(move || {
             let mut client_builder = reqwest::blocking::Client::builder()
-                .user_agent("AstraBrew-Launcher-macOS");
+                .user_agent("AstraBrew-Launcher-Win");
 
             // Configure proxy based on settings
             match proxy_type {

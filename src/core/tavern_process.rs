@@ -17,7 +17,7 @@ use crate::core::settings::tavern::{ConfigMode, TavernConfig};
 use crate::pages::settings::{EnvSource, TavernDataMode};
 use std::io::{BufRead, BufReader};
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 
@@ -189,6 +189,14 @@ pub fn prepare_interceptor() -> std::io::Result<PathBuf> {
     Ok(path)
 }
 
+/// 将拦截器的绝对路径转换为 Node.js ESM loader 接受的 file URL。
+/// Windows 盘符路径（如 C:\\...）不能直接传给 `--import`，否则会被当作 URL 协议。
+pub fn node_import_specifier(path: &Path) -> Result<String, String> {
+    url::Url::from_file_path(path)
+        .map(String::from)
+        .map_err(|_| format!("无法将拦截器路径转换为 file URL: {}", path.display()))
+}
+
 /// 严格按环境模式解析 Node.js 路径，不在内置与系统环境之间回退。
 fn node_path_for_source(env_mode: EnvSource) -> Option<PathBuf> {
     match env_mode {
@@ -330,7 +338,7 @@ impl TavernProcess {
             match prepare_interceptor() {
                 Ok(interceptor_path) => {
                     cmd.arg("--import");
-                    cmd.arg(interceptor_path.to_string_lossy().to_string());
+                    cmd.arg(node_import_specifier(&interceptor_path)?);
                     cmd.env("GITHUB_PROXY_URL", proxy_url);
                 }
                 Err(e) => {
@@ -509,5 +517,24 @@ impl Drop for TavernProcess {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::node_import_specifier;
+    use std::path::Path;
+
+    #[test]
+    fn node_import_specifier_converts_windows_path_to_escaped_file_url() {
+        let specifier = node_import_specifier(Path::new(
+            r"C:\Users\Test User\cache#1\github-proxy-interceptor.js",
+        ))
+        .unwrap();
+
+        assert_eq!(
+            specifier,
+            "file:///C:/Users/Test%20User/cache%231/github-proxy-interceptor.js"
+        );
     }
 }
