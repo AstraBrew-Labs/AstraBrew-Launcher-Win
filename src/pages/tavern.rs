@@ -39,16 +39,9 @@ pub(crate) enum BrowserType {
     Chrome,
     Firefox,
     Edge,
-    Safari,
 }
 impl BrowserType {
-    pub(crate) const ALL: [Self; 5] = [
-        Self::System,
-        Self::Chrome,
-        Self::Firefox,
-        Self::Edge,
-        Self::Safari,
-    ];
+    pub(crate) const ALL: [Self; 4] = [Self::System, Self::Chrome, Self::Firefox, Self::Edge];
 
     pub(crate) const fn label_key(self) -> &'static str {
         match self {
@@ -57,7 +50,6 @@ impl BrowserType {
             Self::Chrome => "Chrome",
             Self::Firefox => "Firefox",
             Self::Edge => "Edge",
-            Self::Safari => "Safari",
         }
     }
 }
@@ -67,8 +59,7 @@ enum_text!(
     [System, "tavern.browser_type.system"],
     [Chrome, "Chrome"],
     [Firefox, "Firefox"],
-    [Edge, "Edge"],
-    [Safari, "Safari"]
+    [Edge, "Edge"]
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]

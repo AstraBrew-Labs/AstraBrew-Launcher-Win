@@ -5,7 +5,6 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{self, Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -178,10 +177,9 @@ impl Context {
         })
     }
 }
+/// 展开用户路径（`~/`、`%APPDATA%` 等），实现统一在 [`crate::utils::expand_user_path`]。
 pub fn expand_home(path: &str) -> PathBuf {
-    path.strip_prefix("~/")
-        .and_then(|rest| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(rest)))
-        .unwrap_or_else(|| PathBuf::from(path))
+    crate::utils::expand_user_path(path)
 }
 fn app_root() -> PathBuf {
     crate::core::network::sillytavern_install_dir()
@@ -522,10 +520,11 @@ fn replace(context: &Context, expected: &Snapshot, text: &str) -> Result<(), Con
         .permissions();
     let temp = temporary(&expected.physical_path, "saving");
     let result = (|| {
+        // 临时文件先以默认权限创建，写入完成后再继承原文件权限；
+        // Windows 没有 POSIX 位权限，权限继承通过 `set_permissions` 完成。
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
             .open(&temp)
             .map_err(|e| ConfigError::io(&temp, e))?;
         file.write_all(text.as_bytes())
@@ -634,7 +633,6 @@ fn create_new(path: &Path, text: &str) -> Result<(), ConfigError> {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
             .open(&temp)
             .map_err(|e| ConfigError::io(&temp, e))?;
         file.write_all(text.as_bytes())
@@ -810,7 +808,6 @@ pub fn import(
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .mode(0o600)
         .open(&backup)
         .map_err(|e| ConfigError::io(&backup, e))?;
     file.write_all(target.text.as_bytes())
@@ -833,27 +830,22 @@ pub fn import(
     ))
 }
 
+/// 在资源管理器里定位到配置文件。
 pub fn reveal(context: &Context) -> Result<(), ConfigError> {
-    let status = std::process::Command::new("/usr/bin/open")
-        .arg("-R")
-        .arg(&context.path)
-        .status()
-        .map_err(|e| ConfigError::io(&context.path, e))?;
-    if !status.success() {
-        return Err(ConfigError::new(
+    crate::core::shell::reveal_in_explorer(&context.path).map_err(|error| {
+        ConfigError::new(
             ErrorKind::Io,
             "tavern.error.reveal_failed",
-            context.path.display(),
-        ));
-    }
-    Ok(())
+            // 把失败原因一起带上：路径对了但打不开时，真正的原因才是排错线索。
+            format!("{}: {error}", context.path.display()),
+        )
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     struct Fixture {
         root: PathBuf,
@@ -926,7 +918,10 @@ mod tests {
     fn scalar_patch_preserves_unknown_fields_comments_and_permissions() {
         let fixture = Fixture::new();
         fixture.write("# leading comment\nport: 8000 # port comment\n# unknown block\ncustomExtension:\n  token: 'quoted text' # keep me\nlisten: false\n");
-        fs::set_permissions(&fixture.context.path, fs::Permissions::from_mode(0o640)).unwrap();
+        // Windows 没有 POSIX 权限位，用只读属性验证「原文件属性不被静默改写」。
+        let mut permissions = fs::metadata(&fixture.context.path).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&fixture.context.path, permissions.clone()).unwrap();
         let before = fixture.load();
         let patch = fixture.patch("port", json!(9000));
         let saved = save(
@@ -945,10 +940,16 @@ mod tests {
                 .contains("customExtension:\n  token: 'quoted text' # keep me")
         );
         assert_eq!(saved.snapshot.values["port"], "9000");
+        let after = fs::metadata(&fixture.context.path).unwrap().permissions();
         assert_eq!(
-            fs::metadata(&fixture.context.path).unwrap().mode() & 0o777,
-            0o640
+            after.readonly(),
+            permissions.readonly(),
+            "保存配置后必须保持原文件的只读属性"
         );
+        // 恢复可写，避免影响后续清理。
+        let mut writable = fs::metadata(&fixture.context.path).unwrap().permissions();
+        writable.set_readonly(false);
+        let _ = fs::set_permissions(&fixture.context.path, writable);
         assert_eq!(saved.applied, vec![("port".into(), 1)]);
     }
 
@@ -1205,7 +1206,10 @@ mod tests {
         fs::write(&other, "port: 9100\n").unwrap();
         let before = fixture.load();
         fs::remove_file(&fixture.context.path).unwrap();
-        std::os::unix::fs::symlink(&other, &fixture.context.path).unwrap();
+        // 无权限创建符号链接时跳过：该用例校验的是「重定向后仍按物理路径写入」。
+        if !crate::utils::try_symlink_file(&other, &fixture.context.path) {
+            return;
+        }
         let patch = Patch {
             key: "port".into(),
             value: json!(9000),

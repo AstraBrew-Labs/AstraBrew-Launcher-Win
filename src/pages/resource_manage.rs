@@ -5,7 +5,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Instant, UNIX_EPOCH};
 
 use iced::widget::{
@@ -789,8 +788,8 @@ impl ResourceManageState {
             ));
             return;
         }
-        match Command::new("open").arg(&directory).spawn() {
-            Ok(_) => {
+        match crate::core::shell::open_path(&directory) {
+            Ok(()) => {
                 self.notice = Some(TransientNotice::success(
                     "notice.directory_opened",
                     tf("resources.directory_opened", &[("tab", &t(self.tab.label_key()))]),
@@ -1229,17 +1228,18 @@ fn non_empty(value: String, fallback: String) -> String {
     }
 }
 
+/// 展开 `~` 家目录前缀（Windows 上是 `%USERPROFILE%`）。
 fn expand_home(path: &str) -> PathBuf {
-    if path == "~" {
-        return std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_default();
-    }
-    if let Some(rest) = path.strip_prefix("~/") {
-        return std::env::var_os("HOME")
+    let user_profile = || {
+        std::env::var_os("USERPROFILE")
             .map(PathBuf::from)
             .unwrap_or_default()
-            .join(rest);
+    };
+    if path == "~" {
+        return user_profile();
+    }
+    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+        return user_profile().join(rest);
     }
     PathBuf::from(path)
 }
@@ -3474,7 +3474,7 @@ mod tests {
     #[test]
     fn starts_preset_scan_while_viewing_another_resource_tab() {
         let mut state = ResourceManageState::default();
-        state.data_root = Some(std::path::PathBuf::from("/tmp/astrabrew-resource-test"));
+        state.data_root = Some(std::path::PathBuf::from(r"C:\AstraBrew\resources"));
 
         let _task = state.update(ResourceManageMessage::SearchChanged("Astra".into()));
 
@@ -3539,7 +3539,7 @@ mod tests {
         let mut state = ResourceManageState::default();
         state.presets = vec![PresetInfo {
             filename: "fixture.json".into(),
-            filepath: PathBuf::from("/tmp/fixture.json"),
+            filepath: PathBuf::from(r"C:\AstraBrew\fixture.json"),
             name: "fixture".into(),
             source: String::new(),
             model: String::new(),

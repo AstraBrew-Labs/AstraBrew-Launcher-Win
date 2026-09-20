@@ -99,8 +99,8 @@ pub fn sidebar<'a>(page: Page, versions: &'a VersionState) -> Element<'a, Messag
 /// 品牌 Logo（`icon_eframe.png`，512×512）。
 ///
 /// 图案自带一块居中的白色圆角底板（约占画布 80%，角半径约 23%），四周是透明边距，
-/// 因此品牌位不必再垫底色。编译期内嵌而非按路径加载：打包成 `.app` 后工作目录
-/// 不再是项目根目录，相对路径 `assets/...` 会失效。
+/// 因此品牌位不必再垫底色。编译期内嵌而非按路径加载：安装到
+/// `%LOCALAPPDATA%\AstraBrew Launcher\` 后工作目录不再是项目根目录，相对路径会失效。
 const LOGO_BYTES: &[u8] = include_bytes!("../assets/icon/icon_eframe.png");
 
 /// 品牌 Logo 的图像句柄，进程级只构造一次。

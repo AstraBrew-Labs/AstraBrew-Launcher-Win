@@ -4,7 +4,7 @@ astra_ui文档：https://docs.rs/iced-astraui/0.0.1
 不要使用cargo run启动项目，也不要用于测试
 只能使用cargo check检查项目
 代码要严格模式，warning要修复，error要修复。
-仅MacOS平台，不用考虑其他平台。
+仅Windows10以上的平台，不用考虑其他平台。
 
 要确保程序check通过
 
@@ -27,35 +27,29 @@ astra_ui文档：https://docs.rs/iced-astraui/0.0.1
 
 ## 目录结构
 
-数据目录结构
-~/Library/Application Support/AstraBrew Launcher/ 根目录
-├── default 默认数据目录
-│   ├── sillytavern 全局统一酒馆数据目录
-│   │   ├── settings.json 默认酒馆WebUI配置文件
-│   ├── config.yaml 默认酒馆配置文件
-├── data 用户数据目录
-│   ├── sillytavern 全局统一酒馆数据目录
-│   │   ├── settings.json 全局统一酒馆WebUI设置
-│   ├── config.yaml 全局统一酒馆配置文件
-├── sillytavern 酒馆核心文件目录，在线酒馆实例
-├── settings.json 配置文件
-├── download_channel_cache.json 自动下载渠道测速缓存（7 天有效，供“自动”渠道解析）
+%AppData%/AstraBrew Launcher/   ← 根目录 (root)
+├── data/                       ← 软件数据目录
+│   ├── default/                ← 默认数据子目录
+│   │   └── sillytavern/        ← 酒馆数据子目录
+│   │       ├── config.yaml     ← 全局统一酒馆配置文件
+│   │       └── settings.json   ← 全局统一酒馆WebUI配置文件
+│   ├── sillytavern/            ← 酒馆数据子目录
+│   │   └── data/               ← 默认全局酒馆数据目录
+│   │       ├── config.yaml     ← 全局统一酒馆配置文件
+│   │       └── default-user/
+│   │           └── settings.json ← 全局模式酒馆WebUI设置
+│   └── local_instances.json
+├── logs/                    ← 软件日志目录
+├── sillytavern/             ← 酒馆核心文件目录 (ST installation) (在线下载实例)
+├── lib/                     ← 内置环境目录 (内置 NodeJS、MinGit 等)
+│   ├── nodejs/              ← 内置 NodeJS 目录
+│   ├── git/                 ← 内置 MinGit 目录
+│   ├── pm2/                 ← 内置 PM2 目录
+│   └── caddy/               ← 内置 Caddy 目录
+└── config.json              ← 启动器配置文件
 
-缓存数据目录结构
-~/Library/Caches/AstraBrew Launcher/
-├── github_proxy_cache.json GitHub 加速地址缓存文件
-... 其他缓存文件
-
-日志目录结构
-~/Library/Logs/AstraBrew Launcher/
-├── launcher.latest.log 主程序日志（上一次启动的版本）
-├── launcher.log 主程序日志（只保留最新的版本，实时更新）
-├── sillytavern.latest.log 酒馆日志（上一次启动的版本）
-├── sillytavern.log 酒馆日志（只保留最新的版本，实时更新）
-... 其他日志文件
-
-临时目录
-/tmp/AstraBrew Launcher/ 用于存放临时文件，程序运行结束后可以清理掉
+%Temp%/astrabrew-launcher/         ← 根目录·临时目录 (temp)
+%Temp%/astrabrew-launcher/caches   ← 缓存目录，存放API数据缓存等 (caches)
 
 ## 多语言支持
 要支持中文和英文的国际化适配，用n18n的规范，用 键值对 的方式来实现多语言切换，比如：“settings.title”:"设置"。

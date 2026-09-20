@@ -85,11 +85,7 @@ pub fn open_link(url: &str) -> Result<(), String> {
     if !lowered.starts_with("http://") && !lowered.starts_with("https://") {
         return Err(t("markdown.only_http").to_owned());
     }
-    std::process::Command::new("open")
-        .arg(trimmed)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| tf("markdown.open_failed", &[("error", &error)]))
+    crate::core::shell::open_target(trimmed).map_err(|error| tf("markdown.open_failed", &[("error", &error)]))
 }
 
 /// 让段落与标题按可用宽度换行的渲染策略。

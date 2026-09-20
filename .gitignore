@@ -1,12 +1,10 @@
 /target
-.DS_Store
 *.log
 .workbuddy
-# 打包产物（由 build.sh / release 工作流生成）
+.workbuddy-ai
+# 打包产物（由 build.ps1 / release 工作流生成）
 /dist
 /dist-packages
 /latest.json
-*.app.tar.gz
-*.app.tar.gz.sig
 # 更新签名私钥：绝不入库，仅保留配对的 update_key.pem.pub
 keys/update_key.pem

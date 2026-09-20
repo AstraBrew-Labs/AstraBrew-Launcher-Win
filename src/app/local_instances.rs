@@ -450,8 +450,9 @@ impl Launcher {
             self.local_runtime.checking += 1;
             let tx = self.local_runtime.tx.clone();
             let cancel = self.local_runtime.shutdown.clone();
+            let source = self.settings.env_mode;
             std::thread::spawn(move || {
-                let result = dependencies::check(Path::new(&request.path), &cancel);
+                let result = dependencies::check(Path::new(&request.path), source, &cancel);
                 let _ = tx.send(Event::Checked(request.path, request.id, result));
             });
         }
@@ -515,13 +516,21 @@ impl Launcher {
         }
         .to_owned();
         let host = self.settings.custom_proxy.clone();
+        let source = self.settings.env_mode;
         let tx = self.local_runtime.tx.clone();
         let cancel = self.local_runtime.shutdown.clone();
         std::thread::spawn(move || {
-            let result =
-                dependencies::install(Path::new(&path), &registry, &mode, &host, &cancel, |line| {
+            let result = dependencies::install(
+                Path::new(&path),
+                &registry,
+                &mode,
+                &host,
+                source,
+                &cancel,
+                |line| {
                     let _ = tx.send(Event::InstallLog(id, line));
-                });
+                },
+            );
             let _ = tx.send(Event::Installed(id, path, result));
         });
     }
@@ -804,6 +813,10 @@ mod tests {
             font_load_request_id: 0,
             font_load_pending: 0,
             font_load_failed: false,
+            environment_detect_receiver: None,
+            window_size: iced::Size::new(1280.0, 720.0),
+            main_window_id: None,
+            monitor_relocated: false,
             environment_task_receiver: None,
             environment_task_cancel: None,
             nodejs_required_visible: false,
@@ -827,17 +840,17 @@ mod tests {
             global_notices: Default::default(),
             global_notice_serial: 0,
             pending_console_launch: false,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview: None,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_suppressed: false,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_ready: false,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_retry_count: 0,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_retry_at: None,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_load_deadline: None,
             settings_store: SettingsStore::load(path).0,
             window_position: None,
@@ -1074,7 +1087,8 @@ mod tests {
     fn simultaneous_import_and_scan_deduplicate_identity() {
         let mut app = launcher();
         let mut first = instance("/fixture/one", DependencyStatus::Checking);
-        first.identity = Some((1, 2));
+        // Windows 没有 inode/dev，目录身份用规范化路径表示。
+        first.identity = Some(PathBuf::from("/fixture/real"));
         let mut alias = first.clone();
         alias.path = "/fixture/alias".into();
         send(&mut app, Event::Imported(Ok(first)));

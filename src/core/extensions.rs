@@ -298,7 +298,9 @@ fn fetch_branches_once(
     cancel: &AtomicBool,
 ) -> Result<GitBranchCatalog, ExtensionError> {
     const DETECT_TIMEOUT: Duration = Duration::from_secs(15);
-    let mut child = Command::new("git")
+    let mut command = Command::new("git");
+    crate::core::env::apply_no_window_to_command(&mut command);
+    let mut child = command
         .args([
             "ls-remote",
             "--symref",
@@ -520,6 +522,7 @@ fn clone_repository(
         "git clone --branch {branch} {url}"
     )));
     let mut command = Command::new("git");
+    crate::core::env::apply_no_window_to_command(&mut command);
     command.args(["clone", "--progress", "--depth", "1"]);
     if !branch.trim().is_empty() {
         command.args(["--branch", branch]);
@@ -673,7 +676,9 @@ pub fn repair_extension_git(
         ));
     }
     run_git(extension_path, &["init"])?;
-    let existing = Command::new("git")
+    let mut command = Command::new("git");
+    crate::core::env::apply_no_window_to_command(&mut command);
+    let existing = command
         .args(["remote", "get-url", "origin"])
         .current_dir(extension_path)
         .output()
@@ -695,7 +700,9 @@ pub fn repair_extension_git(
 }
 
 fn run_git(directory: &Path, arguments: &[&str]) -> Result<(), ExtensionError> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    crate::core::env::apply_no_window_to_command(&mut command);
+    let output = command
         .args(arguments)
         .current_dir(directory)
         .output()
@@ -931,7 +938,9 @@ fn validate_existing_third_party(
     if canonical_target.parent() != Some(canonical_root.as_path()) {
         return Err(ExtensionError::new(
             "extensions.error.path_outside_root",
-            canonical_target.display().to_string(),
+            // 这条错误会显示在界面上，必须剥掉 canonicalize 带出的 `\\?\` 前缀。
+            // 判断用的仍是 canonical_target 本身，只是展示时换一种写法。
+            crate::core::local_instances::display_path(&canonical_target),
         ));
     }
     Ok(())

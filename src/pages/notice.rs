@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn notice_can_carry_a_reveal_action() {
-        let path = PathBuf::from("/tmp/example.txt");
+        let path = PathBuf::from(r"C:\AstraBrew\example.txt");
         let notice = TransientNotice::success("webview.download.saved", "saved")
             .with_action(TransientNoticeAction::RevealPath(path.clone()));
 

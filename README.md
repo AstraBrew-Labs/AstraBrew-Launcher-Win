@@ -1,15 +1,15 @@
 <img src="https://raw.githubusercontent.com/al01cn/sillyTavern-launcher/GUI/src/assets/images/banner.png" style="width: 100%; height: 100%;" />
 
-# 星酿启动器 (AstraBrew Launcher) · MacOS版本
+# 星酿启动器 (AstraBrew Launcher) · Windows版本
 
 
 <div style="text-align: center;" align="center">
 
 星酿启动器 (AstraBrew Launcher) 原为 [酒馆启动器GUI (SillyTavern Launcher GUI)](https://github.com/al01cn/sillyTavern-launcher)，是一款专为小白打造的简单易用的[酒馆(SillyTavern)](https://github.com/sillyTavern/SillyTavern)启动器。基于 Rust 和 iced 开发，旨在为用户提供易用、快速、轻量、多功能的启动和管理体验。
 
-当前仓库单独管理 MacOS版本 的启动器。MacOS 用户可以通过星酿启动器轻松配置和管理酒馆实例，享受一键启动、版本管理、环境配置等功能。我们专注于提供流畅的用户界面和稳定的性能，让每位用户都能轻松上手并愉快使用。
+当前仓库单独管理 Windows版本 的启动器。Windows 用户可以通过星酿启动器轻松配置和管理酒馆实例，享受一键启动、版本管理、环境配置等功能。我们专注于提供流畅的用户界面和稳定的性能，让每位用户都能轻松上手并愉快使用。
 
-[![Releases](https://img.shields.io/github/v/release/AstraBrew-Labs/AstraBrew-Launcher-Mac?label=版本)](../../releases)
+[![Releases](https://img.shields.io/github/v/release/AstraBrew-Labs/AstraBrew-Launcher-Win?label=版本)](../../releases)
 [![Rust](https://img.shields.io/badge/Rust-latest-CE422B?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![iced](https://img.shields.io/github/v/release/iced-rs/iced?label=iced)](https://github.com/iced-rs/iced)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
@@ -39,7 +39,9 @@
 
 ### 普通用户
 
-普通用户请可以直接到[发布页(Releases)](../../releases)下载最新版本的DMG安装包，在安装界面把 AstraBrew Launcher.app 拖到 Applications 文件夹中，即可在App里找到星酿启动器 (AstraBrew Launcher) 点击启动。
+普通用户请直接到[发布页(Releases)](../../releases)下载最新版本的安装包（`AstraBrew Launcher_<版本>_x64-setup.exe`），双击后按向导完成安装，即可在开始菜单中找到星酿启动器 (AstraBrew Launcher) 点击启动。
+
+如果希望免安装使用，可以下载同页面的 `AstraBrew Launcher_<版本>_x64_portable.zip`，解压到任意目录后直接运行其中的可执行文件。
 
 ### 开发者
 
@@ -51,7 +53,7 @@
 
 在开始之前，请确保您的系统已经安装了以下工具：
 - [Rust & Cargo](https://www.rust-lang.org/tools/install) (建议使用最新的 stable 版本)
-- 因为当前仓库是MacOS的版本，所有开发都按照 MacOS 的规范进行开发。仅支持 MacOS 平台。
+- 因为当前仓库是Windows的版本，所有开发都按照 Windows 的规范进行开发。仅支持 Windows 平台。
 - 请勿将其他平台的依赖或配置引入本项目，以避免不必要的兼容性问题。
 
 ### 运行项目
@@ -59,24 +61,40 @@
 1. 克隆或下载本项目到本地。
 2. 进入项目根目录：
    ```bash
-   cd astrabrew-launcher-mac
+   cd astrabrew-launcher-win
    ```
-3. 使用 Cargo 检查或编译项目：
+3. 使用 Cargo 检查项目：
    ```bash
    cargo check
    ```
-4. 运行项目（调试模式）：
-   ```bash
-   cargo run
+   > **注意**：本项目**只允许用 `cargo check` 验证代码**，不要用 `cargo run` 启动或测试。
+   > 需要完整校验（含测试代码）时用 `cargo check --all-targets`。
+4. 需要出安装包时，用仓库自带的 PowerShell 脚本：
+   ```powershell
+   .\build.ps1
    ```
-   > **注意**：开发过程中如果只需检查代码规范和编译错误，请优先使用 `cargo check` 以提高效率。
+   产物在 `dist/` 下，包含 NSIS 安装包与免安装压缩包。
+
+### 重新生成界面字体
+
+界面字体是思源黑体的裁剪子集，源文件很大（每个字重约 16 MB），不入库。
+需要调整保留字符或更换字重时，把官方 OTF 放到同一目录后重新生成：
+
+```bash
+python assets/fonts/subset_fonts.py assets/fonts assets/fonts
+```
+
+脚本会按 GB2312 全字集 + 拉丁 + 常用符号裁剪，并统一字体族名与字重信息。
+**裁剪后的族名必须与 `src/core/typography.rs` 的 `DEFAULT_FAMILY_NAME` 一致**，
+否则 iced 匹配不到字体，界面会退回系统字体。脚本自检失败会直接中断，不会
+产出半成品。
 
 ## 📂 项目结构
 
 ```text
-astrabrew-launcher-mac/
+astrabrew-launcher-Win/
 ├── assets/                  # 静态资源文件
-│   └── fonts/               # 字体文件（如 MiSans-Regular.ttf）
+│   └── fonts/               # 界面字体（思源黑体三档字重子集 + 裁剪脚本）
 ├── src/                     # 源代码目录
 │   ├── core/                # 核心逻辑模块（环境配置等）
 │   ├── lang/                # 国际化语言模块（en.rs, zh.rs, lang.rs）
@@ -89,11 +107,11 @@ astrabrew-launcher-mac/
 ## 📂 软件目录结构
 
 ```text
- ~/Library/Application Support/AstraBrew Launcher/    ← 根目录 (root)
+ %AppData%/AstraBrew Launcher/                ← 根目录 (root)
  ├── data/                   ← 软件数据目录
  │   ├── default/            ← 默认数据目录
  │   │   └── sillytavern/        ← 默认酒馆数据目录
- │   │       └── config.yaml     ← 默认酒馆配置文件
+ │   │       ├── config.yaml     ← 默认酒馆配置文件
  │   │       └── settings.json   ← 默认酒馆WebUI配置文件
  │   ├── sillytavern/        ← 全局酒馆数据目录
  │   │   └── data/           ← 全局酒馆数据目录
@@ -101,14 +119,13 @@ astrabrew-launcher-mac/
  │   │       └── default-user/
  │   │           └── settings.json ← 全局酒馆WebUI设置
  │   └── local_instances.json ← 本地实例列表
+ ├── logs/                   ← 日志目录 (logs)
  ├── sillytavern/            ← 酒馆核心文件目录 (ST installation) (对应软件里的`在线下载`实例)
+ ├── lib/                    ← 内置运行库（NodeJS / MinGit / PM2 / Caddy）
  └── config.json             ← 启动器配置文件
 
- ~/Library/Logs/AstraBrew Launcher/      ← 日志目录 (logs)
-
- ~/Library/Caches/AstraBrew Launcher/    ← 缓存目录 (caches)
-
- /tmp/AstraBrew Launcher/                ← 临时目录 (temp)
+ %Temp%/astrabrew-launcher/                 ← 临时目录 (temp)
+ └── caches/                 ← 缓存目录 (caches)
 ```
 
 ## 📝 代码规范与注释规范

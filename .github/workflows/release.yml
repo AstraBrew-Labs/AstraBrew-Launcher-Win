@@ -1,9 +1,12 @@
-name: 发布 macOS
+name: 发布 Win
 
 # 触发：Cargo.toml 变化（含版本号与 `[package.metadata.astrabrew] beta` 开关）时自动发版，
 # 也可手动触发。构建渠道由 Cargo.toml 的 beta 开关决定（beta → 测试版，否则 → 正式版）。
 on:
   push:
+    branches:
+      - master
+      - main
     paths:
       - Cargo.toml
   workflow_dispatch:
@@ -11,10 +14,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
-    name: 构建并发布
-    runs-on: macos-latest
+    name: 构建并发布 Windows 版本
+    runs-on: windows-2022
 
     env:
       APP_NAME: "AstraBrew Launcher"
@@ -22,150 +29,127 @@ jobs:
     steps:
       - name: 检出仓库
         uses: actions/checkout@v4
-
-      - name: 安装 Rust
-        uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          fetch-depth: 2
 
-      - name: 安装 cargo-packager
-        run: cargo install cargo-packager --locked
-
-      - name: 读取版本号
-        id: version
-        shell: bash
-        run: |
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      # 构建渠道由 Cargo.toml 的 `[package.metadata.astrabrew] beta` 决定。
-      # 注意：不能放进 [package.metadata.packager]，cargo-packager 会拒绝未知字段。
-      - name: 读取构建渠道
-        id: channel
-        shell: bash
-        run: |
-          BETA_RAW=$(sed -n '/^\[package\.metadata\.astrabrew\]/,/^\[/p' Cargo.toml \
-            | grep -m1 '^[[:space:]]*beta[[:space:]]*=' \
-            | sed 's/.*=[[:space:]]*//; s/[[:space:]]*#.*//')
-          if [ "$BETA_RAW" = "true" ] || [ "$BETA_RAW" = "True" ] || [ "$BETA_RAW" = "TRUE" ]; then
-            echo "channel=beta" >> "$GITHUB_OUTPUT"
-            echo "tag_prefix=beta-v" >> "$GITHUB_OUTPUT"
-            echo "notes=测试版本发布" >> "$GITHUB_OUTPUT"
-          else
-            echo "channel=release" >> "$GITHUB_OUTPUT"
-            echo "tag_prefix=v" >> "$GITHUB_OUTPUT"
-            echo "notes=新版本发布" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: 检查 Release 是否已存在
-        id: check_release
+      - name: 读取版本号与构建渠道
+        id: metadata
+        shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if gh release view "${{ steps.channel.outputs.tag_prefix }}${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          $cargo = Get-Content Cargo.toml -Raw
+          $match = [regex]::Match($cargo, '(?ms)^\[package\][^\[]*?^version\s*=\s*"([^"]+)"')
+          if (-not $match.Success) {
+            throw '无法从 Cargo.toml 读取 [package].version'
+          }
+          $version = $match.Groups[1].Value
 
-      - name: Release 已存在则结束
-        if: steps.check_release.outputs.exists == 'true'
-        run: exit 0
+          # 构建渠道由 `[package.metadata.astrabrew] beta` 决定；
+          # 注意：不能放进 [package.metadata.packager]，cargo-packager 会拒绝未知字段。
+          $betaRaw = [regex]::Match(
+            $cargo,
+            '(?ms)^\[package\.metadata\.astrabrew\][^\[]*?^\s*beta\s*=\s*([^\r\n#]+)'
+          ).Groups[1].Value.Trim().ToLowerInvariant()
+          $isBeta = $betaRaw -eq 'true'
 
-      - name: 编译 ARM64
-        env:
-          ASTRA_BUILD_CHANNEL: ${{ steps.channel.outputs.channel }}
-        run: cargo build --release --target aarch64-apple-darwin
+          $tagPrefix = if ($isBeta) { 'beta-v' } else { 'v' }
+          $notes = if ($isBeta) { '测试版本发布' } else { '新版本发布' }
+          $title = if ($isBeta) { "AstraBrew Launcher $version Beta" } else { "AstraBrew Launcher $version" }
 
-      - name: 编译 Intel
-        env:
-          ASTRA_BUILD_CHANNEL: ${{ steps.channel.outputs.channel }}
-        run: cargo build --release --target x86_64-apple-darwin
-
-      - name: 合并 Universal Binary
-        run: |
-          mkdir -p target/universal/release target/current/release
-          lipo \
-            target/aarch64-apple-darwin/release/astrabrew-launcher-mac \
-            target/x86_64-apple-darwin/release/astrabrew-launcher-mac \
-            -create \
-            -output target/universal/release/astrabrew-launcher-mac
-          file target/universal/release/astrabrew-launcher-mac
-
-      - name: 打包 Universal
-        run: |
-          cp target/universal/release/astrabrew-launcher-mac \
-             target/current/release/astrabrew-launcher-mac
-          cargo packager --release
-
-      - name: 查找 .app
-        id: app
-        run: |
-          APP=$(find dist -name "*.app" | head -n1)
-          if [ -z "$APP" ]; then echo ".app 不存在"; find dist; exit 1; fi
-          echo "app=$APP" >> "$GITHUB_OUTPUT"
-
-      - name: 删除 cargo-packager 产生的 ad-hoc 签名
-        run: |
-          codesign --remove-signature "${{ steps.app.outputs.app }}" || true
-          xattr -cr "${{ steps.app.outputs.app }}"
-
-      - name: 生成更新包
-        run: |
-          tar czf "AstraBrew-Launcher_universal.app.tar.gz" \
-            -C "$(dirname "${{ steps.app.outputs.app }}")" \
-            "$(basename "${{ steps.app.outputs.app }}")"
-
-      - name: 签名更新包
-        env:
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_PRIVATE_KEY }}
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.SECRET_PASSWORD }}
-        run: |
-          cargo packager signer sign "AstraBrew-Launcher_universal.app.tar.gz"
-
-      - name: 读取更新签名
-        id: signature
-        run: |
-          SIGNATURE=$(tr -d '\n' < AstraBrew-Launcher_universal.app.tar.gz.sig)
-          echo "signature=$SIGNATURE" >> "$GITHUB_OUTPUT"
-
-      - name: 查找 DMG
-        id: dmg
-        run: |
-          FILE=$(find dist -name "*.dmg" | head -n1)
-          if [ -z "$FILE" ]; then echo "没有找到 dmg"; find dist; exit 1; fi
-          echo "file=$FILE" >> "$GITHUB_OUTPUT"
-
-      - name: 生成 latest.json
-        run: |
-          cat > latest.json <<EOF
-          {
-            "version":"${{ steps.version.outputs.version }}",
-            "notes":"${{ steps.channel.outputs.notes }}",
-            "pub_date":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-            "platforms":{
-              "darwin-universal":{
-                "signature":"${{ steps.signature.outputs.signature }}",
-                "url":"https://github.com/${{ github.repository }}/releases/download/${{ steps.channel.outputs.tag_prefix }}${{ steps.version.outputs.version }}/AstraBrew-Launcher_universal.app.tar.gz",
-                "format":"app"
+          # 仅当版本号真的变化时才发版，避免改个无关字段就打出重复 Release。
+          $shouldRelease = $true
+          if ($env:EVENT_NAME -eq 'push' -and $env:BEFORE_SHA -and $env:BEFORE_SHA -notmatch '^0+$') {
+            $previousCargo = & git show "${env:BEFORE_SHA}:Cargo.toml" 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              $previousMatch = [regex]::Match(
+                ($previousCargo -join "`n"),
+                '(?ms)^\[package\][^\[]*?^version\s*=\s*"([^"]+)"'
+              )
+              if ($previousMatch.Success -and $previousMatch.Groups[1].Value -eq $version) {
+                $shouldRelease = $false
               }
             }
           }
-          EOF
 
-      - name: 创建 Release
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tagPrefix$version" >> $env:GITHUB_OUTPUT
+          "channel=$(if ($isBeta) { 'beta' } else { 'release' })" >> $env:GITHUB_OUTPUT
+          "notes=$notes" >> $env:GITHUB_OUTPUT
+          "title=$title" >> $env:GITHUB_OUTPUT
+          "should_release=$($shouldRelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: 版本号未变化则跳过
+        if: steps.metadata.outputs.should_release != 'true'
+        shell: pwsh
+        run: Write-Host 'Cargo.toml 有改动，但 [package].version 未变化，无需发版。'
+
+      - name: 安装 Rust 工具链
+        if: steps.metadata.outputs.should_release == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: 缓存 Rust 构建产物
+        if: steps.metadata.outputs.should_release == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: 安装 NSIS 与 cargo-packager
+        if: steps.metadata.outputs.should_release == 'true'
+        shell: pwsh
+        run: |
+          choco install nsis --no-progress -y
+          cargo install cargo-packager --locked
+
+      - name: 构建并打包
+        if: steps.metadata.outputs.should_release == 'true'
+        shell: pwsh
+        env:
+          ASTRA_BUILD_CHANNEL: ${{ steps.metadata.outputs.channel }}
+        run: .\build.ps1 -Clean
+
+      - name: 生成 SHA-256 校验文件
+        if: steps.metadata.outputs.should_release == 'true'
+        shell: pwsh
+        run: |
+          $lines = Get-ChildItem dist -File |
+            Where-Object { $_.Name -ne 'SHA256SUMS.txt' } |
+            Sort-Object Name |
+            ForEach-Object {
+              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$hash  $($_.Name)"
+            }
+          [System.IO.File]::WriteAllLines(
+            (Join-Path $PWD 'dist\SHA256SUMS.txt'),
+            $lines,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+      - name: 上传构建产物
+        if: steps.metadata.outputs.should_release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AstraBrew-Launcher-${{ steps.metadata.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: 发布 GitHub Release
+        if: steps.metadata.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           # 测试版也保持非 pre-release：GitHub 的 `releases/latest` 只解析非 pre-release，
           # 而自动更新的直连源依赖 `releases/latest/download/latest.json`。
           prerelease: false
-          tag_name: ${{ steps.channel.outputs.tag_prefix }}${{ steps.version.outputs.version }}
-          name: ${{ steps.channel.outputs.tag_prefix }}${{ steps.version.outputs.version }}
+          tag_name: ${{ steps.metadata.outputs.tag }}
+          name: ${{ steps.metadata.outputs.title }}
+          target_commitish: ${{ github.sha }}
           generate_release_notes: true
           files: |
-            AstraBrew-Launcher_universal.app.tar.gz
-            AstraBrew-Launcher_universal.app.tar.gz.sig
-            ${{ steps.dmg.outputs.file }}
-            latest.json
+            dist/*.exe
+            dist/*.zip
+            dist/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

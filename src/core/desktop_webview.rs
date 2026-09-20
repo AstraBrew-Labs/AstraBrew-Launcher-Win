@@ -1,49 +1,57 @@
-//! 桌面模式 WebView 管理器
+//! 桌面模式 WebView 管理器（Windows / WebView2）
 //!
 //! 当启动模式为"桌面模式"时，酒馆启动成功后自动创建原生 WebView 窗口，
 //! 以类似桌面应用的方式展示酒馆页面。
 //!
-//! 设计要点：
-//! - macOS 要求 UI 必须在主线程创建。iced 的 NSApp 已在主线程运行，
-//!   所以直接用 objc2 创建 NSWindow + WKWebView，参与现有运行循环。
-//! - 通过 `isVisible` 轮询检测窗口关闭（由 iced 定时消息轮询，主线程安全）。
-//! - Drop 时自动关闭窗口。
+//! ## 架构
+//! iced 已经占用了主线程的 winit 事件循环，而 WebView2 的窗口必须在
+//! **创建它的那个线程**上持续接收消息。因此本模块在独立线程上跑一个专属的
+//! winit 事件循环，承载酒馆 WebView 窗口：
 //!
-//! ## Delegate 实现
-//! - **WKNavigationDelegate**：拦截外部链接在默认浏览器打开；检测不可显示的 MIME 类型触发下载
-//! - **WKUIDelegate**：处理 `<input type="file">` 文件选择对话框
-//! - **WKScriptMessageHandler**：接收 JS 发送的 blob 导出数据（`window.webkit.messageHandlers.fileDownloader`），
-//!   解码 base64 后自动保存到配置的导出目录
+//! ```text
+//!   iced 主线程                        WebView 专属线程
+//!   ─────────────                      ─────────────────
+//!   DesktopWebView::open()  ──启动──►  EventLoop::run_app()
+//!      │  ▲                                │
+//!      │  │ 事件通道 (WebViewEvent)         │ 创建 winit 窗口 + wry WebView
+//!      │  └────Loading / Ready / Failed────┤
+//!      │                                   │
+//!      └──命令通道 (Command)──────────────►│ Reload / BringToFront / Close
+//!                                          │
+//!   drain_events() 每帧拉取            窗口关闭 → 退出事件循环 → 线程结束
+//! ```
+//!
+//! ## 关键设计
+//! - **`is_closed()` 轮询**：winit 的 `CloseRequested` 会置位 `closed` 并退出事件循环，
+//!   iced 侧定时轮询即可感知窗口关闭，无需把回调跨线程送回 iced。
+//! - **脚本注入**：与旧版行为对齐——`blob_patch_js` 把 blob/大文件下载交给原生保存，
+//!   `file_input_filter_js` 还原 `<input type="file">` 的 accept 过滤，
+//!   两者都在文档开始时注入主框架。
+//! - **下载**：使用 wry 的下载回调，保存目录由 `EXPORT_PATH` 决定；
+//!   完成后把 `WebViewDownloadEvent` 推入全局队列，由启动器根界面呈现。
 
 use crate::lang::t;
 use crate::lang::tf;
 use std::path::{Path, PathBuf};
-use std::ptr;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use block2::{DynBlock, RcBlock};
-use objc2_06::define_class;
-use objc2_06::rc::Retained;
-use objc2_06::runtime::{AnyObject, ProtocolObject};
-use objc2_06::{AnyThread, DefinedClass, MainThreadOnly, msg_send};
-use objc2_app_kit_06::{
-    NSApplication, NSAutoresizingMaskOptions, NSBackingStoreType, NSModalResponseOK, NSOpenPanel,
-    NSView, NSWindow, NSWindowStyleMask, NSWorkspace,
-};
-use objc2_foundation_06::{
-    MainThreadMarker, NSArray, NSData, NSDataBase64DecodingOptions, NSDictionary, NSError,
-    NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL, NSURLRequest,
-};
-use objc2_uniform_type_identifiers_06::UTType;
-use objc2_web_kit::{
-    WKFrameInfo, WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate,
-    WKNavigationResponse, WKNavigationResponsePolicy, WKNavigationType, WKOpenPanelParameters,
-    WKScriptMessage, WKScriptMessageHandler, WKUIDelegate, WKUserContentController, WKUserScript,
-    WKUserScriptInjectionTime, WKWebView, WKWebViewConfiguration,
-};
+use wry::dpi::{LogicalPosition, LogicalSize};
+use wry::{PageLoadEvent, Rect, WebViewBuilder};
+
+/// 桌面窗口初始尺寸：与主界面 16:9 默认尺寸保持一致。
+const WINDOW_WIDTH: f64 = 1280.0;
+const WINDOW_HEIGHT: f64 = 720.0;
+/// 桌面窗口最小尺寸：避免被拖成不可用的窄条。
+const MIN_WINDOW_WIDTH: f64 = 800.0;
+const MIN_WINDOW_HEIGHT: f64 = 500.0;
+/// WebView2 环境初始化的等待上限。
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
+/// 命令轮询间隔：窗口关闭等低频事件无需高频检查。
+const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// WebView 导出文件的规范保存目录。
 static EXPORT_PATH: LazyLock<Mutex<PathBuf>> =
@@ -61,467 +69,90 @@ static DOWNLOAD_NOTIFICATIONS: LazyLock<Mutex<Vec<WebViewDownloadEvent>>> =
 
 /// 一次性取出所有下载结果，避免重复显示全局通知。
 pub fn drain_download_notifications() -> Vec<WebViewDownloadEvent> {
-    std::mem::take(&mut *DOWNLOAD_NOTIFICATIONS.lock().unwrap())
+    match DOWNLOAD_NOTIFICATIONS.lock() {
+        Ok(mut guard) => std::mem::take(&mut *guard),
+        Err(_) => Vec::new(),
+    }
 }
-
-/// 最近一次点击的 `<input type="file">` 的 accept 属性，由 JS 注入脚本通过
-/// `fileInputTracker` messageHandler 同步发送，供 `run_open_panel` 设置 NSOpenPanel.allowedFileTypes。
-///
-/// 时序保证：JS click 事件 capture 阶段调用 postMessage → WebKit dispatch_async(主线程)
-/// → WebKit 在 click 事件结束后 dispatch_async(主线程) 调用 runOpenPanel。
-/// 两次 dispatch_async 按入队顺序执行，故 accept 先于 runOpenPanel 写入。
-static LAST_FILE_ACCEPT: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new(String::new()));
-
-// ============================================================================
-// WKNavigationDelegate — 外部链接 & 下载处理
-// ============================================================================
 
 /// 原生 WebView 导航状态，由 iced 主线程定时消费。
 #[derive(Debug, Clone)]
 pub enum WebViewEvent {
+    /// 导航已开始。
     Loading,
+    /// 导航已成功完成，附带当前地址。
     Ready(String),
+    /// 导航失败，附带已翻译的错误文案。
     Failed(String),
+    /// WebView2 浏览器进程异常退出（崩溃）。
     ContentProcessTerminated,
 }
 
-#[derive(serde::Deserialize)]
-struct WebViewPageProbe {
-    href: String,
-    title: String,
-    html_length: usize,
-    body_children: usize,
-    body_width: f64,
-    body_height: f64,
+/// 主线程 → WebView 线程的命令。
+enum Command {
+    /// 重新加载页面，可指定是否把 localhost 换成 IPv4 回环地址。
+    Reload { use_loopback_fallback: bool },
+    /// 把窗口唤回前台。
+    BringToFront,
+    /// 主动关闭窗口并结束事件循环。
+    Close,
 }
 
-#[derive(Clone)]
-struct WebViewNavDelegateIvars {
-    events: Sender<WebViewEvent>,
+/// WebView 线程的启动结果。
+enum StartupOutcome {
+    /// 窗口与 WebView 创建成功。
+    Ready,
+    /// 创建失败，附带已翻译的错误文案。
+    Failed(String),
 }
 
-define_class!(
-    /// 自定义 NavigationDelegate：
-    /// - 外部链接 / target="_blank" → 在默认浏览器中打开
-    /// - 不可显示的 MIME 类型 → 在默认浏览器中下载
-    #[unsafe(super(NSObject))]
-    #[thread_kind = MainThreadOnly]
-    #[ivars = WebViewNavDelegateIvars]
-    struct WebViewNavDelegate;
-
-    impl WebViewNavDelegate {
-        /// 决策导航动作：区分内部/外部链接
-        #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
-        fn decide_policy_for_navigation_action(
-            &self,
-            web_view: &WKWebView,
-            navigation_action: &WKNavigationAction,
-            decision_handler: &DynBlock<dyn Fn(WKNavigationActionPolicy)>,
-        ) {
-            unsafe {
-                let nav_type = navigation_action.navigationType();
-                let request = navigation_action.request();
-                let target_frame = navigation_action.targetFrame();
-
-                // 判断是否需要在默认浏览器打开
-                let should_open_externally = if nav_type == WKNavigationType::LinkActivated {
-                    // targetFrame 为 nil 表示 target="_blank" / 新窗口
-                    if target_frame.is_none() {
-                        true
-                    } else {
-                        // 比较当前页面 host 与目标 URL host，不同则视为外部链接
-                        let request_url = request.URL();
-                        match (web_view.URL(), &request_url) {
-                            (Some(cur), Some(req)) => {
-                                let cur_host = cur.host();
-                                let req_host = req.host();
-                                cur_host != req_host
-                                    || cur_host.is_none()
-                                    || req_host.is_none()
-                            }
-                            _ => false,
-                        }
-                    }
-                } else {
-                    false
-                };
-
-                if should_open_externally {
-                    if let Some(url) = request.URL() {
-                        let workspace = NSWorkspace::sharedWorkspace();
-                        workspace.openURL(&url);
-                    }
-                    decision_handler.call((WKNavigationActionPolicy::Cancel,));
-                } else {
-                    decision_handler.call((WKNavigationActionPolicy::Allow,));
-                }
-            }
-        }
-
-        /// 决策导航响应：检测不可显示的 MIME 类型 → 触发下载
-        #[unsafe(method(webView:decidePolicyForNavigationResponse:decisionHandler:))]
-        fn decide_policy_for_navigation_response(
-            &self,
-            _web_view: &WKWebView,
-            navigation_response: &WKNavigationResponse,
-            decision_handler: &DynBlock<dyn Fn(WKNavigationResponsePolicy)>,
-        ) {
-            unsafe {
-                if navigation_response.canShowMIMEType() {
-                    decision_handler.call((WKNavigationResponsePolicy::Allow,));
-                } else {
-                    // WKWebView 无法显示此 MIME 类型 → 在默认浏览器中打开以下载
-                    let response = navigation_response.response();
-                    if let Some(url) = response.URL() {
-                        let workspace = NSWorkspace::sharedWorkspace();
-                        workspace.openURL(&url);
-                    }
-                    decision_handler.call((WKNavigationResponsePolicy::Cancel,));
-                }
-            }
-        }
-        #[unsafe(method(webView:didStartProvisionalNavigation:))]
-        fn did_start_navigation(
-            &self,
-            _web_view: &WKWebView,
-            _navigation: Option<&WKNavigation>,
-        ) {
-            let _ = self.ivars().events.send(WebViewEvent::Loading);
-        }
-
-        #[unsafe(method(webView:didFinishNavigation:))]
-        fn did_finish_navigation(
-            &self,
-            web_view: &WKWebView,
-            _navigation: Option<&WKNavigation>,
-        ) {
-            // didFinish 也会为初始 about:blank 触发；必须验证真实 DOM 后才能判定加载成功。
-            let events = self.ivars().events.clone();
-            let completion = RcBlock::new(move |result: *mut AnyObject, error: *mut NSError| {
-                if !error.is_null() {
-                    let description = unsafe { (&*error).localizedDescription().to_string() };
-                    let _ = events.send(WebViewEvent::Failed(
-                        tf("webview.inspect_failed", &[("description", &description)]),
-                    ));
-                    return;
-                }
-                if result.is_null() {
-                    let _ = events.send(WebViewEvent::Failed(
-                        t("webview.inspect_empty").to_owned(),
-                    ));
-                    return;
-                }
-                let object = unsafe { &*result };
-                let Some(value) = object.downcast_ref::<NSString>() else {
-                    let _ = events.send(WebViewEvent::Failed(
-                        t("webview.inspect_bad_format").to_owned(),
-                    ));
-                    return;
-                };
-                match serde_json::from_str::<WebViewPageProbe>(&value.to_string()) {
-                    Ok(probe)
-                        if (probe.href.starts_with("http://")
-                            || probe.href.starts_with("https://"))
-                            && !probe.title.is_empty()
-                            && probe.html_length > 100
-                            && probe.body_children > 0
-                            && probe.body_width > 0.0
-                            && probe.body_height > 0.0 =>
-                    {
-                        let _ = events.send(WebViewEvent::Ready(probe.href));
-                    }
-                    Ok(probe) => {
-                        let _ = events.send(WebViewEvent::Failed(format!(
-                            "页面未完成渲染：url={} title={} html={} children={} size={}x{}",
-                            probe.href,
-                            probe.title,
-                            probe.html_length,
-                            probe.body_children,
-                            probe.body_width,
-                            probe.body_height
-                        )));
-                    }
-                    Err(error) => {
-                        let _ = events.send(WebViewEvent::Failed(
-                            tf("webview.inspect_parse_failed", &[("error", &error)]),
-                        ));
-                    }
-                }
-            });
-            let script = NSString::from_str(concat!(
-                "JSON.stringify({href:location.href,title:document.title||'',",
-                "html_length:document.documentElement?document.documentElement.innerHTML.length:0,",
-                "body_children:document.body?document.body.childElementCount:0,",
-                "body_width:document.body?document.body.getBoundingClientRect().width:0,",
-                "body_height:document.body?document.body.getBoundingClientRect().height:0})"
-            ));
-            unsafe {
-                web_view.evaluateJavaScript_completionHandler(&script, Some(&completion));
-            }
-        }
-
-        #[unsafe(method(webView:didFailProvisionalNavigation:withError:))]
-        fn did_fail_provisional_navigation(
-            &self,
-            _web_view: &WKWebView,
-            _navigation: Option<&WKNavigation>,
-            error: &NSError,
-        ) {
-            let _ = self.ivars().events.send(WebViewEvent::Failed(
-                error.localizedDescription().to_string(),
-            ));
-        }
-
-        #[unsafe(method(webView:didFailNavigation:withError:))]
-        fn did_fail_navigation(
-            &self,
-            _web_view: &WKWebView,
-            _navigation: Option<&WKNavigation>,
-            error: &NSError,
-        ) {
-            let _ = self.ivars().events.send(WebViewEvent::Failed(
-                error.localizedDescription().to_string(),
-            ));
-        }
-
-        #[unsafe(method(webViewWebContentProcessDidTerminate:))]
-        fn content_process_terminated(&self, _web_view: &WKWebView) {
-            let _ = self
-                .ivars()
-                .events
-                .send(WebViewEvent::ContentProcessTerminated);
-        }
-    }
-
-    unsafe impl NSObjectProtocol for WebViewNavDelegate {}
-    unsafe impl WKNavigationDelegate for WebViewNavDelegate {}
-);
-
-impl WebViewNavDelegate {
-    fn new(mtm: MainThreadMarker, events: Sender<WebViewEvent>) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(WebViewNavDelegateIvars { events });
-        // SAFETY: NSObject 的 init 签名正确，实例变量已经完成初始化。
-        unsafe { msg_send![super(this), init] }
-    }
-}
+/// JS 侧投递导出数据使用的 IPC 频道名（`window.chrome.webview.postMessage` 的 `channel` 字段）。
+const DOWNLOAD_CHANNEL: &str = "fileDownloader";
 
 // ============================================================================
-// WKUIDelegate — 文件上传对话框
+// 路径工具
 // ============================================================================
 
-define_class!(
-    /// 自定义 UIDelegate：处理 `<input type="file">` 文件选择
-    #[unsafe(super(NSObject))]
-    #[thread_kind = MainThreadOnly]
-    struct WebViewUIDelegate;
-
-    impl WebViewUIDelegate {
-        /// 显示文件选择面板（文件导入）
-        ///
-        /// WKOpenPanelParameters 不暴露 HTML `<input accept>` 属性（WebKit API 限制），
-        /// 因此通过 JS 注入脚本在 input 点击时通过 `fileInputTracker` messageHandler
-        /// 预先把 accept 发送给原生层，这里读取并设置 NSOpenPanel.allowedFileTypes。
-        #[unsafe(method(webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:))]
-        fn run_open_panel(
-            &self,
-            _web_view: &WKWebView,
-            parameters: &WKOpenPanelParameters,
-            _frame: &WKFrameInfo,
-            completion_handler: &DynBlock<dyn Fn(*mut NSArray<NSURL>)>,
-        ) {
-            unsafe {
-                let mtm = MainThreadMarker::new()
-                    .expect("UIDelegate::runOpenPanel must be on main thread");
-
-                let panel = NSOpenPanel::openPanel(mtm);
-
-                // 根据网页表单参数配置面板
-                panel.setCanChooseFiles(true);
-                panel.setAllowsMultipleSelection(parameters.allowsMultipleSelection());
-                panel.setCanChooseDirectories(parameters.allowsDirectories());
-
-                // 读取 JS 预先发送的 accept，设置文件类型过滤
-                // 仅取扩展名形式（如 .json .png），MIME 类型 / 通配符交给 JS change 校验处理
-                let accept = LAST_FILE_ACCEPT.lock().unwrap().clone();
-                if !accept.is_empty() {
-                    let uttypes: Vec<Retained<UTType>> = accept
-                        .split(',')
-                        .map(|s| s.trim())
-                        .filter(|s| s.starts_with('.') && s.len() > 1)
-                        .filter_map(|s| {
-                            UTType::typeWithFilenameExtension(&NSString::from_str(&s[1..]))
-                        })
-                        .collect();
-                    if !uttypes.is_empty() {
-                        let ns_types: Retained<NSArray<UTType>> = uttypes.into_iter().collect();
-                        panel.setAllowedContentTypes(&ns_types);
-                    }
-                }
-
-                let result = panel.runModal();
-
-                if result == NSModalResponseOK {
-                    let urls = panel.URLs();
-                    // 将所有权转移给 WebKit
-                    completion_handler.call((Retained::into_raw(urls),));
-                } else {
-                    completion_handler.call((ptr::null_mut(),));
-                }
-            }
-        }
-    }
-
-    unsafe impl NSObjectProtocol for WebViewUIDelegate {}
-    unsafe impl WKUIDelegate for WebViewUIDelegate {}
-);
-
-impl WebViewUIDelegate {
-    fn new(mtm: MainThreadMarker) -> Retained<Self> {
-        let this = Self::alloc(mtm);
-        // 同 WebViewNavDelegate::new 的理由
-        unsafe { core::mem::transmute::<objc2_06::rc::Allocated<Self>, Retained<Self>>(this) }
-    }
-}
-
-// ============================================================================
-// WKScriptMessageHandler — blob 导出文件下载
-// ============================================================================
-
-define_class!(
-    /// 接收 JS 通过 `webkit.messageHandlers.*.postMessage(...)` 发送的消息
-    ///
-    /// 当前注册两个 name：
-    /// - `fileDownloader`：接收 {filename, base64} 字典，base64 解码后写入导出目录
-    /// - `fileInputTracker`：接收 accept 字符串，记录到 `LAST_FILE_ACCEPT` 供 NSOpenPanel 过滤
-    #[unsafe(super(NSObject))]
-    #[thread_kind = MainThreadOnly]
-    struct FileDownloadHandler;
-
-    // 注意：WKScriptMessageHandler 的 userContentController:didReceiveScriptMessage: 是
-    // required 方法，必须定义在 `unsafe impl WKScriptMessageHandler` 块内，否则 objc2
-    // define_class! 宏在 debug 构建下会 panic（协议必需方法未在协议块中注册）。
-    unsafe impl WKScriptMessageHandler for FileDownloadHandler {
-        #[allow(non_snake_case)]
-        #[unsafe(method(userContentController:didReceiveScriptMessage:))]
-        fn userContentController_didReceiveScriptMessage(
-            &self,
-            _user_content_controller: &WKUserContentController,
-            message: &WKScriptMessage,
-        ) {
-            unsafe {
-                let name = message.name().to_string();
-                match name.as_str() {
-                    "fileDownloader" => {
-                        handle_file_download(message);
-                    }
-                    "fileInputTracker" => {
-                        handle_file_input_accept(message);
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    unsafe impl NSObjectProtocol for FileDownloadHandler {}
-);
-
-/// 处理 blob 导出下载：JS postMessage({filename, base64}) → 写入文件
-///
-/// 注意：这是自由函数而非 FileDownloadHandler 的方法，因为 objc2 define_class! 的
-/// `impl Type` 块内方法会被当作 ObjC 方法处理（需要 &self 参数）。
-unsafe fn handle_file_download(message: &WKScriptMessage) {
-    unsafe {
-        let body = message.body();
-        // JS postMessage({filename, base64}) → NSDictionary<NSString, NSString>
-        let dict: &NSDictionary<NSString, NSString> =
-            &*(&*body as *const AnyObject as *const NSDictionary<NSString, NSString>);
-
-        let requested_name = dict
-            .objectForKey(&NSString::from_str("filename"))
-            .map(|name| name.to_string())
-            .unwrap_or_else(|| "download".to_owned());
-        // 网页提供的文件名不得包含目录，避免覆盖下载目录之外的文件。
-        let filename = Path::new(&requested_name)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.is_empty())
-            .unwrap_or("download")
-            .to_owned();
-
-        let base64 = dict
-            .objectForKey(&NSString::from_str("base64"))
-            .map(|value| value.to_string())
-            .unwrap_or_default();
-        if base64.is_empty() {
-            push_download_event(WebViewDownloadEvent::Failed(t("webview.download.empty").to_owned()));
-            return;
-        }
-
-        let data = NSData::initWithBase64EncodedString_options(
-            NSData::alloc(),
-            &NSString::from_str(&base64),
-            NSDataBase64DecodingOptions(0),
-        );
-        let Some(data) = data else {
-            push_download_event(WebViewDownloadEvent::Failed(
-                t("webview.download.corrupted").to_owned(),
-            ));
-            return;
-        };
-
-        let directory = EXPORT_PATH.lock().unwrap().clone();
-        if let Err(error) = std::fs::create_dir_all(&directory) {
-            push_download_event(WebViewDownloadEvent::Failed(tf(
-                "webview.download.create_dir_failed",
-                &[("path", &directory.display().to_string()), ("error", &error)]
-            )));
-            return;
-        }
-
-        let save_path = available_download_path(&directory, &filename);
-        if data.writeToFile_atomically(&NSString::from_str(&save_path.to_string_lossy()), true) {
-            push_download_event(WebViewDownloadEvent::Saved(save_path));
-        } else {
-            push_download_event(WebViewDownloadEvent::Failed(tf("webview.download.write_failed", &[("path", &save_path.display())])));
-        }
-    }
-}
-
-fn push_download_event(event: WebViewDownloadEvent) {
-    DOWNLOAD_NOTIFICATIONS.lock().unwrap().push(event);
-}
-
+/// 默认下载目录，实现见 [`crate::utils::user_downloads_dir`]。
 fn default_download_directory() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("Downloads")
+    crate::utils::user_downloads_dir()
 }
 
-/// 将 `~/Downloads` 等设置转换为真实绝对路径；空值回退系统下载目录。
+/// 当前用户的主目录。
+fn user_profile_dir() -> PathBuf {
+    std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(r"C:\"))
+}
+
+/// 将设置中的导出目录解析为真实绝对路径。
+///
+/// 支持的写法：
+/// - 空值或 `~` → 系统「下载」目录
+/// - `~/xxx` 或 `~\xxx` → 用户主目录下的相对路径
+/// - 绝对路径 → 原样使用
+/// - 其他相对路径 → 相对用户主目录
 fn resolve_download_directory(path: &str) -> PathBuf {
     let path = path.trim();
     if path.is_empty() || path == "~" {
         return default_download_directory();
     }
-    if let Some(rest) = path.strip_prefix("~/") {
-        return std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join(rest);
+    if let Some(rest) = path
+        .strip_prefix("~/")
+        .or_else(|| path.strip_prefix("~\\"))
+    {
+        return user_profile_dir().join(rest);
     }
-    let path = PathBuf::from(path);
-    if path.is_absolute() {
-        path
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        candidate
     } else {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join(path)
+        user_profile_dir().join(candidate)
     }
 }
 
+/// 在目标目录中为下载文件挑选一个不冲突的路径（`name.ext` → `name_1.ext`）。
 fn available_download_path(directory: &Path, filename: &str) -> PathBuf {
     let requested = directory.join(filename);
     if !requested.exists() {
@@ -547,44 +178,156 @@ fn available_download_path(directory: &Path, filename: &str) -> PathBuf {
     unreachable!("文件名递增查找必定能够找到可用路径")
 }
 
-/// 处理 `<input type="file">` 的 accept 属性：JS postMessage(acceptString)
-/// → 记录到 LAST_FILE_ACCEPT，供 run_open_panel 设置 NSOpenPanel.allowedFileTypes
-unsafe fn handle_file_input_accept(message: &WKScriptMessage) {
-    unsafe {
-        let body = message.body();
-        // JS postMessage(string) → NSString
-        let ns_str: &NSString = &*(&*body as *const AnyObject as *const NSString);
-        let accept = ns_str.to_string();
-        *LAST_FILE_ACCEPT.lock().unwrap() = accept;
+/// 把下载结果推入全局队列，等待 iced 主线程消费。
+fn push_download_event(event: WebViewDownloadEvent) {
+    if let Ok(mut guard) = DOWNLOAD_NOTIFICATIONS.lock() {
+        guard.push(event);
     }
 }
 
-impl FileDownloadHandler {
-    fn new(mtm: MainThreadMarker) -> Retained<Self> {
-        let this = Self::alloc(mtm);
-        unsafe { core::mem::transmute::<objc2_06::rc::Allocated<Self>, Retained<Self>>(this) }
+// ============================================================================
+// 注入脚本
+// ============================================================================
+
+/// 拦截 blob / 大体积 data URL 下载，改为把内容经 IPC 交给原生层保存。
+///
+/// 页面内触发 `<a download href="blob:...">` 或 `window.open(blobUrl)` 时，
+/// WebView2 的默认行为可能是静默失败或另存为无意义文件名；本脚本统一改写为
+/// `fileDownloader` 频道消息，由 Rust 侧写出到配置的导出目录。
+fn blob_patch_js() -> String {
+    // 超过该体积的 blob 不做 base64 传输，避免一次性占用过多内存。
+    const MAX_BYTES: usize = 64 * 1024 * 1024;
+
+    format!(
+        r#"(function(){{
+var MAX={max};
+function isDl(u){{
+if(!u){{return false}}
+u=String(u);
+if(u.indexOf('blob:')===0){{return true}}
+if(u.indexOf('data:')===0&&u.length>2000){{return true}}
+return false;
+}}
+function post(name,data){{
+try{{window.chrome.webview.postMessage(JSON.stringify({{channel:'{channel}',name:name,data:data}}))}}catch(e){{}}
+}}
+function save(url,name){{
+try{{
+fetch(url).then(function(r){{return r.blob()}}).then(function(b){{
+if(b.size>MAX){{throw new Error('too-large')}}
+var fr=new FileReader();
+fr.onload=function(){{
+var s=String(fr.result);
+var comma=s.indexOf(',');
+post(name||'download',comma>=0?s.slice(comma+1):s);
+}};
+fr.readAsDataURL(b);
+}}).catch(function(e){{post('__error__',String(e))}});
+}}catch(e){{post('__error__',String(e))}}
+}}
+document.addEventListener('click',function(e){{
+var t=e.target;
+var a=(t&&t.closest)?t.closest('a[download]'):null;
+if(!a){{return}}
+var href=a.getAttribute('href')||'';
+if(!isDl(href)){{return}}
+e.preventDefault();
+e.stopPropagation();
+save(href,a.getAttribute('download')||'download');
+}},true);
+var oo=window.open;
+window.open=function(u){{
+if(u&&isDl(u)){{save(u,'download');return null}}
+return oo.apply(window,arguments)
+}};
+}})()"#,
+        max = MAX_BYTES,
+        channel = DOWNLOAD_CHANNEL,
+    )
+}
+
+/// 还原 `<input type="file" accept="...">` 的文件类型过滤。
+///
+/// 手动指定类型规则（不依赖酒馆 DOM 结构）：
+///   - 角色卡导入：accept 含 png / image → 强制 `.png,.json`
+///   - 世界书/预设导入：accept 含 json → 强制 `.json`
+///   - 其他：沿用原 accept
+fn file_input_filter_js() -> String {
+    let rejected_prefix = crate::lang::t("webview.file_type_rejected_prefix");
+    let allowed_prefix = crate::lang::t("webview.file_type_allowed_prefix");
+    format!(
+        r#"(function(){{
+function pickType(input){{
+var acc=(input.getAttribute('accept')||'').toLowerCase();
+if(acc.indexOf('png')>=0||acc.indexOf('image/')>=0){{return '.png,.json'}}
+if(acc.indexOf('json')>=0){{return '.json'}}
+return acc
+}}
+document.addEventListener('change',function(e){{
+var t=e.target;
+if(!t||t.tagName!=='INPUT'||(t.type||'').toLowerCase()!=='file'){{return}}
+if(!t.files||!t.files.length){{return}}
+var acc=pickType(t);
+if(!acc){{return}}
+var exts=[],any=false;
+acc.split(',').forEach(function(p){{
+p=p.trim().toLowerCase();
+if(!p){{return}}
+if(p.charAt(0)==='.'){{exts.push(p.slice(1))}}
+else if(p==='*/*'||p==='*'||p.indexOf('/*')>=0){{any=true}}
+}});
+if(any){{return}}
+if(!exts.length){{return}}
+var bad=[];
+for(var i=0;i<t.files.length;i++){{
+var f=t.files[i];
+var n=(f.name||'').toLowerCase();
+var ok=exts.some(function(x){{return n.lastIndexOf('.'+x)===n.length-x.length-1}});
+if(!ok){{bad.push(f.name)}}
+}}
+if(bad.length){{
+t.value='';
+alert('{rejected}'+bad.join('\n')+'\n\n{allowed}'+acc);
+}}
+}},true)
+}})()"#,
+        rejected = escape_js_string(&rejected_prefix),
+        allowed = escape_js_string(&allowed_prefix),
+    )
+}
+
+/// 转义注入 JS 字符串字面量中的特殊字符。
+fn escape_js_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            '\'' => escaped.push_str("\\'"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            _ => escaped.push(character),
+        }
     }
+    escaped
 }
 
 // ============================================================================
 // DesktopWebView
 // ============================================================================
 
+/// 桌面模式的 WebView 窗口句柄。
+///
+/// 自身只持有跨线程句柄；真正的 winit 窗口与 WebView2 实例都存在于
+/// [`DesktopWebView::open`] 启动的专属线程上。
 pub struct DesktopWebView {
-    window: Retained<NSWindow>,
-    /// 显式持有 WebView 的父视图，确保 WebKit 正确进入 AppKit 视图层级。
-    _parent_view: Retained<NSView>,
-    /// 显式持有 WKWebView，避免只依赖 NSWindow 的间接引用。
-    webview: Retained<WKWebView>,
+    /// 主线程 → WebView 线程的命令发送端。
+    commands: Sender<Command>,
+    /// WebView 线程 → 主线程的事件接收端。
     events: Receiver<WebViewEvent>,
-    original_url: String,
-    /// 保留当前导航对象，直到下一次加载替换它。
-    navigation: Option<Retained<WKNavigation>>,
-    /// 保持强引用，因为 WKWebView 对 delegate 是 weak 引用
-    _nav_delegate: Retained<WebViewNavDelegate>,
-    _ui_delegate: Retained<WebViewUIDelegate>,
-    _download_handler: Retained<FileDownloadHandler>,
-    running: Arc<AtomicBool>,
+    /// 窗口是否已关闭（用户关闭或程序主动关闭）。
+    closed: Arc<AtomicBool>,
+    /// 线程句柄，`close()` 时用于等待线程退出。
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl DesktopWebView {
@@ -593,337 +336,124 @@ impl DesktopWebView {
     /// 设置页修改 `tavern_export_path` 后每帧调用此方法同步到 WebView，
     /// 这样无需重新打开 WebView 即可让新路径生效。
     pub fn set_export_path(path: &str) {
-        *EXPORT_PATH.lock().unwrap() = resolve_download_directory(path);
+        if let Ok(mut guard) = EXPORT_PATH.lock() {
+            *guard = resolve_download_directory(path);
+        }
     }
 
-    /// 在主线程上创建 NSWindow + WKWebView
+    /// 创建桌面 WebView 窗口。
     ///
-    /// - `url`: 酒馆访问地址（如 http://127.0.0.1:8000）
-    /// - `title`: 窗口标题（如 "SillyTavern - v1.12.0"）
-    /// - `export_path`: 酒馆页面导出文件的保存目录
+    /// - `url`：酒馆访问地址（如 `http://127.0.0.1:8000`）
+    /// - `title`：窗口标题（用于启动阶段日志定位；wry 的窗口标题最终由页面
+    ///   `<title>` 决定，此处仅作为初始标题）
+    /// - `export_path`：酒馆页面导出文件的保存目录
     ///
-    /// 调用者必须确保在主线程上调用此方法。
+    /// 本方法**同步等待**窗口创建结果：失败时立即返回 `Err`，
+    /// 调用方可以据此显示错误并安排重试。
     pub fn open(url: &str, title: &str, export_path: String) -> Result<Self, String> {
-        // 更新 blob 下载目标目录
+        validate_webview_url(url)?;
         Self::set_export_path(&export_path);
 
-        let mtm = MainThreadMarker::new().ok_or("桌面模式 WebView 必须在主线程创建")?;
-        validate_webview_url(url)?;
-        let (event_tx, event_rx) = mpsc::channel();
+        let (command_tx, command_rx) = mpsc::channel::<Command>();
+        let (event_tx, event_rx) = mpsc::channel::<WebViewEvent>();
+        let (startup_tx, startup_rx) = mpsc::channel::<StartupOutcome>();
+        let closed = Arc::new(AtomicBool::new(false));
 
-        // ---- 创建 NSWindow ----
-        // WebView 是酒馆的独立内容窗口，沿用旧版行为允许缩放和绿色按钮最大化；
-        // 启动器主窗口的固定尺寸约束不应用到该窗口。
-        let style = NSWindowStyleMask::Titled
-            | NSWindowStyleMask::Closable
-            | NSWindowStyleMask::Miniaturizable
-            | NSWindowStyleMask::Resizable;
+        let thread_closed = Arc::clone(&closed);
+        let thread_url = url.to_owned();
+        let thread_title = title.to_owned();
 
-        let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1280.0, 720.0));
-        let minimum_size = NSSize::new(800.0, 500.0);
+        let thread = std::thread::Builder::new()
+            .name("astrabrew-webview".to_owned())
+            .spawn(move || {
+                run_webview_thread(
+                    thread_url,
+                    thread_title,
+                    command_rx,
+                    event_tx,
+                    startup_tx,
+                    thread_closed,
+                );
+            })
+            .map_err(|error| {
+                tf("webview.thread_spawn_failed", &[("error", &error.to_string())])
+            })?;
 
-        let window = unsafe {
-            NSWindow::initWithContentRect_styleMask_backing_defer(
-                NSWindow::alloc(mtm),
-                rect,
-                style,
-                NSBackingStoreType::Buffered,
-                false,
-            )
-        };
-        window.setTitle(&NSString::from_str(title));
-        window.setContentMinSize(minimum_size);
-        window.center();
-
-        // 关键：用户关闭窗口时不自动释放，由我们的 Retained 管理生命周期
-        unsafe { window.setReleasedWhenClosed(false) };
-
-        // ---- 创建 Delegate 对象（保持强引用） ----
-        let nav_delegate = WebViewNavDelegate::new(mtm, event_tx);
-        let ui_delegate = WebViewUIDelegate::new(mtm);
-        let download_handler = FileDownloadHandler::new(mtm);
-
-        // ---- 创建 WKWebView ----
-        let config = unsafe { WKWebViewConfiguration::new(mtm) };
-
-        // 注册 JS → Native 通信桥梁
-        // - fileDownloader：接收 blob 导出的 {filename, base64}
-        // - fileInputTracker：接收 <input type="file"> 的 accept 属性，供 NSOpenPanel 过滤
-        unsafe {
-            let controller = config.userContentController();
-            controller.addScriptMessageHandler_name(
-                &ProtocolObject::from_ref(&*download_handler),
-                &NSString::from_str("fileDownloader"),
-            );
-            controller.addScriptMessageHandler_name(
-                &ProtocolObject::from_ref(&*download_handler),
-                &NSString::from_str("fileInputTracker"),
-            );
-        }
-
-        // 注入脚本：全面拦截文件下载行为，覆盖 FileSaver.js / 程序触发 a.click() / window.open 等
-        //
-        // 背景：原方案只拦截用户真实点击 <a href="blob:">，但预设/世界书等导出走 FileSaver.js
-        // 等库，通常是程序触发 a.click() 或使用 data: URL，导致拦截失败。本脚本覆写以下入口：
-        //   1. 用户真实点击 <a> (capture 阶段)
-        //   2. HTMLAnchorElement.prototype.click (FileSaver.js 等库入口)
-        //   3. window.open(blob:|data:) (部分库的备选路径)
-        // 同时支持 blob: 和 data: 两种 URL scheme。
-        let blob_patch_js = concat!(
-            "(function(){",
-            "function dl(u,f){",
-            "fetch(u).then(function(r){return r.blob()}).then(function(b){",
-            "var rd=new FileReader();",
-            "rd.onloadend=function(){",
-            "window.webkit.messageHandlers.fileDownloader.postMessage({",
-            "filename:f||'download',",
-            "base64:rd.result.split(',')[1]",
-            "})};",
-            "rd.readAsDataURL(b)",
-            "}).catch(function(e){console.error('export err:',e)})",
-            "}",
-            "function isDl(u){return u&&(u.indexOf('blob:')===0||u.indexOf('data:')===0)}",
-            "window.addEventListener('click',function(e){",
-            "var a=e.target.closest&&e.target.closest('a');",
-            "if(a&&a.href&&isDl(a.href)){",
-            "e.preventDefault();e.stopPropagation();",
-            "dl(a.href,a.download||'download')",
-            "}",
-            "},true);",
-            "var oc=HTMLAnchorElement.prototype.click;",
-            "HTMLAnchorElement.prototype.click=function(){",
-            "if(this.href&&isDl(this.href)){",
-            "dl(this.href,this.download||'download');return",
-            "}",
-            "return oc.apply(this,arguments)",
-            "};",
-            "var oo=window.open;",
-            "window.open=function(u){",
-            "if(u&&isDl(u)){dl(u,'download');return null}",
-            "return oo.apply(window,arguments)",
-            "}",
-            "})()"
-        );
-        let user_script = unsafe {
-            WKUserScript::initWithSource_injectionTime_forMainFrameOnly(
-                WKUserScript::alloc(mtm),
-                &NSString::from_str(blob_patch_js),
-                WKUserScriptInjectionTime::AtDocumentStart,
-                true,
-            )
-        };
-        unsafe {
-            let controller = config.userContentController();
-            controller.addUserScript(&user_script);
-        }
-
-        // 注入脚本：恢复 `<input type="file" accept="...">` 的文件类型过滤
-        //
-        // 背景：自定义 WKUIDelegate::runOpenPanel 创建新的 NSOpenPanel 时，WebKit 不会
-        // 自动应用 HTML accept 属性（WKOpenPanelParameters 不暴露该信息）。本脚本：
-        //   1. capture 阶段监听 input click，识别导入类型，通过 fileInputTracker
-        //      messageHandler 同步发送给原生层（WebKit dispatch_async 保证先于 runOpenPanel）
-        //   2. change 事件校验作为后备：若 NSOpenPanel 过滤失效，在文件选中后再次校验，
-        //      不匹配则清空 input.value 并提示
-        //
-        // 手动指定类型规则（不依赖酒馆 DOM 结构）：
-        //   - 角色卡导入：accept 含 png / image → 强制 .png,.json
-        //   - 世界书/预设导入：accept 含 json → 强制 .json
-        //   - 其他：用原 accept
-        let file_input_filter_js = concat!(
-            "(function(){",
-            // 类型识别：根据 input 的 accept 属性归类
-            "function pickType(input){",
-            "var acc=(input.getAttribute('accept')||'').toLowerCase();",
-            // 角色卡：通常 accept="image/png,.png,application/json,.json" 或 .json
-            // 但有的角色卡 import 按钮 accept 只写 .json，需结合上下文判断
-            // 这里用 accept 内容做硬规则
-            "if(acc.indexOf('png')>=0||acc.indexOf('image/')>=0){return '.png,.json'}",
-            "if(acc.indexOf('json')>=0){return '.json'}",
-            // 兜底：用原 accept
-            "return acc",
-            "}",
-            // 1. 点击 input[type=file] 时，把识别出的类型发送给原生层
-            "document.addEventListener('click',function(e){",
-            "var t=e.target;",
-            "if(!t||t.tagName!=='INPUT'||(t.type||'').toLowerCase()!=='file')return;",
-            "var acc=pickType(t);",
-            "try{window.webkit.messageHandlers.fileInputTracker.postMessage(acc)}catch(err){}",
-            "},true);",
-            // 2. change 事件校验（后备，与 pickType 规则保持一致）
-            "document.addEventListener('change',function(e){",
-            "var t=e.target;",
-            "if(!t||t.tagName!=='INPUT'||(t.type||'').toLowerCase()!=='file')return;",
-            "if(!t.files||!t.files.length)return;",
-            "var acc=pickType(t);",
-            "if(!acc)return;",
-            "var exts=[],any=false;",
-            "acc.split(',').forEach(function(p){",
-            "p=p.trim().toLowerCase();",
-            "if(!p)return;",
-            "if(p.charAt(0)==='.'){exts.push(p.slice(1))}",
-            "else if(p==='*/*'||p==='*'||p.indexOf('/*')>=0){any=true}",
-            "});",
-            "if(any)return;",
-            "if(!exts.length)return;",
-            "var bad=[];",
-            "for(var i=0;i<t.files.length;i++){",
-            "var f=t.files[i];",
-            "var n=(f.name||'').toLowerCase();",
-            "var ok=exts.some(function(x){return n.lastIndexOf('.'+x)===n.length-x.length-1});",
-            "if(!ok){bad.push(f.name)}",
-            "}",
-            "if(bad.length){",
-            "t.value='';",
-        )
-        .to_owned()
-            + format!(
-                "alert('{}'+bad.join('\\n')+'\\n\\n{}'+acc)",
-                crate::lang::t("webview.file_type_rejected_prefix"),
-                crate::lang::t("webview.file_type_allowed_prefix"),
-            )
-            .as_str()
-            + concat!(
-                "}",
-                "},true)",
-                "})()"
-            );
-        let file_filter_script = unsafe {
-            WKUserScript::initWithSource_injectionTime_forMainFrameOnly(
-                WKUserScript::alloc(mtm),
-                &NSString::from_str(&file_input_filter_js),
-                WKUserScriptInjectionTime::AtDocumentStart,
-                true,
-            )
-        };
-        unsafe {
-            let controller = config.userContentController();
-            controller.addUserScript(&file_filter_script);
-        }
-
-        let webview = unsafe {
-            WKWebView::initWithFrame_configuration(
-                WKWebView::alloc(mtm),
-                NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1280.0, 720.0)),
-                &config,
-            )
-        };
-
-        // 设置 delegates（从 Retained 创建 ProtocolObject 引用）
-        unsafe {
-            webview.setNavigationDelegate(Some(ProtocolObject::from_ref(&*nav_delegate)));
-            webview.setUIDelegate(Some(ProtocolObject::from_ref(&*ui_delegate)));
-            webview.setAutoresizingMask(
-                NSAutoresizingMaskOptions::ViewWidthSizable
-                    | NSAutoresizingMaskOptions::ViewHeightSizable,
-            );
-            webview.setWantsLayer(true);
-        }
-
-        // WKWebView 不直接作为 NSWindow.contentView，而是挂载到普通 NSView。
-        // 该结构与 WebKit 桌面应用的标准做法一致，可确保内容进程真正发起网络请求和绘制。
-        let parent_view = NSView::initWithFrame(NSView::alloc(mtm), rect);
-        parent_view.setAutoresizingMask(
-            NSAutoresizingMaskOptions::ViewWidthSizable
-                | NSAutoresizingMaskOptions::ViewHeightSizable,
-        );
-        parent_view.setWantsLayer(true);
-        parent_view.addSubview(&webview);
-        window.setContentView(Some(&parent_view));
-        window.makeFirstResponder(Some(&webview));
-        window.makeKeyAndOrderFront(None);
-
-        let application = NSApplication::sharedApplication(mtm);
-        #[allow(deprecated)]
-        application.activateIgnoringOtherApps(true);
-
-        let navigation = match load_webview_url(&webview, url) {
-            Ok(navigation) => navigation,
-            Err(error) => {
-                window.close();
-                return Err(error);
+        // 等待窗口创建结果：WebView2 环境初始化通常在一秒内完成。
+        match startup_rx.recv_timeout(STARTUP_TIMEOUT) {
+            Ok(StartupOutcome::Ready) => Ok(Self {
+                commands: command_tx,
+                events: event_rx,
+                closed,
+                thread: Some(thread),
+            }),
+            Ok(StartupOutcome::Failed(error)) => {
+                let _ = thread.join();
+                Err(error)
             }
-        };
-
-        Ok(Self {
-            window,
-            _parent_view: parent_view,
-            webview,
-            events: event_rx,
-            original_url: url.to_owned(),
-            navigation: Some(navigation),
-            _nav_delegate: nav_delegate,
-            _ui_delegate: ui_delegate,
-            _download_handler: download_handler,
-            running: Arc::new(AtomicBool::new(true)),
-        })
+            Err(_) => {
+                // 超时：通知线程尽快退出，避免留下孤儿窗口。
+                closed.store(true, Ordering::SeqCst);
+                let _ = command_tx.send(Command::Close);
+                let _ = thread.join();
+                Err(t("webview.create_timeout").to_owned())
+            }
+        }
     }
 
-    /// 拉取导航代理产生的状态事件，不阻塞 iced 主线程。
+    /// 拉取加载状态事件，不阻塞 iced 主线程。
     pub fn drain_events(&self) -> Vec<WebViewEvent> {
-        self.events.try_iter().collect()
+        let mut events = Vec::new();
+        loop {
+            match self.events.try_recv() {
+                Ok(event) => events.push(event),
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            }
+        }
+        events
     }
 
     /// 重新加载页面；需要时把 localhost 回退为 IPv4 回环地址。
     pub fn reload(&mut self, use_loopback_fallback: bool) -> Result<(), String> {
-        let target = if use_loopback_fallback {
-            loopback_fallback_url(&self.original_url)
-        } else {
-            self.original_url.clone()
-        };
-        self.navigation = Some(load_webview_url(&self.webview, &target)?);
-        Ok(())
+        if self.is_closed() {
+            return Err(t("app.webview.window_missing").to_owned());
+        }
+        self.commands
+            .send(Command::Reload {
+                use_loopback_fallback,
+            })
+            .map_err(|_| t("app.webview.window_missing").to_owned())
     }
 
-    /// 主动关闭 WebView 窗口（仅当窗口仍可见时）
+    /// 主动关闭 WebView 窗口并回收线程。
     pub fn close(&mut self) {
-        self.running.store(false, Ordering::SeqCst);
-        // 窗口已被用户关闭时不再重复 close，否则 segfault
-        if self.window.isVisible() {
-            self.window.close();
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        // 事件循环可能已自行退出，发送失败无需处理。
+        let _ = self.commands.send(Command::Close);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
         }
     }
 
-    /// 将 WebView 窗口唤回前台（避免重复打开新窗口）
+    /// 将 WebView 窗口唤回前台（避免重复打开新窗口）。
     pub fn bring_to_front(&self) {
-        self.window.makeKeyAndOrderFront(None);
+        let _ = self.commands.send(Command::BringToFront);
     }
 
-    /// 检查 WebView 窗口是否已被关闭（用户点击关闭按钮 或 程序主动关闭）
+    /// 检查 WebView 窗口是否已被关闭。
     ///
-    /// 由 iced 定时消息轮询，主线程安全。
-    /// 返回 `true` 表示窗口已关闭。
+    /// 由 iced 定时消息轮询，跨线程安全。
     pub fn is_closed(&self) -> bool {
-        // 主动关闭时 running=false，用户关闭时 isVisible=false
-        !self.running.load(Ordering::SeqCst) || !self.window.isVisible()
+        self.closed.load(Ordering::SeqCst)
     }
 
-    /// WebView 是否仍在运行
+    /// WebView 是否仍在运行。
     #[allow(dead_code)]
     pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
+        !self.is_closed()
     }
-}
-
-fn validate_webview_url(url: &str) -> Result<(), String> {
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        return Err(tf("webview.url_scheme_invalid", &[("url", &url)]));
-    }
-    NSURL::URLWithString(&NSString::from_str(url))
-        .map(|_| ())
-        .ok_or_else(|| tf("webview.url_invalid", &[("url", &url)]))
-}
-
-fn load_webview_url(webview: &WKWebView, url: &str) -> Result<Retained<WKNavigation>, String> {
-    let nsurl = NSURL::URLWithString(&NSString::from_str(url))
-        .ok_or_else(|| tf("webview.url_invalid", &[("url", &url)]))?;
-    let request = NSURLRequest::requestWithURL(&nsurl);
-    unsafe { webview.loadRequest(&request) }
-        .ok_or_else(|| tf("webview.navigation_request_failed", &[("url", &url)]))
-}
-
-fn loopback_fallback_url(url: &str) -> String {
-    url.replacen("://localhost", "://127.0.0.1", 1)
 }
 
 impl Drop for DesktopWebView {
@@ -932,27 +462,371 @@ impl Drop for DesktopWebView {
     }
 }
 
+// ============================================================================
+// WebView 专属线程
+// ============================================================================
+
+/// 注册「内容进程异常退出」监听。
+///
+/// 组件进程崩溃（如渲染进程被系统内存回收）时，wry 不会给出任何信号，
+/// 页面会停留在白屏。这里挂上 WebView2 的 `ProcessFailed` 事件，
+/// 一旦浏览器进程退出就把 `ContentProcessTerminated` 交给 iced 侧触发重试。
+fn register_process_failed_handler(webview: &wry::WebView, events: Sender<WebViewEvent>) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED, ICoreWebView2,
+        ICoreWebView2ProcessFailedEventArgs,
+    };
+    use webview2_com::ProcessFailedEventHandler;
+    use wry::WebViewExtWindows;
+
+    let core = webview.webview();
+    // 事件回调只关心“浏览器进程退出”这一种致命情况；其他失败类型
+    // （渲染进程、GPU 进程等）WebView2 会自行恢复，无需打扰用户。
+    let handler = ProcessFailedEventHandler::create(Box::new(
+        move |_sender: Option<ICoreWebView2>,
+              args: Option<ICoreWebView2ProcessFailedEventArgs>| {
+            let Some(args) = args else {
+                return Ok(());
+            };
+            let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED;
+            if unsafe { args.ProcessFailedKind(&mut kind) }.is_ok()
+                && kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED
+            {
+                let _ = events.send(WebViewEvent::ContentProcessTerminated);
+            }
+            Ok(())
+        },
+    ));
+
+    let mut token = 0i64;
+    let _ = unsafe { core.add_ProcessFailed(&handler, &mut token) };
+}
+
+/// WebView 线程的主函数：运行 winit 事件循环，直到窗口关闭。
+fn run_webview_thread(
+    url: String,
+    title: String,
+    commands: Receiver<Command>,
+    events: Sender<WebViewEvent>,
+    startup: Sender<StartupOutcome>,
+    closed: Arc<AtomicBool>,
+) {
+    use winit::application::ApplicationHandler;
+    use winit::event::WindowEvent;
+    use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+    use winit::window::{Window, WindowId};
+
+    /// winit 事件循环的应用状态。
+    struct App {
+        /// 初始导航地址。
+        url: String,
+        /// 初始窗口标题。
+        title: String,
+        /// 主线程下发的命令。
+        commands: Receiver<Command>,
+        /// 上报给主线程的事件。
+        events: Sender<WebViewEvent>,
+        /// 启动结果发送端，仅在创建阶段存在。
+        startup: Option<Sender<StartupOutcome>>,
+        /// winit 窗口。
+        window: Option<Window>,
+        /// WebView2 实例。
+        webview: Option<wry::WebView>,
+        /// 全局关闭标志。
+        closed: Arc<AtomicBool>,
+    }
+
+    impl App {
+        /// 上报启动结果；只会生效一次。
+        fn report_startup(&mut self, outcome: StartupOutcome) {
+            if let Some(sender) = self.startup.take() {
+                let _ = sender.send(outcome);
+            }
+        }
+
+        /// 处理主线程命令；返回 `true` 表示需要退出事件循环。
+        fn pump_commands(&mut self) -> bool {
+            loop {
+                match self.commands.try_recv() {
+                    Ok(Command::Reload {
+                        use_loopback_fallback,
+                    }) => {
+                        if let Some(webview) = &self.webview {
+                            let target = if use_loopback_fallback {
+                                loopback_fallback_url(&self.url)
+                            } else {
+                                self.url.clone()
+                            };
+                            if webview.load_url(&target).is_ok() {
+                                let _ = self.events.send(WebViewEvent::Loading);
+                            } else {
+                                let _ = self.events.send(WebViewEvent::Failed(tf(
+                                    "webview.navigation_request_failed",
+                                    &[("url", &target)],
+                                )));
+                            }
+                        }
+                    }
+                    Ok(Command::BringToFront) => {
+                        if let Some(window) = &self.window {
+                            window.set_visible(true);
+                            window.focus_window();
+                        }
+                    }
+                    Ok(Command::Close) => return true,
+                    Err(TryRecvError::Empty) => return false,
+                    Err(TryRecvError::Disconnected) => return true,
+                }
+            }
+        }
+
+        /// 退出事件循环并标记窗口已关闭。
+        fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
+            self.webview = None;
+            self.window = None;
+            self.closed.store(true, Ordering::SeqCst);
+            event_loop.exit();
+        }
+
+        /// 创建窗口失败时的统一收尾。
+        fn fail(&mut self, event_loop: &ActiveEventLoop, error: String) {
+            self.report_startup(StartupOutcome::Failed(error));
+            self.closed.store(true, Ordering::SeqCst);
+            event_loop.exit();
+        }
+    }
+
+    impl ApplicationHandler for App {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+            if self.window.is_some() {
+                return;
+            }
+
+            let attributes = Window::default_attributes()
+                .with_title(self.title.as_str())
+                .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
+                .with_min_inner_size(LogicalSize::new(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT));
+
+            let window = match event_loop.create_window(attributes) {
+                Ok(window) => window,
+                Err(error) => {
+                    self.fail(
+                        event_loop,
+                        tf(
+                            "webview.window_create_failed",
+                            &[("error", &error.to_string())],
+                        ),
+                    );
+                    return;
+                }
+            };
+
+            // WebView 铺满整个客户区。
+            let size = window
+                .inner_size()
+                .to_logical::<f64>(window.scale_factor());
+            let bounds = Rect {
+                position: LogicalPosition::new(0.0, 0.0).into(),
+                size: LogicalSize::new(size.width, size.height).into(),
+            };
+
+            let load_event_tx = self.events.clone();
+
+            let builder = WebViewBuilder::new()
+                .with_url(self.url.as_str())
+                .with_bounds(bounds)
+                .with_initialization_script_for_main_only(blob_patch_js(), true)
+                .with_initialization_script_for_main_only(file_input_filter_js(), true)
+                .with_clipboard(true)
+                .with_devtools(cfg!(debug_assertions))
+                .with_download_started_handler(|_url, destination| {
+                    // 用配置的导出目录覆盖 WebView2 的默认保存位置。
+                    let directory = EXPORT_PATH
+                        .lock()
+                        .map(|guard| guard.clone())
+                        .unwrap_or_else(|_| default_download_directory());
+                    let filename = destination
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("download");
+                    if std::fs::create_dir_all(&directory).is_err() {
+                        return false;
+                    }
+                    *destination = available_download_path(&directory, filename);
+                    true
+                })
+                .with_download_completed_handler(move |_url, path, success| match (success, path) {
+                    (true, Some(path)) => push_download_event(WebViewDownloadEvent::Saved(path)),
+                    (true, None) => push_download_event(WebViewDownloadEvent::Failed(
+                        t("webview.download.write_failed").to_owned(),
+                    )),
+                    (false, _) => push_download_event(WebViewDownloadEvent::Failed(
+                        t("webview.download.failed").to_owned(),
+                    )),
+                })
+                .with_on_page_load_handler(move |event, url| match event {
+                    PageLoadEvent::Started => {
+                        let _ = load_event_tx.send(WebViewEvent::Loading);
+                    }
+                    PageLoadEvent::Finished => {
+                        let _ = load_event_tx.send(WebViewEvent::Ready(url));
+                    }
+                });
+
+            let webview = match builder.build_as_child(&window) {
+                Ok(webview) => webview,
+                Err(error) => {
+                    self.fail(
+                        event_loop,
+                        tf("webview.create_failed", &[("error", &error.to_string())]),
+                    );
+                    return;
+                }
+            };
+
+            // WebView2 内容进程崩溃时通知主线程重试。
+            register_process_failed_handler(&webview, self.events.clone());
+
+            window.set_visible(true);
+            window.focus_window();
+
+            self.window = Some(window);
+            self.webview = Some(webview);
+            self.report_startup(StartupOutcome::Ready);
+        }
+
+        fn window_event(
+            &mut self,
+            event_loop: &ActiveEventLoop,
+            _window_id: WindowId,
+            event: WindowEvent,
+        ) {
+            match event {
+                WindowEvent::Resized(size) => {
+                    if let (Some(window), Some(webview)) = (&self.window, &self.webview) {
+                        let logical = size.to_logical::<f64>(window.scale_factor());
+                        let _ = webview.set_bounds(Rect {
+                            position: LogicalPosition::new(0.0, 0.0).into(),
+                            size: LogicalSize::new(logical.width, logical.height).into(),
+                        });
+                    }
+                }
+                WindowEvent::CloseRequested => self.shutdown(event_loop),
+                _ => {}
+            }
+        }
+
+        fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+            if self.pump_commands() {
+                self.shutdown(event_loop);
+                return;
+            }
+            // 低频轮询命令通道，兼顾响应速度与 CPU 占用。
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + COMMAND_POLL_INTERVAL,
+            ));
+        }
+    }
+
+    let event_loop = match EventLoop::new() {
+        Ok(event_loop) => event_loop,
+        Err(error) => {
+            let _ = startup.send(StartupOutcome::Failed(tf(
+                "webview.event_loop_failed",
+                &[("error", &error.to_string())],
+            )));
+            closed.store(true, Ordering::SeqCst);
+            return;
+        }
+    };
+
+    let mut app = App {
+        url,
+        title,
+        commands,
+        events,
+        startup: Some(startup),
+        window: None,
+        webview: None,
+        closed: Arc::clone(&closed),
+    };
+
+    if let Err(error) = event_loop.run_app(&mut app) {
+        app.report_startup(StartupOutcome::Failed(tf(
+            "webview.event_loop_failed",
+            &[("error", &error.to_string())],
+        )));
+    }
+    // 无论从哪条路径退出，都确保主线程能观察到"已关闭"。
+    closed.store(true, Ordering::SeqCst);
+}
+
+// ============================================================================
+// 工具函数
+// ============================================================================
+
+/// 校验 URL 是否可用作 WebView 导航目标。
+fn validate_webview_url(url: &str) -> Result<(), String> {
+    let url = url.trim();
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(tf("webview.url_scheme_invalid", &[("url", &url)]));
+    }
+    // 仅有协议头没有主机名的情况也视为非法。
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or_default();
+    if rest.is_empty() || rest.starts_with('/') {
+        return Err(tf("webview.url_invalid", &[("url", &url)]));
+    }
+    Ok(())
+}
+
+/// `localhost` → `127.0.0.1`：绕过部分环境下 IPv6 回环不可达的问题。
+fn loopback_fallback_url(url: &str) -> String {
+    url.replacen("://localhost", "://127.0.0.1", 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        default_download_directory, loopback_fallback_url, resolve_download_directory,
-        validate_webview_url,
+        DOWNLOAD_CHANNEL, available_download_path, default_download_directory, escape_js_string,
+        loopback_fallback_url, resolve_download_directory, user_profile_dir, validate_webview_url,
     };
+    use std::path::PathBuf;
 
     #[test]
     fn validates_http_urls_and_rejects_other_schemes() {
         assert!(validate_webview_url("http://localhost:8000/").is_ok());
         assert!(validate_webview_url("https://127.0.0.1:8000/").is_ok());
-        assert!(validate_webview_url("file:///tmp/index.html").is_err());
+        assert!(validate_webview_url("file:///C:/index.html").is_err());
+        assert!(validate_webview_url("").is_err());
+        assert!(validate_webview_url("http://").is_err());
+        assert!(validate_webview_url("http:///path").is_err());
     }
 
     #[test]
-    fn default_download_setting_expands_to_home_downloads() {
+    fn default_download_setting_expands_to_user_downloads() {
         assert_eq!(
             resolve_download_directory("~/Downloads"),
-            default_download_directory()
+            user_profile_dir().join("Downloads")
         );
         assert_eq!(resolve_download_directory(""), default_download_directory());
+        assert_eq!(resolve_download_directory("~"), default_download_directory());
+    }
+
+    #[test]
+    fn tilde_backslash_path_is_resolved_like_forward_slash() {
+        assert_eq!(
+            resolve_download_directory("~\\Exports"),
+            resolve_download_directory("~/Exports")
+        );
+    }
+
+    #[test]
+    fn absolute_download_directory_is_used_as_is() {
+        let absolute = r"C:\Exports";
+        assert_eq!(resolve_download_directory(absolute), PathBuf::from(absolute));
     }
 
     #[test]
@@ -965,5 +839,45 @@ mod tests {
             loopback_fallback_url("http://192.168.1.2:11451/"),
             "http://192.168.1.2:11451/"
         );
+    }
+
+    #[test]
+    fn download_path_avoids_overwriting_existing_files() {
+        let directory = std::env::temp_dir();
+        let unique = format!("astrabrew-test-{}.txt", std::process::id());
+        let first = available_download_path(&directory, &unique);
+        assert_eq!(first, directory.join(&unique));
+
+        std::fs::write(&first, b"x").expect("写入临时文件");
+        let second = available_download_path(&directory, &unique);
+        let stem = PathBuf::from(&unique)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .expect("文件名含主干")
+            .to_owned();
+        assert_eq!(
+            second.file_name().and_then(|value| value.to_str()),
+            Some(format!("{stem}_1.txt").as_str())
+        );
+        let _ = std::fs::remove_file(&first);
+    }
+
+    #[test]
+    fn js_string_escaping_handles_quotes_and_backslashes() {
+        assert_eq!(escape_js_string(r"a'b\c"), r"a\'b\\c");
+        assert_eq!(escape_js_string("line\nbreak"), "line\\nbreak");
+    }
+
+    #[test]
+    fn injected_scripts_are_well_formed() {
+        let blob = super::blob_patch_js();
+        assert!(blob.contains(DOWNLOAD_CHANNEL));
+        assert!(blob.starts_with("(function(){"));
+        assert!(blob.trim_end().ends_with("})()"));
+
+        let filter = super::file_input_filter_js();
+        assert!(filter.starts_with("(function(){"));
+        assert!(filter.contains("pickType"));
+        assert!(filter.trim_end().ends_with("})()"));
     }
 }

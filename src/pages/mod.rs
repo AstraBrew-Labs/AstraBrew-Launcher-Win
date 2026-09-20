@@ -27,7 +27,7 @@ use self::console::{ConsoleState, ConsoleStatus, console_view};
 use self::extensions::{ExtensionsState, extensions_view};
 use self::resource_manage::{ResourceManageState, resource_manage_view};
 use self::settings::{
-    QuickStartMode, ServerServiceMode, SettingsState, settings_view,
+    EnvironmentDependency, QuickStartMode, ServerServiceMode, SettingsState, settings_view,
 };
 use self::tavern::{BrowserType, TavernState, tavern_view};
 use self::versions::{DependencyStatus, VersionSource, VersionState, versions_view};
@@ -166,9 +166,8 @@ fn home_view<'a>(
             .align_y(Alignment::Center),
             container(
                 row![
-                    info_item_owned(Icon::FlaskConical, "Homebrew", environment_version(state.environment.homebrew.as_deref())),
-                    info_item_owned(Icon::GitBranch, "Git", environment_version(state.environment.git.as_deref())),
-                    info_item_owned(Icon::Hexagon, "Node.js", environment_version(state.environment.nodejs.as_deref())),
+                    info_item_owned(Icon::GitBranch, "Git", environment_version(active_env(state, EnvironmentDependency::Git))),
+                    info_item_owned(Icon::Hexagon, "Node.js", environment_version(active_env(state, EnvironmentDependency::NodeJs))),
                     current_tavern_info_item(versions),
                     info_item(Icon::Rocket, "app.quick.start_mode", current_quick_mode(state).label_key()),
                 ]
@@ -218,7 +217,6 @@ fn home_view<'a>(
                 (BrowserType::Chrome, Icon::Monitor),
                 (BrowserType::Firefox, Icon::Compass),
                 (BrowserType::Edge, Icon::PanelsTopLeft),
-                (BrowserType::Safari, Icon::Compass),
             ]
             .into_iter()
             .map(|(browser, icon)| {
@@ -514,7 +512,6 @@ fn browser_type_from_index(index: usize) -> BrowserType {
         1 => BrowserType::Chrome,
         2 => BrowserType::Firefox,
         3 => BrowserType::Edge,
-        4 => BrowserType::Safari,
         _ => BrowserType::System,
     }
 }
@@ -793,8 +790,25 @@ fn environment_version(value: Option<&str>) -> String {
     value.map(str::to_owned).unwrap_or_else(|| t("app.quick.not_detected").to_owned())
 }
 
+/// 读取当前环境模式下某个依赖的版本号。
+///
+/// 首页只关心「当前正在使用的那套环境」装了什么，因此按 `env_mode` 取对应快照，
+/// 而不是分别展示内置与系统两套结果。
+fn active_env(
+    state: &SettingsState,
+    dependency: EnvironmentDependency,
+) -> Option<&str> {
+    state
+        .environment
+        .for_source(state.env_mode)
+        .get(dependency)
+        .map(String::as_str)
+}
+
 fn environment_status_badge(state: &SettingsState) -> Element<'static, Message> {
-    let ready = state.environment.git.is_some() && state.environment.nodejs.is_some();
+    // Git 与 Node.js 是运行酒馆的硬前提，按当前环境模式判定是否齐备。
+    let ready = active_env(state, EnvironmentDependency::Git).is_some()
+        && active_env(state, EnvironmentDependency::NodeJs).is_some();
     if ready {
         status_badge("app.quick.env_ok")
     } else {

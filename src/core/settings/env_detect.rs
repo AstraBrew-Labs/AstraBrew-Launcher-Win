@@ -1,205 +1,189 @@
+//! Windows 环境依赖探测与命令执行。
+//!
+//! 启动器支持两套运行环境，所有探测都必须按来源区分：
+//! - [`EnvSource::Builtin`]：软件内置的 `%AppData%/AstraBrew Launcher/lib/` 目录；
+//! - [`EnvSource::System`]：用户系统 PATH 中已安装的工具。
+//!
+//! 本模块只负责「解析可执行文件 + 读取版本号 + 报告安装进度」，
+//! 具体的下载/解压安装流程在 `core/settings/install/` 下的各依赖模块中。
+
 use crate::lang::t;
 use crate::lang::tf;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-/// macOS 上 Homebrew 可能的 bin 目录。
-/// 打包后的 .app PATH 不含这些路径，必须手动解析命令位置。
-const HOMEBREW_BIN_PATHS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin"];
+use crate::core::env::{
+    apply_builtin_path_to_command, apply_no_window_to_command, get_builtin_caddy_path,
+    get_builtin_git_path, get_builtin_node_path, get_builtin_npm_path, get_lib_dir,
+    get_system_cmd_path,
+};
+use crate::core::settings::EnvSource;
 
-/// `node@24` 是 Homebrew 的 keg-only formula，不会链接到 Homebrew 主 bin 目录。
-/// 启动器内部统一把实际目录加入 PATH，用户无需修改 ~/.zshrc 或编译器变量。
-const NODE_FORMULA_BIN_PATHS: &[&str] = &[
-    "/opt/homebrew/opt/node@24/bin",
-    "/usr/local/opt/node@24/bin",
-];
+// ─── 命令构建 ────────────────────────────────────────────────────────────────
 
-/// 解析命令的完整路径：
-/// 1. 在 keg-only 的 node@24 bin 目录中查找
-/// 2. 在 Homebrew 主 bin 目录中查找
-/// 3. 回退到裸命令名（系统 PATH 中的工具，如 git）
-pub fn resolve_command(name: &str) -> String {
-    for base in NODE_FORMULA_BIN_PATHS
-        .iter()
-        .chain(HOMEBREW_BIN_PATHS.iter())
-    {
-        let full = format!("{}/{}", base, name);
-        if Path::new(&full).is_file() {
-            return full;
-        }
-    }
-    name.to_string()
-}
-
-/// 创建 Command，自动解析路径并确保子进程 PATH 包含 Homebrew bin 目录。
+/// 按来源构建可执行命令。
 ///
-/// 打包后的 .app 中 PATH 极简（/usr/bin:/bin:/usr/sbin:/sbin），
-/// 不包含 Homebrew 路径。即使 resolve_command 找到了命令的绝对路径，
-/// 如果命令内部通过 shebang（如 `#!/usr/bin/env node`）依赖其他工具，
-/// 仍会因子进程找不到依赖而失败。因此必须在启动子进程前补全 PATH。
-pub(crate) fn cmd(name: &str) -> Command {
-    let mut cmd = Command::new(resolve_command(name));
-    let current_path = std::env::var("PATH").unwrap_or_default();
-    let extra_paths = NODE_FORMULA_BIN_PATHS
-        .iter()
-        .chain(HOMEBREW_BIN_PATHS.iter())
-        .copied()
-        .collect::<Vec<_>>()
-        .join(":");
-    let new_path = format!("{}:{}", extra_paths, current_path);
-    cmd.env("PATH", new_path);
-    cmd
-}
-
-/// 检测 Homebrew 版本，返回版本号字符串，如 "4.2.0"
-pub fn detect_homebrew() -> Option<String> {
-    let output = cmd("brew").arg("--version").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // 输出格式: "Homebrew 4.2.0" 或 "Homebrew 4.2.0-xxx"
-    parse_homebrew_version(&stdout)
-}
-
-fn parse_homebrew_version(output: &str) -> Option<String> {
-    // 提取 "Homebrew X.Y.Z" 中的版本号
-    let prefix = "Homebrew ";
-    if let Some(pos) = output.find(prefix) {
-        let rest = &output[pos + prefix.len()..];
-        // 取第一个空白字符之前的部分
-        let version = rest.split_whitespace().next()?;
-        // 去掉尾部可能的非数字后缀（如 -xxx）
-        let version = version.split('-').next()?;
-        Some(version.to_string())
-    } else {
-        None
-    }
-}
-
-/// 检测 Git 版本，返回版本号字符串，如 "2.39.0"
-pub fn detect_git() -> Option<String> {
-    let output = cmd("git").arg("--version").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // 输出格式: "git version 2.39.0" 或 "git version 2.39.0 (Apple Git-xxx)"
-    parse_git_version(&stdout)
-}
-
-fn parse_git_version(output: &str) -> Option<String> {
-    let prefix = "git version ";
-    if let Some(pos) = output.find(prefix) {
-        let rest = &output[pos + prefix.len()..];
-        let version = rest.split_whitespace().next()?;
-        Some(version.to_string())
-    } else {
-        None
-    }
-}
-
-/// 检测 Node.js 版本，返回版本号字符串，如 "v22.1.0"。
+/// - 内置环境：直接使用 `lib/` 中的绝对路径；`.cmd`/`.bat` 经 `cmd /c` 启动。
+/// - 系统环境：先用 `where` 解析绝对路径，找不到时回退到裸命令名，
+///   交由 Windows 的 `CreateProcess` 依据 `PATH` 与 `PATHEXT` 继续查找。
 ///
-/// `node@24` 在 Homebrew 中通常是 keg-only，未必会链接到 PATH；优先读取
-/// Homebrew formula 的实际 bin/node，再回退到系统 PATH 中的 node。
-pub fn detect_nodejs() -> Option<String> {
-    if let Some(version) = detect_nodejs_formula() {
-        return Some(version);
-    }
+/// 所有分支都会附加「无黑窗」标志，并把内置环境目录前置注入 `PATH`，
+/// 使 npm / node 这类会二次拉起子进程的工具也能正常工作。
+pub fn command_for(name: &str, source: EnvSource) -> Command {
+    let resolved = match source {
+        EnvSource::Builtin => resolve_builtin_command(name),
+        EnvSource::System => get_system_cmd_path(name),
+    };
 
-    let output = cmd("node").arg("--version").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let npm = cmd("npm").arg("--version").output().ok()?;
-    if !npm.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let version = stdout.trim().to_string();
-    if version.is_empty() {
-        None
-    } else {
-        Some(version)
+    let mut command = match resolved {
+        Some(path) => command_from_path(&path),
+        None => Command::new(name),
+    };
+
+    apply_no_window_to_command(&mut command);
+    apply_builtin_path_to_command(&mut command);
+    command
+}
+
+/// 内置环境中的命令绝对路径；未安装时返回 `None`。
+pub fn resolve_builtin_command(name: &str) -> Option<std::path::PathBuf> {
+    match name {
+        "git" => get_builtin_git_path(),
+        "node" => get_builtin_node_path(),
+        "npm" => get_builtin_npm_path(),
+        "caddy" => get_builtin_caddy_path(),
+        _ => builtin_generic_command(name),
     }
 }
 
-fn detect_nodejs_formula() -> Option<String> {
-    for bin in NODE_FORMULA_BIN_PATHS {
-        let bin = Path::new(bin);
-        let node = bin.join("node");
-        let npm = bin.join("npm");
-        if !node.is_file() || !npm.is_file() {
-            continue;
-        }
-        let path = format!(
-            "{}:{}:{}",
-            bin.display(),
-            HOMEBREW_BIN_PATHS.join(":"),
-            std::env::var("PATH").unwrap_or_default()
-        );
-        let node_output = Command::new(&node)
-            .arg("--version")
-            .env("PATH", &path)
-            .output()
-            .ok()?;
-        let npm_output = Command::new(&npm)
-            .arg("--version")
-            .env("PATH", &path)
-            .output()
-            .ok()?;
-        if !node_output.status.success() || !npm_output.status.success() {
-            continue;
-        }
-        let version = String::from_utf8_lossy(&node_output.stdout)
-            .trim()
-            .to_owned();
-        if !version.is_empty() {
-            return Some(version);
+/// 内置 `lib/<name>/<name>.exe` 的通用查找（覆盖 PM2 之外的第三方工具）。
+fn builtin_generic_command(name: &str) -> Option<std::path::PathBuf> {
+    let base = get_lib_dir().join(name);
+    for candidate in [
+        base.join(format!("{name}.exe")),
+        base.join(format!("{name}.cmd")),
+        base.join(format!("{name}.bat")),
+    ] {
+        if candidate.is_file() {
+            return Some(candidate);
         }
     }
     None
 }
 
-/// 检测 Caddy 版本，返回版本号字符串，如 "v2.9.1"
-pub fn detect_caddy() -> Option<String> {
-    let output = cmd("caddy").arg("version").output().ok()?;
-    if !output.status.success() {
+/// 依据扩展名决定是否需要 `cmd /c` 包装。
+///
+/// Windows 的 `CreateProcess` 无法直接执行 `.cmd` / `.bat`，
+/// 必须交给 `cmd.exe` 解释，否则会报「不是有效的 Win32 应用程序」。
+/// 按可执行文件路径构造命令。
+///
+/// `.cmd` / `.bat` 是批处理脚本，必须交给 `cmd.exe` 解释，否则会报
+/// 「不是有效的 Win32 应用程序」。两种分支都要隐藏控制台窗口 ——
+/// 否则每次环境检测都会闪出黑框，而 `cmd /c` 的窗口还会一直停在界面前面。
+fn command_from_path(path: &std::path::Path) -> Command {
+    let is_script = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            let extension = extension.to_ascii_lowercase();
+            extension == "cmd" || extension == "bat"
+        });
+
+    let mut command = if is_script {
+        let mut command = Command::new("cmd");
+        command.arg("/c").arg(path);
+        command
+    } else {
+        Command::new(path)
+    };
+    crate::core::env::apply_no_window_to_command(&mut command);
+    command
+}
+
+// ─── 版本探测 ────────────────────────────────────────────────────────────────
+
+/// 检测 Git 版本，返回版本号字符串，如 "2.47.1"。
+pub fn detect_git(source: EnvSource) -> Option<String> {
+    let output = run_version_command(command_for("git", source), ["--version"])?;
+    parse_git_version(&output)
+}
+
+/// 检测 Node.js 版本，返回版本号字符串，如 "v22.14.0"。
+///
+/// 同时要求 `npm` 可用：仅装 node 而未装 npm 的环境无法运行酒馆依赖安装，
+/// 应当视为未安装，避免用户在控制台阶段才遇到失败。
+pub fn detect_nodejs(source: EnvSource) -> Option<String> {
+    let node = run_version_command(command_for("node", source), ["--version"])?;
+    let version = node.trim();
+    if version.is_empty() {
         return None;
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // 输出格式: "v2.9.1 h1:..." 取第一段
-    let version = stdout.split_whitespace().next()?;
-    if version.is_empty() {
-        None
-    } else {
-        Some(version.to_string())
+    // npm 在 Windows 上是 npm.cmd，必须以 cmd /c 方式探测。
+    run_version_command(command_for("npm", source), ["--version"])?;
+    Some(version.to_owned())
+}
+
+/// 检测 Caddy 版本，返回版本号字符串，如 "v2.9.1"。
+pub fn detect_caddy(source: EnvSource) -> Option<String> {
+    let output = run_version_command(command_for("caddy", source), ["version"])?;
+    // 输出格式: "v2.9.1 h1:..."，取第一段。
+    let version = output.split_whitespace().next()?;
+    (!version.is_empty()).then(|| version.to_owned())
+}
+
+/// 检测 PM2 版本，返回版本号字符串，如 "7.0.1"。
+///
+/// `pm2 -v` 首次运行会夹杂 daemon 启动日志，因此合并 stdout + stderr 后
+/// 用 semver 提取器从混合输出中取版本号。
+pub fn detect_pm2(source: EnvSource) -> Option<String> {
+    let output = run_version_command(command_for("pm2", source), ["-v"])?;
+    extract_semver(&output)
+}
+
+/// 按来源分发版本探测，供安装流程结束后复用同一套判定逻辑。
+pub fn detect_version(target: &str, source: EnvSource) -> Option<String> {
+    match target {
+        "git" => detect_git(source),
+        "nodejs" => detect_nodejs(source),
+        "caddy" => detect_caddy(source),
+        "pm2" => detect_pm2(source),
+        "webview2" => Some(crate::core::settings::webview2::detect_webview2(source)).flatten(),
+        _ => None,
     }
 }
 
-/// 检测 PM2 版本，返回版本号字符串，如 "7.0.1"
-/// pm2 --version 或 pm2 -v 在首次运行时可能夹杂 daemon 启动日志，
-/// 因此合并 stdout + stderr 后用正则提取 X.Y.Z 格式的版本号。
-pub fn detect_pm2() -> Option<String> {
-    let output = cmd("pm2").arg("-v").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let combined = format!(
+/// 执行版本命令并把 stdout + stderr 合并为一段文本。
+///
+/// 合并两路输出是必需的：`pm2`/`npm` 的部分版本信息会写到 stderr，
+/// 只看 stdout 会在部分环境下漏掉版本号。
+fn run_version_command(mut command: Command, args: [&str; 1]) -> Option<String> {
+    let output = command.args(args).output().ok()?;
+    let merged = format!(
         "{}\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    // 从混合输出中提取第一个 MAJOR.MINOR.PATCH 格式的版本号
-    extract_semver(&combined)
+    (!merged.trim().is_empty()).then_some(merged)
 }
 
-/// 从文本中提取第一个符合 X.Y.Z 模式的版本号
+/// 从 `git --version` 输出中提取版本号。
+///
+/// Windows 的 Git for Windows 会输出
+/// `git version 2.47.1.windows.1`，MinGit 则是 `git version 2.47.1`。
+fn parse_git_version(output: &str) -> Option<String> {
+    let prefix = "git version ";
+    let position = output.find(prefix)?;
+    let rest = &output[position + prefix.len()..];
+    let raw = rest.split_whitespace().next()?;
+    // 截断 `.windows.N` 之类的发行版后缀，只保留 semver 主体。
+    let version = extract_semver(raw).unwrap_or_else(|| raw.to_owned());
+    Some(version)
+}
+
+/// 从文本中提取第一个符合 X.Y.Z 模式的版本号。
 fn extract_semver(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let len = bytes.len();
@@ -237,21 +221,13 @@ fn extract_semver(text: &str) -> Option<String> {
     None
 }
 
-/// 解析 semver 主版本号
+/// 解析 semver 主版本号。
 fn parse_major(version: &str) -> Option<u32> {
     let version = version.trim_start_matches('v').trim_start_matches('V');
     version.split('.').next()?.parse::<u32>().ok()
 }
 
-/// Homebrew 版本是否低于 5.0.0
-pub fn is_homebrew_outdated(version: &str) -> bool {
-    match parse_major(version) {
-        Some(major) => major < 5,
-        None => false,
-    }
-}
-
-/// Node.js 版本是否低于 v22
+/// Node.js 版本是否低于 v22。
 pub fn is_nodejs_outdated(version: &str) -> bool {
     match parse_major(version) {
         Some(major) => major < 22,
@@ -259,59 +235,32 @@ pub fn is_nodejs_outdated(version: &str) -> bool {
     }
 }
 
-/// 运行 brew install <package> 并返回日志。
-pub fn run_brew_install(
-    package: &str,
-    sender: std::sync::mpsc::Sender<String>,
-    cancel: Arc<AtomicBool>,
-) {
-    let detect_target = match package {
-        "git" => "git",
-        "node@24" => "nodejs",
-        "caddy" => "caddy",
-        _ => "",
-    };
+// ─── 安装执行 ────────────────────────────────────────────────────────────────
 
-    let mut command = cmd("brew");
-    command.args(["install", package]);
-    command.stdin(Stdio::null());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
-
-    let child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            send_failure(sender, tf("env.brew_start_failed", &[("package", &package), ("error", &error)]));
-            return;
-        }
-    };
-
-    run_logged_command(child, sender, detect_target, cancel);
-}
-
-fn detect_version(target: &str) -> Option<String> {
-    match target {
-        "homebrew" => detect_homebrew(),
-        "git" => detect_git(),
-        "nodejs" => detect_nodejs(),
-        "caddy" => detect_caddy(),
-        "pm2" => detect_pm2(),
-        _ => None,
-    }
-}
-
-/// 运行命令、转发输出并严格根据退出状态报告成功或失败。
+/// 以「行协议」把子进程日志转发给界面线程。
 ///
-/// 旧实现无论子进程是否启动成功都会发送 `__DONE__`，导致 UI 显示安装成功，
-/// 但实际上 brew/npm 可能已经失败。这里先等待命令退出，再检测版本，只有两者
-/// 都成功时才发送 `__DONE__`。
-fn run_logged_command(
+/// 行协议标记（必须与 `app.rs` 的解析保持一致）：
+/// - `__DONE__`：安装成功完成
+/// - `__FAILED__`：安装失败，前一条消息是 `__ERROR__:<已翻译文案>`
+/// - `__CANCELLED__`：用户主动取消
+/// - `__VERSION__:<版本号>`：安装后探测到的版本
+/// - `__NOTICE__:<文案键>`：阶段提示（键，由界面线程翻译）
+/// - `__PROGRESS__:<0-100>`：确定进度百分比
+pub const MARKER_DONE: &str = "__DONE__";
+pub const MARKER_FAILED: &str = "__FAILED__";
+pub const MARKER_CANCELLED: &str = "__CANCELLED__";
+
+/// 运行一个已构建好的安装命令，并把结果按行协议回报。
+///
+/// `detect_target` 为安装完成后需要复检的依赖标识（如 `"nodejs"`）；
+/// 传空字符串表示只关心退出码，不做版本复检。
+pub fn run_logged_command(
     mut child: Child,
     sender: std::sync::mpsc::Sender<String>,
-    detect_target: &str,
+    detect_target: &'static str,
+    source: EnvSource,
     cancel: Arc<AtomicBool>,
 ) {
-    let filter_node_formula_caveat = detect_target == "nodejs";
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
@@ -328,9 +277,7 @@ fn run_logged_command(
                 match line_result {
                     Ok(line) => {
                         let cleaned = strip_ansi(&line).trim().to_string();
-                        if !cleaned.is_empty()
-                            && !(filter_node_formula_caveat && is_node_formula_caveat(&cleaned))
-                        {
+                        if !cleaned.is_empty() {
                             let _ = tx_stdout.send(cleaned);
                         }
                     }
@@ -351,9 +298,7 @@ fn run_logged_command(
                 match line_result {
                     Ok(line) => {
                         let cleaned = strip_ansi(&line).trim().to_string();
-                        if !cleaned.is_empty()
-                            && !(filter_node_formula_caveat && is_node_formula_caveat(&cleaned))
-                        {
+                        if !cleaned.is_empty() {
                             let _ = tx_stderr.send(cleaned);
                         }
                     }
@@ -366,20 +311,19 @@ fn run_logged_command(
         let _ = done_tx.send(());
     }
 
-    // 主线程轮询子进程，使界面上的取消操作可以及时终止 brew/npm。
+    // 主线程轮询子进程，使界面上的取消操作可以及时终止安装。
     let mut was_cancelled = false;
     let status = loop {
         if cancel.load(Ordering::Relaxed) {
             was_cancelled = true;
-            let _ = child.kill();
+            kill_process_tree(&mut child);
             break child.wait();
         }
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
             Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
+                kill_process_tree(&mut child);
                 break Err(error);
             }
         }
@@ -390,141 +334,91 @@ fn run_logged_command(
     let _ = done_rx.recv();
 
     if was_cancelled {
-        let _ = tx_final.send("__CANCELLED__".to_owned());
+        let _ = tx_final.send(MARKER_CANCELLED.to_owned());
         return;
     }
 
     let status = match status {
         Ok(status) => status,
         Err(error) => {
-            send_failure(tx_final, tf("env.wait_install_failed", &[("error", &error)]));
+            send_failure(
+                tx_final,
+                tf("env.wait_install_failed", &[("error", &error)]),
+            );
             return;
         }
     };
-
-    if !status.success()
-        && detect_target == "nodejs"
-        && let Some(version) = detect_nodejs_formula()
-    {
-        // node@24 是 keg-only。旧版 Node/npm 残留可能让 Homebrew 的全局 link
-        // 步骤返回退出码 1，但独立 keg 已完整可用；启动器本身不依赖全局链接。
-        let _ = tx_final.send("__NOTICE__:environment.install.nodejs_keg_ready".to_owned());
-        let _ = tx_final.send(format!("__VERSION__:{version}"));
-        let _ = tx_final.send("__DONE__".to_owned());
-        return;
-    }
 
     if !status.success() {
         let code = status
             .code()
             .map(|code| code.to_string())
             .unwrap_or_else(|| t("resources.unknown").to_owned());
-        send_failure(
-            tx_final,
-            tf("env.command_failed", &[("code", &code)]),
-        );
+        send_failure(tx_final, tf("env.command_failed", &[("code", &code)]));
+        return;
+    }
+
+    if detect_target.is_empty() {
+        let _ = tx_final.send(MARKER_DONE.to_owned());
         return;
     }
 
     if detect_target == "pm2" {
         let _ = tx_final.send("__NOTICE__:environment.install.pm2.verifying".to_owned());
     }
-    if let Some(version) = detect_version(detect_target) {
+    if let Some(version) = detect_version(detect_target, source) {
         let _ = tx_final.send(format!("__VERSION__:{version}"));
-        let _ = tx_final.send("__DONE__".to_string());
+        let _ = tx_final.send(MARKER_DONE.to_owned());
     } else {
         send_failure(
             tx_final,
-            tf("env.command_done_not_detected", &[("target", &detect_target)]),
+            tf(
+                "env.command_done_not_detected",
+                &[("target", &detect_target)],
+            ),
         );
     }
 }
 
-/// Homebrew 针对 keg-only formula 输出的 shell/编译器配置提示对启动器无效。
-/// 启动器已为所有子进程注入正确 PATH，因此不在安装日志中误导用户手动配置。
-fn is_node_formula_caveat(line: &str) -> bool {
-    let line = line.trim();
-    line == "==> Caveats"
-        || line.starts_with("node@24 is keg-only")
-        || line.starts_with("because this is an alternate version")
-        || line.starts_with("If you need to have node@24 first in your PATH")
-        || line.starts_with("echo 'export PATH=")
-        || line.starts_with("For compilers to find node@24")
-        || line.starts_with("export LDFLAGS=")
-        || line.starts_with("export CPPFLAGS=")
-        || line == "Error: The `brew link` step did not complete successfully"
-        || line == "The formula built, but is not symlinked into /opt/homebrew"
-        || line.starts_with("Could not symlink lib/node_modules/npm/")
-        || (line.starts_with("Target ") && line.contains("/lib/node_modules/npm/"))
-        || line == "already exists. You may want to remove it:"
-        || line.starts_with("rm '/opt/homebrew/lib/node_modules/npm/")
-        || line.starts_with("rm '/usr/local/lib/node_modules/npm/")
-        || line == "To force the link and overwrite all conflicting files:"
-        || line == "brew link --overwrite node@24"
-        || line == "To list all files that would be deleted:"
-        || line == "brew link --overwrite node@24 --dry-run"
-        || line == "Possible conflicting files are:"
-        || line.starts_with("/opt/homebrew/lib/node_modules/npm/")
-        || line.starts_with("/usr/local/lib/node_modules/npm/")
+/// 结束子进程及其派生进程树。
+///
+/// `npm install` 会派生出 node 子进程，只杀父进程会留下孤儿进程继续占用文件，
+/// 因此必须用 `taskkill /T` 连同整棵树一起结束。
+fn kill_process_tree(child: &mut Child) {
+    let pid = child.id().to_string();
+    let mut killer = Command::new("taskkill");
+    apply_no_window_to_command(&mut killer);
+    let _ = killer
+        .args(["/PID", &pid, "/T", "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = child.kill();
 }
 
-/// 运行 npm install -g <package> 并返回日志（用于 PM2 等全局 npm 包安装）。
-pub fn run_npm_install_global(
-    package: &str,
-    registry: &str,
-    proxy_mode: &str,
-    proxy_host: &str,
-    sender: std::sync::mpsc::Sender<String>,
-    cancel: Arc<AtomicBool>,
-) {
-    let _ = sender.send("__NOTICE__:environment.install.pm2.preparing".to_owned());
+// ─── 通用工具 ────────────────────────────────────────────────────────────────
 
-    // npm 默认的终端进度使用回车刷新，按行读取时会长时间没有任何内容。
-    // 关闭终端进度并启用 info/timing，使每个网络和安装阶段都能实时进入折叠日志。
-    let mut command = cmd("npm");
-    command.args([
-        "install",
-        "-g",
-        package,
-        "--loglevel=info",
-        "--timing",
-        "--progress=false",
-        "--no-audit",
-        "--no-fund",
-    ]);
-    command
-        .env("npm_config_color", "false")
-        .env("npm_config_unicode", "false");
-    if !registry.trim().is_empty() {
-        command.env("npm_config_registry", registry);
-    }
-    crate::core::network::configure_npm_proxy(&mut command, proxy_mode, proxy_host);
+/// 构造一个已配置好管道与「无黑窗」标志的安装命令。
+///
+/// `CREATE_NO_WINDOW` 必须在这里补上：安装子进程的 stdout/stderr 已被重定向到管道，
+/// 不会被用户看到，控制台窗口纯属多余的干扰，而且 node/npm 安装耗时长，
+/// 那个黑框会一直挡在启动器前面。
+pub fn prepare_install_command(mut command: Command) -> Command {
+    crate::core::env::apply_no_window_to_command(&mut command);
     command.stdin(Stdio::null());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
-
-    let _ = sender.send("__NOTICE__:environment.install.pm2.installing".to_owned());
-
-    let child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            send_failure(
-                sender,
-                tf("env.npm_start_failed", &[("package", &package), ("error", &error)]),
-            );
-            return;
-        }
-    };
-
-    run_logged_command(child, sender, "pm2", cancel);
+    command
 }
 
 fn send_failure(sender: std::sync::mpsc::Sender<String>, message: String) {
     let _ = sender.send(format!("__ERROR__:{message}"));
-    let _ = sender.send("__FAILED__".to_string());
+    let _ = sender.send(MARKER_FAILED.to_owned());
 }
 
-/// 简易 ANSI 转义序列清理（SGR 颜色码 + 光标控制）
+/// 简易 ANSI 转义序列清理（SGR 颜色码 + 光标控制）。
+///
+/// npm / git 在部分终端下会输出颜色码，直接进入日志会让界面出现乱码方块。
 fn strip_ansi(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
@@ -553,34 +447,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_homebrew_version() {
-        assert_eq!(
-            parse_homebrew_version("Homebrew 4.2.0"),
-            Some("4.2.0".to_string())
-        );
-        assert_eq!(
-            parse_homebrew_version("Homebrew 5.0.0-xxx"),
-            Some("5.0.0".to_string())
-        );
-    }
-
-    #[test]
     fn test_parse_git_version() {
         assert_eq!(
-            parse_git_version("git version 2.39.0"),
-            Some("2.39.0".to_string())
+            parse_git_version("git version 2.47.1"),
+            Some("2.47.1".to_string())
         );
         assert_eq!(
-            parse_git_version("git version 2.39.0 (Apple Git-xxx)"),
-            Some("2.39.0".to_string())
+            parse_git_version("git version 2.47.1.windows.1"),
+            Some("2.47.1".to_string())
         );
-    }
-
-    #[test]
-    fn test_is_homebrew_outdated() {
-        assert!(is_homebrew_outdated("4.2.0"));
-        assert!(!is_homebrew_outdated("5.0.0"));
-        assert!(!is_homebrew_outdated("5.1.0"));
     }
 
     #[test]
@@ -592,32 +467,9 @@ mod tests {
 
     #[test]
     fn test_parse_major() {
-        assert_eq!(parse_major("4.2.0"), Some(4));
+        assert_eq!(parse_major("22.14.0"), Some(22));
         assert_eq!(parse_major("v22.1.0"), Some(22));
-        assert_eq!(parse_major("v5.0.0"), Some(5));
-    }
-
-    #[test]
-    fn failed_command_emits_failure_marker_instead_of_done() {
-        let mut command = Command::new("/bin/sh");
-        command
-            .args(["-c", "printf 'failed output\n'; exit 7"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let child = command.spawn().expect("spawn test command");
-        let (sender, receiver) = std::sync::mpsc::channel();
-
-        run_logged_command(child, sender, "", Arc::new(AtomicBool::new(false)));
-        let messages = receiver.into_iter().collect::<Vec<_>>();
-
-        assert!(messages.iter().any(|message| message == "failed output"));
-        assert!(
-            messages
-                .iter()
-                .any(|message| message.starts_with("__ERROR__:"))
-        );
-        assert!(messages.iter().any(|message| message == "__FAILED__"));
-        assert!(!messages.iter().any(|message| message == "__DONE__"));
+        assert_eq!(parse_major("v7.0.1"), Some(7));
     }
 
     #[test]
@@ -626,5 +478,54 @@ mod tests {
         assert_eq!(strip_ansi("\x1b[32mhello\x1b[0m"), "hello");
         assert_eq!(strip_ansi("\x1b[1;32mworld\x1b[0m"), "world");
         assert_eq!(strip_ansi("no ansi here"), "no ansi here");
+    }
+
+    #[test]
+    fn test_extract_semver() {
+        assert_eq!(extract_semver("7.0.1"), Some("7.0.1".to_string()));
+        assert_eq!(
+            extract_semver("[PM2] Spawning\n7.0.1\n"),
+            Some("7.0.1".to_string())
+        );
+        assert_eq!(extract_semver("no version"), None);
+    }
+
+    /// 系统来源下命令必须带上「无黑窗」标志，避免 GUI 拉起子进程时闪黑框。
+    #[test]
+    fn system_command_hides_console_window() {
+        let command = command_for("git", EnvSource::System);
+        // `creation_flags` 无法直接读回，这里通过 Debug 输出确认已被设置。
+        assert!(format!("{command:?}").contains("creation_flags"));
+    }
+
+    #[test]
+    fn failed_command_emits_failure_marker_instead_of_done() {
+        // Windows 的 cmd.exe 用 `exit /b 7` 指定退出码。
+        let mut command = Command::new("cmd");
+        command
+            .args(["/c", "echo failed output& exit /b 7"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        apply_no_window_to_command(&mut command);
+        let child = command.spawn().expect("spawn test command");
+        let (sender, receiver) = std::sync::mpsc::channel();
+
+        run_logged_command(
+            child,
+            sender,
+            "",
+            EnvSource::System,
+            Arc::new(AtomicBool::new(false)),
+        );
+        let messages = receiver.into_iter().collect::<Vec<_>>();
+
+        assert!(messages.iter().any(|message| message.contains("failed output")));
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.starts_with("__ERROR__:"))
+        );
+        assert!(messages.iter().any(|message| message == MARKER_FAILED));
+        assert!(!messages.iter().any(|message| message == MARKER_DONE));
     }
 }

@@ -5,7 +5,6 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 
@@ -483,8 +482,8 @@ impl ConsoleState {
             ConsoleMessage::RetryAccessDialog => self.start_access_detection(),
             ConsoleMessage::AccessUrlInteract(_value) => {}
             ConsoleMessage::OpenAccessUrl(url) => {
-                if let Err(error) = Command::new("open").arg(&url).spawn() {
-                    self.add_error_log(tf("console.open_address_failed", &[("url", &url), ("error", &error.to_string())]));
+                if let Err(error) = crate::core::shell::open_target(&url) {
+                    self.add_error_log(tf("console.open_address_failed", &[("url", &url), ("error", &error)]));
                 }
             }
             ConsoleMessage::OpenServer => return ConsoleAction::OpenServer,
@@ -1378,26 +1377,25 @@ fn log_highlight_format(
     }
 }
 
+/// 解析日志导出目录。
+///
+/// 用户没配过导出路径时落到「下载」文件夹（见 [`crate::utils::user_downloads_dir`]）。
 fn export_directory(configured: &str) -> PathBuf {
     if configured.trim().is_empty() {
-        return std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join("Downloads");
+        return crate::utils::user_downloads_dir();
     }
     crate::core::tavern_config::expand_home(configured)
 }
 
+/// 生成带时间戳的日志文件名。
+///
+/// Windows 没有 `date` 命令，改用系统时间自行格式化（见 [`crate::core::time`]）；
+/// 取本地时间而非 UTC，文件名与用户所见的时间一致才方便对照。
 fn export_filename() -> String {
-    let stamp = Command::new("date")
-        .arg("+%Y%m%d-%H%M%S")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .filter(|stamp| !stamp.is_empty())
-        .unwrap_or_else(|| "20260907-000000".to_owned());
-    format!("astrabrew-sillytavern-{stamp}.log")
+    format!(
+        "astrabrew-sillytavern-{}.log",
+        crate::core::time::compact_stamp()
+    )
 }
 
 /// 限制单行日志长度并移除会干扰文本布局的控制字符。

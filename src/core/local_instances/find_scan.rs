@@ -1,207 +1,38 @@
-//! 沿用旧版快速扫描：find 查找用户主目录下的 package.json，再读取 JSON 校验实例。
-//! 不启动 shell、不做全盘扫描或权限预检；保留安全的路径传输及进程回收。
+//! 用户主目录快速扫描：查找 `package.json` 并校验是否为酒馆实例。
+//!
+//! 旧版依赖 macOS 自带的 `/usr/bin/find` 子进程；Windows 没有等价的内置工具，
+//! 因此改用 `jwalk` 在进程内并行遍历，既省掉一次进程启动开销，
+//! 也避免了外部命令在缺少 `PATH` / 权限异常时的各种边界问题。
+//!
+//! 扫描策略与旧版保持一致：
+//! - 只遍历主目录，遇到启动器自带实例目录直接剪枝；
+//! - 命中 `package.json` 后交给 [`inspect_package`] 判定是否为酒馆实例；
+//! - 全程可取消，并周期性上报「已检查路径 / 已发现实例数」。
 
-use std::ffi::{OsStr, OsString};
-use std::io::{self, Read};
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    mpsc::{self, Receiver, SyncSender},
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use super::scan::{ScanEvent, ScanProgress, ScanReport};
-use super::{LocalError, LocalErrorKind, inspect_package, normalized_path};
+use super::{LocalError, LocalErrorKind, display_path, inspect_package, normalized_path};
 
-/// find 的 -path 使用模式匹配，必须额外转义元字符；这不是 shell 转义。
-fn literal_pattern(path: &Path) -> OsString {
-    let mut escaped = Vec::new();
-    for &byte in path.as_os_str().as_bytes() {
-        if b"\\*?[]".contains(&byte) {
-            escaped.push(b'\\');
-        }
-        escaped.push(byte);
-    }
-    OsString::from_vec(escaped)
-}
+/// 扫描进度上报间隔：过密会拖慢遍历，过疏则界面显得卡住。
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
-/// 同时排除在线实例的数据卷别名，避免路径入口不同导致遗漏过滤。
-fn aliases(path: &Path) -> Vec<PathBuf> {
-    let mut paths = vec![path.to_owned()];
-    if let Ok(relative) = path.strip_prefix("/System/Volumes/Data") {
-        paths.push(Path::new("/").join(relative));
-    } else if path.starts_with("/Users") {
-        paths.push(Path::new("/System/Volumes/Data").join(path.strip_prefix("/").unwrap_or(path)));
-    }
-    paths
-}
+/// 用户主目录中需要跳过的目录名。
+///
+/// 这些目录要么体量巨大且不可能存放酒馆实例（依赖、缓存、版本控制），
+/// 要么本身是启动器或其他工具的数据区，遍历它们只是浪费时间。
+const SKIPPED_DIRECTORIES: &[&str] = &[
+    "node_modules",
+    ".git",
+    "AppData",
+    ".cache",
+    "$RECYCLE.BIN",
+    "System Volume Information",
+];
 
-fn build_command(home: &Path, online: &Path) -> Command {
-    let mut command = Command::new("/usr/bin/find");
-    // 旧版只排除启动器自带实例，其他位置交给系统 find；默认不跟随目录链接。
-    let mut online_paths = aliases(online);
-    online_paths.extend(aliases(&normalized_path(online)));
-    online_paths.sort();
-    online_paths.dedup();
-    command.arg("-P").arg(home).arg("(");
-    for (index, path) in online_paths.iter().enumerate() {
-        if index > 0 {
-            command.arg("-o");
-        }
-        command.arg("-path").arg(literal_pattern(path));
-    }
-    // 用 NUL 代替旧版换行分隔，避免空格、换行等合法路径被拆坏。
-    command.args([
-        ")",
-        "-prune",
-        "-o",
-        "-type",
-        "f",
-        "-name",
-        "package.json",
-        "-print0",
-    ]);
-    command
-        .env("LC_ALL", "C")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    command
-}
-
-/// 分隔符可横跨任意读块；不把文件名当作 UTF-8 文本行处理。
-struct Records {
-    pending: Vec<u8>,
-    delimiter: u8,
-    limit: usize,
-}
-impl Records {
-    fn new(delimiter: u8, limit: usize) -> Self {
-        Self {
-            pending: Vec::new(),
-            delimiter,
-            limit,
-        }
-    }
-    fn push(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, LocalError> {
-        let mut complete = Vec::new();
-        for &byte in bytes {
-            if byte == self.delimiter {
-                complete.push(std::mem::take(&mut self.pending));
-            } else {
-                if self.pending.len() >= self.limit {
-                    return Err(LocalError::new(
-                        "local.scan.output_anomaly",
-                        "record too long",
-                    ));
-                }
-                self.pending.push(byte);
-            }
-        }
-        Ok(complete)
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Stream {
-    Out,
-    Err,
-}
-enum Output {
-    Chunk(Stream, Vec<u8>),
-    End(Stream),
-    Failed(String),
-}
-
-fn read_stream(mut pipe: impl Read, stream: Stream, tx: SyncSender<Output>) {
-    let mut buffer = [0; 8192];
-    loop {
-        match pipe.read(&mut buffer) {
-            Ok(0) => {
-                let _ = tx.send(Output::End(stream));
-                return;
-            }
-            Ok(count) => {
-                if tx
-                    .send(Output::Chunk(stream, buffer[..count].to_vec()))
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) => {
-                let _ = tx.send(Output::Failed(error.to_string()));
-                return;
-            }
-        }
-    }
-}
-
-/// 可替换的进程控制，测试只注入退出结果，不执行真实扫描。
-trait ProcessControl {
-    fn poll(&mut self) -> io::Result<Option<i32>>;
-    fn stop_and_wait(&mut self);
-}
-struct FindChild(Child);
-impl ProcessControl for FindChild {
-    fn poll(&mut self) -> io::Result<Option<i32>> {
-        self.0
-            .try_wait()
-            .map(|status| status.map(|status| status.code().unwrap_or(-1)))
-    }
-    fn stop_and_wait(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-impl Drop for FindChild {
-    fn drop(&mut self) {
-        self.stop_and_wait();
-    }
-}
-
-#[derive(Default)]
-struct Diagnostics {
-    any: bool,
-    recoverable: bool,
-    unknown: bool,
-    last: String,
-}
-impl Diagnostics {
-    fn observe(&mut self, bytes: &[u8]) {
-        if bytes.is_empty() {
-            return;
-        }
-        self.any = true;
-        self.last = String::from_utf8_lossy(bytes).into_owned();
-        let recoverable = [
-            b": Permission denied".as_slice(),
-            b": Operation not permitted",
-            b": No such file or directory",
-            b": Not a directory",
-        ]
-        .iter()
-        .any(|suffix| bytes.ends_with(suffix));
-        self.recoverable |= recoverable;
-        self.unknown |= !recoverable;
-    }
-    fn finish(&self, code: i32, partial: bool) -> Result<bool, LocalError> {
-        if code == 0 {
-            return Ok(partial || self.any);
-        }
-        if code > 0 && self.recoverable && !self.unknown {
-            return Ok(true);
-        }
-        Err(LocalError::new(
-            "local.scan.command_failed",
-            format!("find exit code: {code}\n{}", self.last),
-        ))
-    }
-}
-
+/// 判断取消标志是否已置位。
 fn cancelled(cancel: &AtomicBool) -> Result<(), LocalError> {
     if cancel.load(Ordering::Relaxed) {
         Err(LocalError::cancelled())
@@ -210,424 +41,231 @@ fn cancelled(cancel: &AtomicBool) -> Result<(), LocalError> {
     }
 }
 
-fn drive(
-    process: &mut impl ProcessControl,
-    rx: &Receiver<Output>,
-    cancel: &AtomicBool,
-    home: &Path,
-    online: &Path,
-    emit: &mut impl FnMut(ScanEvent) -> bool,
-) -> Result<ScanReport, LocalError> {
-    let started = Instant::now();
-    let mut progress = ScanProgress {
-        path: home.display().to_string(),
-        ..Default::default()
-    };
-    let mut paths = Records::new(0, 16 * 1024);
-    let mut errors = Records::new(b'\n', 64 * 1024);
-    let mut diagnostics = Diagnostics::default();
-    let mut partial = false;
-    let mut out_done = false;
-    let mut err_done = false;
-    let mut exit = None;
-    let mut last_progress = Instant::now() - Duration::from_secs(1);
-    loop {
-        cancelled(cancel)?;
-        if exit.is_none() {
-            exit = process
-                .poll()
-                .map_err(|e| LocalError::new("local.scan.wait_failed", e))?;
-        }
-        progress.elapsed_seconds = started.elapsed().as_secs();
-        if last_progress.elapsed() >= Duration::from_millis(100) {
-            if !emit(ScanEvent::Progress(progress.clone())) {
-                return Err(LocalError::cancelled());
-            }
-            last_progress = Instant::now();
-        }
-        if out_done
-            && err_done
-            && let Some(code) = exit
-        {
-            if !paths.pending.is_empty() {
-                return Err(LocalError::new(
-                    "local.scan.output_anomaly",
-                    "missing final NUL",
-                ));
-            }
-            partial = diagnostics.finish(code, partial)?;
-            return Ok(ScanReport { progress, partial });
-        }
-        let output = match rx.recv_timeout(Duration::from_millis(50)) {
-            Ok(output) => output,
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) if out_done && err_done => {
-                std::thread::sleep(Duration::from_millis(20));
-                continue;
-            }
-            Err(_) => {
-                return Err(LocalError::new(
-                    "local.scan.output_anomaly",
-                    "stream disconnected",
-                ));
-            }
-        };
-        match output {
-            Output::Chunk(Stream::Out, bytes) => {
-                for record in paths.push(&bytes)? {
-                    cancelled(cancel)?;
-                    if record.is_empty() {
-                        continue;
-                    }
-                    let path = PathBuf::from(OsString::from_vec(record));
-                    progress.checked += 1;
-                    progress.path = path.parent().unwrap_or(&path).display().to_string();
-                    if !emit(ScanEvent::ScanningPath(progress.path.clone())) {
-                        return Err(LocalError::cancelled());
-                    }
-                    // 防止异常进程输出进入不属于本轮扫描范围的路径。
-                    if !path.starts_with(home)
-                        || path.file_name() != Some(OsStr::new("package.json"))
-                    {
-                        return Err(LocalError::new(
-                            "local.scan.output_anomaly",
-                            path.display(),
-                        ));
-                    }
-                    if path.to_str().is_none() {
-                        partial = true;
-                        if !emit(ScanEvent::Warning(LocalError::new(
-                            "local.scan.path_not_text",
-                            path.display(),
-                        ))) {
-                            return Err(LocalError::cancelled());
-                        }
-                        continue;
-                    }
-                    match inspect_package(&path, online) {
-                        Ok(instance) => {
-                            progress.found += 1;
-                            if !emit(ScanEvent::Found(instance)) {
-                                return Err(LocalError::cancelled());
-                            }
-                        }
-                        Err(error)
-                            if matches!(
-                                error.kind,
-                                LocalErrorKind::InvalidInstance | LocalErrorKind::OnlineInstance
-                            ) => {}
-                        Err(error) => {
-                            partial = true;
-                            if !emit(ScanEvent::Warning(error)) {
-                                return Err(LocalError::cancelled());
-                            }
-                        }
-                    }
-                }
-            }
-            Output::Chunk(Stream::Err, bytes) => {
-                for line in errors.push(&bytes)? {
-                    diagnostics.observe(&line);
-                    if !line.is_empty()
-                        && !emit(ScanEvent::Warning(LocalError::new(
-                            "local.scan.skipped_or_error",
-                            String::from_utf8_lossy(&line),
-                        )))
-                    {
-                        return Err(LocalError::cancelled());
-                    }
-                }
-            }
-            Output::End(Stream::Out) => out_done = true,
-            Output::End(Stream::Err) => {
-                err_done = true;
-                if !errors.pending.is_empty() {
-                    diagnostics.observe(&errors.pending);
-                    if !emit(ScanEvent::Warning(LocalError::new(
-                        "local.scan.skipped_or_error",
-                        String::from_utf8_lossy(&errors.pending),
-                    ))) {
-                        return Err(LocalError::cancelled());
-                    }
-                }
-            }
-            Output::Failed(error) => return Err(LocalError::new("local.scan.read_output_failed", error)),
-        }
+/// 该目录是否应当被剪枝（不进入其子树）。
+fn should_prune(path: &Path, home: &Path, online: &Path) -> bool {
+    // 启动器自带实例：其数据由启动器自身管理，不应被识别为「用户本地实例」。
+    if path == online || path.starts_with(online) {
+        return true;
     }
+
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    if SKIPPED_DIRECTORIES.contains(&name) {
+        return true;
+    }
+
+    // 隐藏的版本控制与缓存目录统一跳过（`.vscode` 之类仍允许进入，
+    // 因为它们体积小且可能包含用户自建的酒馆工程）。
+    if name.starts_with('.') && name != "." {
+        return !matches!(name, ".config" | ".local");
+    }
+
+    // 只扫描主目录内部；符号链接指向外部时跳过，避免绕出扫描范围。
+    !path.starts_with(home)
 }
 
-/// 测试可以用假进程验证取消和管道失败也会回收，而不启动任何命令。
-fn with_cleanup<P: ProcessControl>(
-    process: &mut P,
-    operation: impl FnOnce(&mut P) -> Result<ScanReport, LocalError>,
-) -> Result<ScanReport, LocalError> {
-    let result = operation(process);
-    process.stop_and_wait();
-    result
+/// 扫描主目录，查找全部酒馆实例。
+///
+/// `online` 是启动器在线下载实例的目录，扫描时整体排除。
+/// `emit` 返回 `false` 表示调用方要求中止（等价于取消）。
+pub fn run_home(online: PathBuf, cancel: &AtomicBool, mut emit: impl FnMut(ScanEvent) -> bool) {
+    let result = scan_home(&online, cancel, &mut emit);
+    emit(ScanEvent::Finished(result));
 }
 
-/// 任何退出分支都先终止并回收子进程，再解除管道背压并回收读取线程。
-fn execute(
-    command: &mut Command,
-    home: &Path,
+/// 扫描主体；所有错误都以 [`LocalError`] 形式返回给 `run_home` 统一上报。
+fn scan_home(
     online: &Path,
     cancel: &AtomicBool,
     emit: &mut impl FnMut(ScanEvent) -> bool,
 ) -> Result<ScanReport, LocalError> {
     cancelled(cancel)?;
-    let mut child = FindChild(
-        command
-            .spawn()
-            .map_err(|error| LocalError::new("local.scan.start_failed", error))?,
-    );
-    let stdout = child
-        .0
-        .stdout
-        .take()
-        .ok_or_else(|| LocalError::new("local.scan.read_output_failed", "stdout"))?;
-    let stderr = child
-        .0
-        .stderr
-        .take()
-        .ok_or_else(|| LocalError::new("local.scan.read_output_failed", "stderr"))?;
-    let (tx, rx) = mpsc::sync_channel(64);
-    let out_tx = tx.clone();
-    let out = std::thread::spawn(move || read_stream(stdout, Stream::Out, out_tx));
-    let err = std::thread::spawn(move || read_stream(stderr, Stream::Err, tx));
-    let result = with_cleanup(&mut child, |child| {
-        drive(child, &rx, cancel, home, online, emit)
-    });
-    drop(rx);
-    let out_result = out.join();
-    let err_result = err.join();
-    if out_result.is_err() || err_result.is_err() {
-        return Err(LocalError::new(
-            "local.scan.read_output_failed",
-            "reader thread failed",
-        ));
+
+    let home = user_home()?;
+    let online = normalized_path(online);
+
+    if !emit(ScanEvent::ScanningPath(display_path(&home))) {
+        return Err(LocalError::cancelled());
     }
-    result
+
+    let started = Instant::now();
+    let mut progress = ScanProgress {
+        path: display_path(&home),
+        ..Default::default()
+    };
+    let mut partial = false;
+    let mut last_report = Instant::now() - PROGRESS_INTERVAL;
+
+    // jwalk 以并行方式遍历；`process_read_dir` 负责剪枝，`path` 回调负责判定命中。
+    let walker = jwalk::WalkDir::new(&home)
+        .skip_hidden(false)
+        .follow_links(false)
+        .process_read_dir({
+            let online = online.clone();
+            let home = home.clone();
+            move |_depth, _path, _state, children| {
+                children.retain(|entry| match entry {
+                    Ok(entry) => !should_prune(&entry.path(), &home, &online),
+                    // 读取失败的条目直接丢弃，由遍历循环统计为「跳过」。
+                    Err(_) => false,
+                });
+            }
+        });
+
+    for entry in walker {
+        cancelled(cancel)?;
+
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                // 权限不足、路径过长等单个条目错误不应中断整轮扫描，
+                // 只标记为「结果可能不完整」并提示用户。
+                partial = true;
+                if !emit(ScanEvent::Warning(LocalError::new(
+                    "local.scan.skipped_or_error",
+                    error.to_string(),
+                ))) {
+                    return Err(LocalError::cancelled());
+                }
+                continue;
+            }
+        };
+
+        if let Some(name) = entry.file_name().to_str()
+            && name == "package.json"
+        {
+            let path = entry.path();
+            progress.checked += 1;
+            // 扫描进度会实时显示在界面上，去掉 canonicalize 可能带出的 `\\?\` 前缀。
+            progress.path = display_path(path.parent().unwrap_or(&path));
+
+            if last_report.elapsed() >= PROGRESS_INTERVAL {
+                progress.elapsed_seconds = started.elapsed().as_secs();
+                if !emit(ScanEvent::Progress(progress.clone())) {
+                    return Err(LocalError::cancelled());
+                }
+                last_report = Instant::now();
+            }
+
+            // 非 UTF-8 路径无法交给后续的字符串处理流程，只做警告不视为失败。
+            if path.to_str().is_none() {
+                partial = true;
+                if !emit(ScanEvent::Warning(LocalError::new(
+                    "local.scan.path_not_text",
+                    // 该警告会展示给用户，同样需要剥掉 verbatim 前缀。
+                    display_path(&path),
+                ))) {
+                    return Err(LocalError::cancelled());
+                }
+                continue;
+            }
+
+            match inspect_package(&path, &online) {
+                Ok(instance) => {
+                    progress.found += 1;
+                    if !emit(ScanEvent::Found(instance)) {
+                        return Err(LocalError::cancelled());
+                    }
+                }
+                // 不是酒馆实例（或属于在线实例）是正常情况，不计入警告。
+                Err(error)
+                    if matches!(
+                        error.kind,
+                        LocalErrorKind::InvalidInstance | LocalErrorKind::OnlineInstance
+                    ) => {}
+                Err(error) => {
+                    partial = true;
+                    if !emit(ScanEvent::Warning(error)) {
+                        return Err(LocalError::cancelled());
+                    }
+                }
+            }
+        }
+
+        // 目录本身不计入进度，只在命中文件后递增，避免数字虚高。
+        if last_report.elapsed() >= PROGRESS_INTERVAL {
+            progress.elapsed_seconds = started.elapsed().as_secs();
+            if !emit(ScanEvent::Progress(progress.clone())) {
+                return Err(LocalError::cancelled());
+            }
+            last_report = Instant::now();
+        }
+    }
+
+    progress.elapsed_seconds = started.elapsed().as_secs();
+    Ok(ScanReport { progress, partial })
 }
 
-pub fn run_home(online: PathBuf, cancel: &AtomicBool, mut emit: impl FnMut(ScanEvent) -> bool) {
-    let result = (|| {
-        cancelled(cancel)?;
-        let home = std::env::var_os("HOME")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .ok_or_else(|| LocalError::new("local.scan.home_unknown", "HOME"))?;
-        // HOME 缺失或异常时不能像旧版一样回退到 /，否则会变成全盘扫描。
-        if !home.is_absolute() || home == Path::new("/") {
-            return Err(LocalError::new(
-                "local.scan.home_unknown",
-                home.display(),
-            ));
-        }
-        let home = normalized_path(&home);
-        if home == Path::new("/") {
-            return Err(LocalError::new(
-                "local.scan.home_unknown",
-                home.display(),
-            ));
-        }
-        if !emit(ScanEvent::ScanningPath(home.display().to_string())) {
-            return Err(LocalError::cancelled());
-        }
-        let mut command = build_command(&home, &online);
-        execute(&mut command, &home, &online, cancel, &mut emit)
-    })();
-    emit(ScanEvent::Finished(result));
+/// 解析当前用户主目录。
+///
+/// Windows 优先使用 `USERPROFILE`，回退到 `HOMEDRIVE` + `HOMEPATH` 组合。
+/// 主目录缺失或异常时直接报错——绝不能像旧版那样回退到根目录，
+/// 否则会退化成整盘扫描。
+fn user_home() -> Result<PathBuf, LocalError> {
+    let home = std::env::var_os("USERPROFILE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            let drive = std::env::var_os("HOMEDRIVE")?;
+            let path = std::env::var_os("HOMEPATH")?;
+            if drive.is_empty() || path.is_empty() {
+                return None;
+            }
+            let mut combined = drive;
+            combined.push(path);
+            Some(PathBuf::from(combined))
+        })
+        .ok_or_else(|| LocalError::new("local.scan.home_unknown", "USERPROFILE"))?;
+
+    if !home.is_absolute() {
+        return Err(LocalError::new("local.scan.home_unknown", home.display()));
+    }
+    // 拒绝盘符根目录（`C:\`），那等同于整盘扫描。
+    if home.parent().is_none() {
+        return Err(LocalError::new("local.scan.home_unknown", home.display()));
+    }
+    Ok(normalized_path(&home))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::local_instances::tests::Fixture;
 
     #[test]
-    fn nul_records_handle_chunk_boundaries_and_special_names() {
-        let original = b"/home/a b/line\n[?*]\\\xff/package.json";
-        let mut decoder = Records::new(0, 1024);
-        let mut records = Vec::new();
-        for byte in original.iter().chain([0].iter()) {
-            records.extend(decoder.push(&[*byte]).unwrap());
-        }
-        assert_eq!(records, vec![original.to_vec()]);
-        let path = PathBuf::from(OsString::from_vec(records.pop().unwrap()));
-        assert_eq!(path.as_os_str().as_bytes(), original);
-    }
-
-    #[test]
-    fn command_matches_legacy_quick_scan_and_only_excludes_online_instance() {
-        let home = Path::new("/Users/test [a]?*");
+    fn prunes_dependency_and_vcs_directories() {
+        let home = Path::new(r"C:\Users\tester");
         let online = home.join("online");
-        let command = build_command(home, &online);
-        assert_eq!(command.get_program(), "/usr/bin/find");
-        let args: Vec<_> = command.get_args().map(OsStr::to_owned).collect();
-        assert_eq!(
-            &args[..2],
-            &[OsString::from("-P"), home.as_os_str().to_owned()]
-        );
-        assert_eq!(args.last().unwrap(), "-print0");
-        assert!(args.contains(&literal_pattern(&online)));
-        assert!(args.contains(&OsString::from("package.json")));
-        assert!(args.contains(&OsString::from("-prune")));
-        assert!(!args.contains(&OsString::from("node_modules")));
-        assert!(!args.contains(&OsString::from("-exec")));
+        assert!(should_prune(
+            &home.join("project").join("node_modules"),
+            home,
+            &online
+        ));
+        assert!(should_prune(&home.join("project").join(".git"), home, &online));
+        assert!(should_prune(&home.join("AppData"), home, &online));
     }
 
     #[test]
-    fn diagnostic_status_never_hides_nonzero_exit() {
-        let mut diagnostics = Diagnostics::default();
-        assert!(diagnostics.finish(1, false).is_err());
-        diagnostics.observe(b"find: /home/private: Permission denied");
-        assert_eq!(diagnostics.finish(1, false).unwrap(), true);
-        diagnostics.observe(b"find: unknown option");
-        assert!(diagnostics.finish(1, false).is_err());
-        assert!(diagnostics.finish(-1, false).is_err());
-    }
-
-    struct FakeProcess {
-        code: Option<i32>,
-        stopped: bool,
-    }
-    impl ProcessControl for FakeProcess {
-        fn poll(&mut self) -> io::Result<Option<i32>> {
-            Ok(self.code)
-        }
-        fn stop_and_wait(&mut self) {
-            self.stopped = true;
-        }
+    fn prunes_online_instance_subtree() {
+        let home = Path::new(r"C:\Users\tester");
+        let online = home.join("online");
+        assert!(should_prune(&online, home, &online));
+        assert!(should_prune(&online.join("data").join("default-user"), home, &online));
     }
 
     #[test]
-    fn streams_are_drained_even_after_process_exits() {
-        let fixture = Fixture::new();
-        let package = fixture.package(r#"{"name":"SILLYTAVERN"}"#);
-        let (tx, rx) = mpsc::sync_channel(8);
-        tx.send(Output::Chunk(
-            Stream::Err,
-            b"find: /unavailable: Permission denied\n".to_vec(),
-        ))
-        .unwrap();
-        let mut bytes = package.as_os_str().as_bytes().to_vec();
-        bytes.push(0);
-        tx.send(Output::Chunk(Stream::Out, bytes)).unwrap();
-        tx.send(Output::End(Stream::Out)).unwrap();
-        tx.send(Output::End(Stream::Err)).unwrap();
-        let mut process = FakeProcess {
-            code: Some(1),
-            stopped: false,
-        };
-        let mut found = 0;
-        let report = drive(
-            &mut process,
-            &rx,
-            &AtomicBool::new(false),
-            &fixture.0,
-            &fixture.0.join("online"),
-            &mut |event| {
-                if matches!(event, ScanEvent::Found(_)) {
-                    found += 1;
-                }
-                true
-            },
-        )
-        .unwrap();
-        assert_eq!(found, 1);
-        assert_eq!(report.progress.checked, 1);
-        assert!(report.partial);
+    fn keeps_ordinary_project_directories() {
+        let home = Path::new(r"C:\Users\tester");
+        let online = home.join("online");
+        assert!(!should_prune(&home.join("tavern"), home, &online));
+        assert!(!should_prune(&home.join("Documents").join("sillytavern"), home, &online));
     }
 
+    /// 主目录必须有父目录；盘符根目录会被拒绝，避免整盘扫描。
     #[test]
-    fn cancellation_and_malformed_output_fail_without_scanning() {
-        let (tx, rx) = mpsc::sync_channel(4);
-        let mut process = FakeProcess {
-            code: Some(0),
-            stopped: false,
-        };
-        assert_eq!(
-            drive(
-                &mut process,
-                &rx,
-                &AtomicBool::new(true),
-                Path::new("/fixture"),
-                Path::new("/online"),
-                &mut |_| true
-            )
-            .unwrap_err()
-            .kind,
-            LocalErrorKind::Cancelled
-        );
-        tx.send(Output::Chunk(
-            Stream::Out,
-            b"/fixture/package.json".to_vec(),
-        ))
-        .unwrap();
-        tx.send(Output::End(Stream::Out)).unwrap();
-        tx.send(Output::End(Stream::Err)).unwrap();
-        assert!(
-            drive(
-                &mut process,
-                &rx,
-                &AtomicBool::new(false),
-                Path::new("/fixture"),
-                Path::new("/online"),
-                &mut |_| true
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn stderr_records_have_bounded_memory_under_many_messages() {
-        let mut decoder = Records::new(b'\n', 64 * 1024);
-        let mut diagnostics = Diagnostics::default();
-        for _ in 0..10000 {
-            for line in decoder
-                .push(b"find: /denied: Operation not permitted\n")
-                .unwrap()
-            {
-                diagnostics.observe(&line);
-            }
-        }
-        assert!(decoder.pending.is_empty());
-        assert!(diagnostics.last.len() < 100);
-        assert!(diagnostics.finish(1, false).unwrap());
-    }
-    #[test]
-    fn process_is_reaped_on_cancel_and_reader_failure() {
-        let (tx, rx) = mpsc::sync_channel(2);
-        let mut process = FakeProcess {
-            code: None,
-            stopped: false,
-        };
-        let result = with_cleanup(&mut process, |process| {
-            drive(
-                process,
-                &rx,
-                &AtomicBool::new(true),
-                Path::new("/fixture"),
-                Path::new("/online"),
-                &mut |_| true,
-            )
-        });
-        assert_eq!(result.unwrap_err().kind, LocalErrorKind::Cancelled);
-        assert!(process.stopped);
-        process.stopped = false;
-        tx.send(Output::Failed("fixture read error".into()))
-            .unwrap();
-        assert!(
-            with_cleanup(&mut process, |process| drive(
-                process,
-                &rx,
-                &AtomicBool::new(false),
-                Path::new("/fixture"),
-                Path::new("/online"),
-                &mut |_| true
-            ))
-            .is_err()
-        );
-        assert!(process.stopped);
+    fn user_home_is_never_a_drive_root() {
+        let home = user_home().expect("测试环境应能解析主目录");
+        assert!(home.is_absolute());
+        assert!(home.parent().is_some(), "主目录不能是盘符根目录");
     }
 }

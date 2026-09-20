@@ -1,256 +1,135 @@
-//! macOS 开机自启动管理。
+//! Windows 开机自启动管理。
 //!
-//! 使用系统原生的登录项接口 `SMAppService`（macOS 13+，ServiceManagement.framework）：
+//! 通过注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 登记启动项：
+//! 写入一个「值名 → 可执行文件路径」的字符串，系统在用户登录时代为启动。
 //!
-//! - 启用：`SMAppService.mainApp.register()` —— 应用会出现在
-//!   「系统设置 → 通用 → 登录项 → 打开时」，由系统在下次登录时代为启动，**不会立刻拉起新实例**；
-//! - 禁用：`unregister()`；
-//! - 状态：`status`（未注册 / 已启用 / 待用户批准 / 找不到应用）。
+//! # 为什么用 HKCU 而不是任务计划程序
 //!
-//! ## 为什么不继续用 LaunchAgent
+//! - `HKCU` 只影响当前用户，无需管理员权限，也不需要 UAC 提权；
+//! - 用户可以在「任务管理器 → 启动」中看到并禁用该项，与系统预期一致；
+//! - 卸载时只需删除一个注册表值，不留残渣。
 //!
-//! 老版本把 `~/Library/LaunchAgents/com.astrabrew.launcher.plist` 写进启动项，然后用
-//! `launchctl bootstrap` 加载。这条路径有两个硬伤：
-//!
-//! 1. plist 里 `RunAtLoad` 为真，`bootstrap` 会**立刻运行**该作业 —— 表现为「打开自启动开关就弹出
-//!    一个新窗口」；
-//! 2. 用户级 LaunchAgent 不属于系统「登录项」，因此在登录项列表里看不到它。
-//!
-//! 这里保留 [legacy] 相关代码只做两件事：清理历史遗留的 plist / 已注册服务（避免与新机制重复启动），
-//! 以及在系统不支持 `SMAppService`（macOS 12 及更早）时**只写 plist、不 bootstrap** 地兜底。
+//! 值的写入与删除都是幂等的：重复启用只会覆盖同一个值，不会产生多条记录。
 
 use crate::lang::t;
 use crate::lang::tf;
-use std::ffi::{CString, c_char, c_int, c_void};
-use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::OnceLock;
 
-use objc2_06::msg_send;
-use objc2_06::runtime::{AnyClass, AnyObject};
-use objc2_foundation_06::NSError;
+use winreg::RegKey;
+use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
 
-unsafe extern "C" {
-    /// 动态加载系统框架（实现在 libdyld，经 libSystem 导出）。
-    fn dlopen(path: *const c_char, mode: c_int) -> *mut c_void;
-}
+/// 注册表启动项位置（相对 `HKEY_CURRENT_USER`）。
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
-const RTLD_LAZY: c_int = 0x1;
-const SERVICE_MANAGEMENT: &str =
-    "/System/Library/Frameworks/ServiceManagement.framework/ServiceManagement";
-
-/// 确保 ServiceManagement 框架已加载（幂等），框架里的 `SMAppService` 才会被注册进运行时。
-fn load_service_management() -> bool {
-    static LOADED: OnceLock<bool> = OnceLock::new();
-    *LOADED.get_or_init(|| {
-        let Ok(path) = CString::new(SERVICE_MANAGEMENT) else {
-            return false;
-        };
-        !unsafe { dlopen(path.as_ptr(), RTLD_LAZY) }.is_null()
-    })
-}
-
-/// 老版本使用的 LaunchAgent 标签。
-const LEGACY_LABEL: &str = "com.astrabrew.launcher";
+/// 启动项在注册表中的值名。
+///
+/// 使用固定名称，保证「设置 → 取消 → 再设置」始终操作同一条记录。
+const VALUE_NAME: &str = "AstraBrew Launcher";
 
 /// 系统登录项状态。
+///
+/// Windows 的注册表启动项只有「已登记 / 未登记」两态，
+/// 因此这里只保留必要的分支；`NotFound` 用于表达「注册表键不可读」
+/// 这一异常情况，便于界面提示用户。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoginItemStatus {
-    /// 尚未注册。
+    /// 尚未登记自启动。
     NotRegistered,
-    /// 已启用，登录时会自动启动。
+    /// 已登记，登录时会自动启动。
     Enabled,
-    /// 已注册，但需要用户在「系统设置 → 登录项」中批准。
-    RequiresApproval,
-    /// 系统找不到应用（通常是没以 .app 形式放在可注册的位置）。
+    /// 注册表不可读（策略限制等），无法判定当前状态。
     NotFound,
-    /// 当前系统没有 `SMAppService`（macOS 12 及更早）。
-    Unsupported,
 }
 
 impl LoginItemStatus {
-    /// 从 `SMAppServiceStatus` 原始值解析。
-    const fn from_raw(raw: isize) -> Self {
-        match raw {
-            1 => Self::Enabled,
-            2 => Self::RequiresApproval,
-            3 => Self::NotFound,
-            _ => Self::NotRegistered,
-        }
-    }
-
     /// 该状态是否表示「登录时会自动启动」。
     pub const fn is_active(self) -> bool {
-        matches!(self, Self::Enabled | Self::RequiresApproval)
+        matches!(self, Self::Enabled)
     }
 }
 
-/// 取 `SMAppService.mainApp` 实例；系统不支持时返回 `None`。
-fn main_app_service() -> Option<*mut AnyObject> {
-    if !load_service_management() {
-        return None;
-    }
-    // 类不存在即系统过老，回退到 legacy 方案。
-    let class = AnyClass::get(c"SMAppService")?;
-    let service: *mut AnyObject = unsafe { msg_send![class, mainAppService] };
-    (!service.is_null()).then_some(service)
+/// 打开启动项注册表键。
+fn run_key(writable: bool) -> Result<RegKey, String> {
+    let access = if writable { KEY_WRITE | KEY_READ } else { KEY_READ };
+    RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey_with_flags(RUN_KEY, access)
+        .map_err(|error| tf("autolaunch.registry_open_failed", &[("error", &error)]))
 }
 
-/// 查询登录项状态。
-pub fn login_item_status() -> LoginItemStatus {
-    let Some(service) = main_app_service() else {
-        return LoginItemStatus::Unsupported;
-    };
-    let raw: isize = unsafe { msg_send![service, status] };
-    LoginItemStatus::from_raw(raw)
-}
-
-/// 注册 / 注销登录项，返回是否成功。
+/// 查询自启动状态。
 ///
-/// `NSError**` 传空指针：失败原因用 [login_item_status] 复述即可，不必把系统错误原文透给用户。
-fn register(service: *mut AnyObject) -> bool {
-    let error: *mut *mut NSError = std::ptr::null_mut();
-    unsafe { msg_send![service, registerAndReturnError: error] }
-}
-
-fn unregister(service: *mut AnyObject) -> bool {
-    let error: *mut *mut NSError = std::ptr::null_mut();
-    unsafe { msg_send![service, unregisterAndReturnError: error] }
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-}
-
-fn legacy_plist_path() -> PathBuf {
-    home_dir()
-        .join("Library")
-        .join("LaunchAgents")
-        .join(format!("{LEGACY_LABEL}.plist"))
-}
-
-/// 清理老版本留下的 LaunchAgent（只删除 plist）。
-///
-/// 必须清理：否则老用户的 LaunchAgent 会与新的登录项同时生效，登录时启动两份实例。
-///
-/// **刻意不调用 `launchctl bootout`**：`bootout` 会终止该作业的进程，
-/// 而当前实例有可能正是本次登录由该 LaunchAgent 启动的 —— 那等于「切换自启动开关时把
-/// 正在使用的应用杀掉」。只删文件即可：已加载的作业本次会话不会再触发（`KeepAlive` 为假），
-/// 下次登录时 plist 已不存在，自然不会重复启动。
-fn cleanup_legacy_agent() {
-    let plist = legacy_plist_path();
-    if plist.exists() {
-        let _ = fs::remove_file(&plist);
+/// 只按「注册表里有没有这一条」判定，不校验路径是否仍指向当前可执行文件：
+/// 用户可能手动改过路径，此时界面应如实显示「已启用」，由用户自行决定是否重设。
+fn login_item_status() -> LoginItemStatus {
+    match run_key(false) {
+        Ok(key) => match key.get_value::<String, _>(VALUE_NAME) {
+            Ok(value) if !value.trim().is_empty() => LoginItemStatus::Enabled,
+            _ => LoginItemStatus::NotRegistered,
+        },
+        // 注册表键打不开（策略限制等）时无法判定，如实上报而不是假装未启用。
+        Err(_) => LoginItemStatus::NotFound,
     }
 }
 
-fn escape_xml(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-/// macOS 12 及更早的兜底：只写 plist，**不调用 launchctl**。
+/// 把可执行路径包装成注册表命令行。
 ///
-/// `~/Library/LaunchAgents` 下的 plist 会在下次登录时被 launchd 自动读取，
-/// 因此不需要（也不应该）手动 bootstrap —— 那会立刻拉起一份新实例。
-fn legacy_set_auto_launch(enabled: bool) -> Result<(), String> {
-    let plist = legacy_plist_path();
-    if !enabled {
-        cleanup_legacy_agent();
-        return Ok(());
-    }
-
-    let executable = std::env::current_exe()
-        .map_err(|error| tf("autolaunch.exe_path_failed", &[("error", &error)]))?;
-    if let Some(parent) = plist.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| tf("autolaunch.create_dir_failed", &[("error", &error)]))?;
-    }
-    let executable = escape_xml(&executable.to_string_lossy());
-    let contents = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>{LEGACY_LABEL}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{executable}</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <false/>
-</dict>
-</plist>
-"#
-    );
-    fs::write(&plist, contents)
-        .map_err(|error| tf("autolaunch.write_plist_failed", &[("error", &error)]))
+/// 安装目录名可能含空格（`AstraBrew Launcher`），因此必须加引号，
+/// 否则系统会把路径在第一个空格处截断，导致登录时启动失败。
+fn quoted_command(executable: &PathBuf) -> String {
+    format!("\"{}\"", executable.display())
 }
 
 /// 设置开机自启动的结果。
+///
+/// Windows 的注册表启动项无需用户批准，因此只有「已生效」一种结果；
+/// 保留枚举是为了让调用方显式处理返回值，将来若引入更高权限的
+/// 启动方式（如计划任务）也能平滑扩展。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoLaunchOutcome {
     /// 已按预期生效。
     Applied,
-    /// 已登记为登录项，但需要用户在「系统设置 → 登录项」中允许后才真正生效。
-    NeedsApproval,
 }
 
 /// 设置开机自启动。
+///
+/// 启用：把当前可执行文件的绝对路径写入 `Run` 键；
+/// 禁用：删除该注册表值（不存在时也视为成功）。
 pub fn set_auto_launch(enabled: bool) -> Result<AutoLaunchOutcome, String> {
-    // 老版本遗留的 LaunchAgent 一律清掉，避免登录时启动两份。
-    cleanup_legacy_agent();
-
-    let Some(service) = main_app_service() else {
-        legacy_set_auto_launch(enabled)?;
-        return Ok(AutoLaunchOutcome::Applied);
-    };
-
     if !enabled {
-        // 本来就没注册过时注销会失败，这不是错误。
-        if !unregister(service) && login_item_status().is_active() {
-            return Err(t("autolaunch.register_failed").to_owned());
+        let key = run_key(true)?;
+        // 删除不存在的值会返回 NotFound，这属于正常的「已经是关闭状态」。
+        if let Err(error) = key.delete_value(VALUE_NAME)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(tf("autolaunch.unregister_failed", &[("error", &error)]));
         }
         return Ok(AutoLaunchOutcome::Applied);
     }
 
-    // 已经是登录项（含「待批准」）就不用重复注册。
-    if !login_item_status().is_active() && !register(service) {
-        return Err(match login_item_status() {
-            LoginItemStatus::NotFound => t("autolaunch.register_not_found").to_owned(),
-            _ => t("autolaunch.register_failed").to_owned(),
-        });
-    }
+    let executable = std::env::current_exe()
+        .map_err(|error| tf("autolaunch.exe_path_failed", &[("error", &error)]))?;
+    let key = run_key(true)?;
+    key.set_value(VALUE_NAME, &quoted_command(&executable))
+        .map_err(|error| tf("autolaunch.register_failed_reason", &[("error", &error)]))?;
 
-    Ok(match login_item_status() {
-        LoginItemStatus::RequiresApproval => AutoLaunchOutcome::NeedsApproval,
-        _ => AutoLaunchOutcome::Applied,
-    })
+    Ok(AutoLaunchOutcome::Applied)
 }
 
 /// 当前是否已经启用开机自启动。
 pub fn is_auto_launch_enabled() -> bool {
-    let status = login_item_status();
-    if status.is_active() {
-        return true;
-    }
-    // 系统不支持原生登录项时，以历史 LaunchAgent 是否存在为准。
-    matches!(status, LoginItemStatus::Unsupported) && legacy_plist_path().exists()
+    login_item_status().is_active()
 }
 
-/// 打开系统设置中的「登录项」页面。
+/// 打开系统的「启动应用」设置页。
+///
+/// Windows 11 的「设置 → 应用 → 启动」与 Windows 10 的「启动」页
+/// 使用同一个 URI 协议，直接交给 `explorer` 打开即可。
 pub fn open_login_item_settings() -> Result<(), String> {
-    let status = Command::new("open")
-        .arg("x-apple.systempreferences:com.apple.LoginItems-Settings.extension")
+    let mut command = Command::new("explorer.exe");
+    command.arg("ms-settings:startupapps");
+    crate::core::env::apply_no_window_to_command(&mut command);
+    let status = command
         .status()
         .map_err(|error| tf("autolaunch.open_settings_failed", &[("error", &error)]))?;
     if status.success() {
@@ -265,32 +144,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn legacy_plist_path_points_into_launch_agents() {
-        assert!(legacy_plist_path().ends_with("com.astrabrew.launcher.plist"));
-    }
-
-    #[test]
-    fn status_maps_native_values() {
-        assert_eq!(LoginItemStatus::from_raw(0), LoginItemStatus::NotRegistered);
-        assert_eq!(LoginItemStatus::from_raw(1), LoginItemStatus::Enabled);
-        assert_eq!(
-            LoginItemStatus::from_raw(2),
-            LoginItemStatus::RequiresApproval
-        );
-        assert_eq!(LoginItemStatus::from_raw(3), LoginItemStatus::NotFound);
-        assert_eq!(LoginItemStatus::from_raw(99), LoginItemStatus::NotRegistered);
+    fn status_is_active_only_when_enabled() {
+        assert!(LoginItemStatus::Enabled.is_active());
+        assert!(!LoginItemStatus::NotRegistered.is_active());
+        // 注册表不可读时不能当作「已启用」，否则界面会骗用户。
+        assert!(!LoginItemStatus::NotFound.is_active());
     }
 
     #[test]
     fn outcome_is_comparable() {
         assert_eq!(AutoLaunchOutcome::Applied, AutoLaunchOutcome::Applied);
-        assert_ne!(AutoLaunchOutcome::Applied, AutoLaunchOutcome::NeedsApproval);
+    }
+
+    /// 路径含空格时必须加引号，否则登录时会被截断成非法命令。
+    #[test]
+    fn command_is_quoted_for_paths_with_spaces() {
+        let executable = PathBuf::from(r"C:\Users\tester\AppData\Local\AstraBrew Launcher\launcher.exe");
+        let command = quoted_command(&executable);
+        assert!(command.starts_with('"'));
+        assert!(command.ends_with('"'));
+        assert!(command.contains("AstraBrew Launcher"));
     }
 
     #[test]
-    fn approval_counts_as_active() {
-        assert!(LoginItemStatus::Enabled.is_active());
-        assert!(LoginItemStatus::RequiresApproval.is_active());
-        assert!(!LoginItemStatus::NotRegistered.is_active());
+    fn run_key_points_into_current_user_hive() {
+        // 只验证常量拼写，避免误写成 HKLM 导致需要管理员权限。
+        assert!(RUN_KEY.starts_with("Software\\Microsoft\\Windows\\CurrentVersion"));
+        assert!(!VALUE_NAME.is_empty());
     }
 }

@@ -1,7 +1,7 @@
-//! 工具函数模块 — macOS 标准路径管理
+//! 工具函数模块 — Windows 标准路径管理
 //!
 //! ```text
-//! ~/Library/Application Support/AstraBrew Launcher/    ← 根目录 (root)
+//! %AppData%/AstraBrew Launcher/   ← 根目录 (root)
 //! ├── data/                   ← 软件数据目录
 //! │   ├── default/            ← 默认数据子目录
 //! │   │   └── sillytavern/        ← 酒馆数据子目录
@@ -13,17 +13,16 @@
 //! │   │       └── default-user/
 //! │   │           └── settings.json ← 全局模式酒馆WebUI设置
 //! │   └── local_instances.json
+//! ├── logs/                   ← 软件日志目录
 //! ├── sillytavern/            ← 酒馆核心文件目录 (ST installation) (在线下载实例)
+//! ├── lib/                    ← 内置环境目录 (NodeJS、MinGit、PM2、Caddy、WebView2)
 //! └── config.json             ← 启动器配置文件
 //!
-//! ~/Library/Logs/AstraBrew Launcher/      ← 日志目录 (logs)
-//!
-//! ~/Library/Caches/AstraBrew Launcher/    ← 缓存目录 (caches)
-//!
-//! /tmp/AstraBrew Launcher/                ← 临时目录 (temp)
+//! %Temp%/astrabrew-launcher/        ← 临时目录 (temp)
+//! └── caches/                       ← 缓存目录 (caches)
 //! ```
 //!
-//! 开发构建与打包版本统一使用 macOS 规范目录，避免日志散落在项目目录。
+//! 开发构建与打包版本统一使用 Windows 规范目录，避免日志散落在项目目录。
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -1181,22 +1180,117 @@ pub const TEMPLATE_TAVERN_SETTINGS_JSON: &str = r#####"{
 }"#####;
 
 // ============================================================================
+// 用户路径展开
+// ============================================================================
+
+/// 展开用户路径中的环境变量与家目录前缀。
+///
+/// 支持三种写法，并且可以混用：
+/// - `%APPDATA%` / `%TEMP%` / `%USERPROFILE%` 等 Windows 环境变量（不区分大小写）
+/// - `~/` 家目录前缀（兼容从旧版本迁移过来的配置）
+/// - 普通绝对路径（原样返回）
+///
+/// 展开失败的变量保持原样，避免把配置值改坏。
+pub fn expand_user_path(path: &str) -> PathBuf {
+    let mut result = path.trim().to_owned();
+
+    // 1) 展开 `%VAR%` 形式的环境变量
+    while let Some(start) = result.find('%') {
+        let Some(offset) = result[start + 1..].find('%') else {
+            break;
+        };
+        let end = start + 1 + offset;
+        let name = &result[start + 1..end];
+        if name.is_empty() {
+            break;
+        }
+        let Ok(value) = std::env::var(name) else {
+            break;
+        };
+        let mut next = String::with_capacity(result.len());
+        next.push_str(&result[..start]);
+        next.push_str(&value);
+        next.push_str(&result[end + 1..]);
+        if next == result {
+            break;
+        }
+        result = next;
+    }
+
+    // 2) 展开 `~/` 家目录前缀（旧版本配置中可能残留）
+    if let Some(rest) = result.strip_prefix("~/") {
+        let home = std::env::var("USERPROFILE")
+            .map(PathBuf::from)
+            .or_else(|_| std::env::var("APPDATA").map(PathBuf::from));
+        if let Ok(home) = home {
+            return home.join(rest);
+        }
+    }
+
+    PathBuf::from(result)
+}
+
+/// 用户「下载」文件夹的路径。
+///
+/// 优先读注册表里的已知文件夹 —— 用户可能把「下载」重定向到了其他盘，
+/// 而且中文系统上该目录实际名为「下载」而不是 `Downloads`，只有注册表能给出正确路径。
+/// 查询失败时退回 `%USERPROFILE%\Downloads`。
+///
+/// 本启动器仅支持 Windows，`winreg` 也就只在该目标下存在，故整函数做平台门控。
+#[cfg(target_os = "windows")]
+pub fn user_downloads_dir() -> PathBuf {
+    const SHELL_FOLDERS_KEY: &str =
+        r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders";
+    /// 「下载」目录的 KNOWNFOLDERID，值为环境变量引用形式（如 `%USERPROFILE%\Downloads`）。
+    const DOWNLOADS_GUID: &str = "{374DE290-123F-4565-9164-39C4925E467B}";
+
+    if let Ok(key) = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey(SHELL_FOLDERS_KEY)
+        && let Ok(raw) = key.get_value::<String, _>(DOWNLOADS_GUID)
+    {
+        let path = expand_user_path(&raw);
+        if path.is_absolute() {
+            return path;
+        }
+    }
+
+    std::env::var("USERPROFILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("C:\\"))
+        .join("Downloads")
+}
+
+// ============================================================================
 // AppPaths — 全局路径管理器
 // ============================================================================
 
-/// 应用所有标准 macOS 路径的集中管理器
+/// 应用所有标准 Windows 路径的集中管理器。
+///
+/// 目录布局（与项目规范一致）：
+/// ```text
+/// %AppData%/AstraBrew Launcher/        ← root
+/// ├── data/                            ← 软件数据目录
+/// ├── logs/                            ← 软件日志目录
+/// ├── sillytavern/                     ← 酒馆核心文件目录
+/// ├── lib/                             ← 内置环境（NodeJS / MinGit / PM2 / Caddy / WebView2）
+/// └── config.json                      ← 启动器配置文件
+/// %Temp%/astrabrew-launcher/           ← temp
+/// └── caches/                          ← 缓存目录（API 数据缓存等）
+/// ```
 #[derive(Debug, Clone)]
 pub struct AppPaths {
-    /// `~/Library/Application Support/AstraBrew Launcher/`
+    /// `%AppData%/AstraBrew Launcher/`
     pub root: PathBuf,
-    /// `~/Library/Logs/AstraBrew Launcher/`
+    /// `%AppData%/AstraBrew Launcher/logs/`
     pub logs: PathBuf,
-    /// `~/Library/Caches/AstraBrew Launcher/`
+    /// `%Temp%/astrabrew-launcher/caches/`
     pub caches: PathBuf,
-    /// `/tmp/AstraBrew Launcher/`
+    /// `%Temp%/astrabrew-launcher/`
     pub temp: PathBuf,
-    /// `~/Library/Application Support/AstraBrew Launcher/data/` — 软件数据目录
+    /// `%AppData%/AstraBrew Launcher/data/` — 软件数据目录
     pub data: PathBuf,
+    /// `%AppData%/AstraBrew Launcher/lib/` — 内置环境目录
+    pub lib: PathBuf,
 }
 
 /// 全局单例
@@ -1217,42 +1311,45 @@ impl AppPaths {
     // -- 初始化 --
 
     fn init() -> Self {
-        // 无论开发构建还是打包版本，日志、缓存和数据都遵循 macOS 规范目录。
+        // 无论开发构建还是打包版本，数据与日志都放在用户漫游配置目录，
+        // 缓存与临时文件放在系统临时目录，避免污染用户目录。
         let root = Self::prod_root();
+        let temp = Self::temp_root();
         Self {
             data: root.join("data"),
+            logs: root.join("logs"),
+            lib: root.join("lib"),
             root,
-            logs: Self::logs_root(),
-            caches: Self::cache_root(),
-            temp: Self::temp_root(),
+            caches: temp.join("caches"),
+            temp,
         }
     }
 
-    // -- 生产模式 macOS 标准路径 --
+    // -- 生产模式 Windows 标准路径 --
 
+    /// 软件根目录：`%AppData%/AstraBrew Launcher/`
     fn prod_root() -> PathBuf {
-        Self::home().join("Library").join("Application Support").join("AstraBrew Launcher")
+        PathBuf::from(std::env::var("APPDATA").unwrap_or_else(|_| ".".into()))
+            .join("AstraBrew Launcher")
     }
 
-    fn logs_root() -> PathBuf {
-        Self::home().join("Library").join("Logs").join("AstraBrew Launcher")
-    }
-
-    fn cache_root() -> PathBuf {
-        Self::home().join("Library").join("Caches").join("AstraBrew Launcher")
-    }
-
+    /// 临时目录：`%Temp%/astrabrew-launcher/`
     fn temp_root() -> PathBuf {
-        PathBuf::from("/tmp").join("AstraBrew Launcher")
-    }
-
-    fn home() -> PathBuf {
-        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
+        // `std::env::temp_dir()` 会依次回退 TMP / TEMP / USERPROFILE，
+        // 比只读 TEMP 更稳妥。
+        std::env::temp_dir().join("astrabrew-launcher")
     }
 
     /// 创建所有必要的目录
     fn ensure_dirs(&self) {
-        for dir in [&self.root, &self.logs, &self.caches, &self.temp, &self.data] {
+        for dir in [
+            &self.root,
+            &self.logs,
+            &self.caches,
+            &self.temp,
+            &self.data,
+            &self.lib,
+        ] {
             let _ = std::fs::create_dir_all(dir);
         }
         // 确保子目录
@@ -1263,6 +1360,10 @@ impl AppPaths {
             self.data.join("sillytavern").join("data"),
         ] {
             let _ = std::fs::create_dir_all(&sub);
+        }
+        // 内置环境子目录：提前建好，安装流程可直接落盘。
+        for sub in ["nodejs", "git", "caddy", "pm2"] {
+            let _ = std::fs::create_dir_all(self.lib.join(sub));
         }
     }
 
@@ -1283,9 +1384,9 @@ impl AppPaths {
         self.logs.join("sillytavern.latest.log")
     }
 
-    /// 启动器配置文件: `root/settings.json`
+    /// 启动器配置文件: `root/config.json`
     pub fn settings_file(&self) -> PathBuf {
-        self.root.join("settings.json")
+        self.root.join("config.json")
     }
 
     /// 本地实例列表: `root/data/local_instances.json`
@@ -1313,5 +1414,34 @@ impl AppPaths {
             let _ = std::fs::create_dir_all(parent);
         }
         let _ = std::fs::write(&file, TEMPLATE_TAVERN_SETTINGS_JSON);
+    }
+}
+
+/// 测试辅助：跨平台创建符号链接。
+///
+/// Windows 创建符号链接需要「开发者模式」或管理员权限；没有权限时
+/// 返回 `false`，让调用方跳过依赖符号链接的用例，而不是让整个测试套件失败。
+#[cfg(test)]
+pub(crate) fn try_symlink_dir(target: &std::path::Path, link: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target, link).is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+}
+
+/// 测试辅助：跨平台创建文件符号链接；无权限时返回 `false`。
+#[cfg(test)]
+pub(crate) fn try_symlink_file(target: &std::path::Path, link: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(target, link).is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        std::os::unix::fs::symlink(target, link).is_ok()
     }
 }

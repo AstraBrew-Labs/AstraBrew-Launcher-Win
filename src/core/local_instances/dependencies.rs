@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use super::{DependencyStatus, LocalError, LocalErrorKind, inspect_package, online_dir};
+use crate::core::settings::EnvSource;
 use serde_json::Value;
 
 pub struct CommandOutput {
@@ -179,14 +180,20 @@ fn analyze_tree(tree: &Value, success: bool) -> Result<DependencyStatus, LocalEr
     Ok(DependencyStatus::Ready)
 }
 
-/// 与环境页共享命令解析，兼容未链接到全局 bin 的 Homebrew node@24。
-fn node_command(name: &str) -> Command {
-    crate::core::settings::env_detect::cmd(name)
+/// 按当前环境来源构建 node / npm 命令。
+///
+/// 内置环境使用 `lib/nodejs/` 中的 node 与 npm.cmd；系统环境走 `where` 解析。
+fn node_command(name: &str, source: EnvSource) -> Command {
+    crate::core::settings::env_detect::command_for(name, source)
 }
 
-pub fn check(path: &Path, cancel: &AtomicBool) -> Result<DependencyStatus, LocalError> {
+pub fn check(
+    path: &Path,
+    source: EnvSource,
+    cancel: &AtomicBool,
+) -> Result<DependencyStatus, LocalError> {
     inspect_package(&path.join("package.json"), &online_dir())?;
-    let mut command = node_command("npm");
+    let mut command = node_command("npm", source);
     command.current_dir(path).args([
         "ls",
         "--all",
@@ -213,12 +220,13 @@ pub fn install(
     registry: &str,
     proxy_mode: &str,
     proxy_host: &str,
+    source: EnvSource,
     cancel: &AtomicBool,
     log: impl FnMut(String),
 ) -> Result<DependencyStatus, LocalError> {
     inspect_package(&path.join("package.json"), &online_dir())?;
     for tool in ["node", "npm"] {
-        let mut probe = node_command(tool);
+        let mut probe = node_command(tool, source);
         probe.arg("--version");
         let output = capture(probe, None, Duration::from_secs(15), cancel)
             .map_err(|error| LocalError::new("local.deps.need_nodejs", error.detail))?;
@@ -229,7 +237,7 @@ pub fn install(
             ));
         }
     }
-    let mut command = node_command("npm");
+    let mut command = node_command("npm", source);
     command.current_dir(path).args(["install", "--omit=dev"]);
     if !registry.trim().is_empty() {
         command.env("npm_config_registry", registry);
@@ -237,7 +245,7 @@ pub fn install(
     crate::core::network::configure_npm_proxy(&mut command, proxy_mode, proxy_host);
     crate::core::network::run_logged_command(command, cancel, log)
         .map_err(|error| LocalError::new("local.deps.install_failed", error))?;
-    let status = check(path, cancel)?;
+    let status = check(path, source, cancel)?;
     if status != DependencyStatus::Ready {
         return Err(LocalError::new("local.deps.incomplete_after_install", ""));
     }

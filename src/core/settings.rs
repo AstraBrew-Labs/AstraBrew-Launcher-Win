@@ -4,6 +4,8 @@
 //! 其他字段，避免新旧版本交替使用时丢失尚未迁移的设置。
 
 pub(crate) mod env_detect;
+pub(crate) mod install;
+pub(crate) mod webview2;
 
 use std::fmt;
 use std::fs;
@@ -13,14 +15,18 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-/// 全局酒馆数据目录遵循启动器统一的 Application Support 目录规范。
+/// 全局酒馆数据目录遵循启动器统一的 AppData 目录规范。
 pub(crate) const DEFAULT_GLOBAL_DATA_PATH: &str =
-    "~/Library/Application Support/AstraBrew Launcher/data/sillytavern/data";
+    "%APPDATA%/AstraBrew Launcher/data/sillytavern/data";
 
 /// 历史版本使用过的错误默认目录；只迁移这些精确值，不覆盖用户自定义路径。
+///
+/// 前两条是 macOS 版本的旧值，保留在此是为了让从 macOS 版本迁移过来的用户
+/// 配置能被自动纠正到规范路径（属于历史数据兼容，不属于平台代码）。
 const LEGACY_GLOBAL_DATA_PATHS: &[&str] = &[
     "~/Library/Application Support/AstraBrew/data",
     "~/Library/Application Support/AstraBrew Launcher/data/sillytavern",
+    "%APPDATA%/AstraBrew Launcher/data/sillytavern",
 ];
 
 /// 启动器显示语言。
@@ -79,6 +85,40 @@ impl fmt::Display for ThemeMode {
     }
 }
 
+/// 环境来源：使用系统 PATH 中的工具，还是软件内置的 `lib/` 环境。
+///
+/// 定义在核心层而非界面层，因为进程启动、依赖检查、PM2 管理等核心模块
+/// 都需要按来源解析可执行文件路径；界面层只负责展示与切换。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum EnvSource {
+    /// 使用软件内置的 `lib/` 环境（默认，开箱即用）。
+    #[default]
+    Builtin,
+    /// 使用系统 PATH 中已安装的工具。
+    System,
+}
+
+impl EnvSource {
+    /// 从配置文件中的字符串还原；不认识的取值回落到默认（内置）。
+    ///
+    /// 中文取值属于历史数据兼容别名（旧版本曾直接持久化展示文案），
+    /// 属于数据不是文案，必须保留。
+    pub fn from_key(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "system" | "env_mode_system" | "系统" | "系统环境" => Self::System,
+            _ => Self::Builtin,
+        }
+    }
+
+    /// 持久化到配置文件时使用的字符串。
+    pub const fn storage_key(self) -> &'static str {
+        match self {
+            Self::Builtin => "builtin",
+            Self::System => "system",
+        }
+    }
+}
+
 /// 已接入持久化的用户偏好。
 #[derive(Debug, Clone, PartialEq)]
 pub struct PersistentPreferences {
@@ -121,6 +161,8 @@ pub struct PersistentPreferences {
     pub allow_tavern_background: bool,
     /// 是否在控制台展示完整启动命令。
     pub show_startup_command: bool,
+    /// 环境来源：内置 `lib/` 环境或系统 PATH 环境。
+    pub env_mode: EnvSource,
     /// 用户是否已经确认过 staging 开发版风险提示。
     pub staging_risk_confirmed: bool,
 }
@@ -150,6 +192,7 @@ impl Default for PersistentPreferences {
             auto_stop_tavern_on_window_close: true,
             allow_tavern_background: false,
             show_startup_command: false,
+            env_mode: EnvSource::Builtin,
             staging_risk_confirmed: false,
         }
     }
@@ -163,9 +206,11 @@ pub struct SettingsStore {
 }
 
 impl SettingsStore {
-    /// 从默认的 macOS Application Support 目录加载配置。
+    /// 从默认的 `%AppData%/AstraBrew Launcher/config.json` 加载配置。
     pub fn load_default() -> (Self, PersistentPreferences) {
-        Self::load(default_settings_path())
+        let path = default_settings_path();
+        migrate_legacy_settings_file(&path);
+        Self::load(path)
     }
 
     /// 从指定路径加载配置，便于测试时隔离真实用户数据。
@@ -256,6 +301,10 @@ impl SettingsStore {
             Value::Bool(preferences.show_startup_command),
         );
         self.document.insert(
+            "env_mode".into(),
+            Value::String(preferences.env_mode.storage_key().to_owned()),
+        );
+        self.document.insert(
             "staging_risk_confirmed".into(),
             Value::Bool(preferences.staging_risk_confirmed),
         );
@@ -289,6 +338,8 @@ impl SettingsStore {
             "serverModeEnabled",
             "serverServiceMode",
             "stagingRiskConfirmed",
+            "envMode",
+            "env_source",
         ] {
             self.document.remove(key);
         }
@@ -464,6 +515,13 @@ fn preferences_from_document(document: &Map<String, Value>) -> PersistentPrefere
         .or_else(|| document.get("showStartupCommand"))
         .and_then(Value::as_bool)
         .unwrap_or(defaults.show_startup_command);
+    let env_mode = document
+        .get("env_mode")
+        .or_else(|| document.get("envMode"))
+        .or_else(|| document.get("env_source"))
+        .and_then(Value::as_str)
+        .map(EnvSource::from_key)
+        .unwrap_or(defaults.env_mode);
     let staging_risk_confirmed = document
         .get("staging_risk_confirmed")
         .or_else(|| document.get("stagingRiskConfirmed"))
@@ -493,6 +551,7 @@ fn preferences_from_document(document: &Map<String, Value>) -> PersistentPrefere
         auto_stop_tavern_on_window_close,
         allow_tavern_background,
         show_startup_command,
+        env_mode,
         staging_risk_confirmed,
     }
 }
@@ -538,11 +597,8 @@ fn normalize_global_data_path(value: &str) -> String {
         if value == *legacy {
             return true;
         }
-        let Some(home) = std::env::var_os("HOME") else {
-            return false;
-        };
-        let expanded = PathBuf::from(home).join(legacy.trim_start_matches("~/"));
-        Path::new(value) == expanded
+        // 旧值可能是已展开的绝对路径，这里按同一规则展开后比较。
+        Path::new(value) == crate::utils::expand_user_path(legacy)
     });
     if is_legacy {
         DEFAULT_GLOBAL_DATA_PATH.to_owned()
@@ -582,6 +638,24 @@ fn legacy_proxy_type(value: &str) -> &'static str {
 
 fn default_settings_path() -> PathBuf {
     crate::utils::app_paths().settings_file()
+}
+
+/// 把旧版本遗留的 `settings.json` 迁移为当前的 `config.json`。
+///
+/// 仅在新文件不存在、旧文件存在时执行一次，避免覆盖用户已有配置。
+/// 迁移失败时静默继续——最坏情况是用户重新配置，不会丢失或破坏数据。
+fn migrate_legacy_settings_file(target: &Path) {
+    const LEGACY_FILE_NAME: &str = "settings.json";
+    if target.exists() {
+        return;
+    }
+    let Some(parent) = target.parent() else {
+        return;
+    };
+    let legacy = parent.join(LEGACY_FILE_NAME);
+    if legacy.exists() {
+        let _ = fs::rename(&legacy, target);
+    }
 }
 
 fn temporary_path(path: &Path) -> PathBuf {

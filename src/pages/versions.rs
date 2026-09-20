@@ -912,11 +912,14 @@ fn append_log(logs: &mut String, line: &str) {
     }
 }
 
-/// 在线酒馆统一安装目录，与 ai.md 中的目录规范保持一致。
+/// 在线酒馆统一安装目录，与 AGENTS.md 中的目录规范保持一致。
 fn online_instance_path() -> String {
-    // 安装服务会在这个绝对路径中执行 Git 与 npm 命令。
-    let home = std::env::var("HOME").unwrap_or_else(|_| "~".into());
-    format!("{home}/Library/Application Support/AstraBrew Launcher/sillytavern")
+    // 安装服务会在这个绝对路径中执行 Git 与 npm 命令，
+    // 因此必须用启动器的标准目录而不是拼接用户主目录，避免与实例记录对不上。
+    crate::utils::app_paths()
+        .sillytavern_dir()
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// 渲染版本管理页面。
@@ -2349,7 +2352,7 @@ mod tests {
     #[test]
     fn current_local_instance_cannot_be_removed() {
         let mut state = VersionState::default();
-        let path = "/tmp/example-tavern".to_owned();
+        let path = r"C:\AstraBrew\tavern".to_owned();
         state.local_instances.push(super::LocalInstance {
             path: path.clone(),
             version: "1".into(),

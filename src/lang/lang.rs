@@ -192,25 +192,53 @@ fn interpolate(template: &str, args: &[(&str, &dyn ToString)]) -> String {
     result
 }
 
-/// 根据 macOS 首选语言解析系统语言，无法识别时回退英文。
+/// 读取系统首选语言，无法识别时回退英文。
+///
+/// Windows 上通过 `GetUserDefaultLocaleName` 取 BCP-47 语言标签
+/// （如 `zh-CN`、`en-US`）；该接口不依赖控制台，也不会拉起子进程。
 fn detect_system_language() -> Language {
+    if let Some(locale) = user_default_locale() {
+        let lowered = locale.to_ascii_lowercase();
+        // `zh`、`zh-CN`、`zh-Hans` 等一律视为中文。
+        if lowered == "zh" || lowered.starts_with("zh-") {
+            return Language::Chinese;
+        }
+        return Language::English;
+    }
+
+    // 环境变量兜底：某些精简环境（如 CI）取不到区域设置。
     if let Ok(locale) = std::env::var("LANG")
         && locale.to_ascii_lowercase().starts_with("zh")
     {
         return Language::Chinese;
     }
 
-    if let Ok(output) = std::process::Command::new("defaults")
-        .args(["read", "-g", "AppleLanguages"])
-        .output()
-        && String::from_utf8_lossy(&output.stdout)
-            .to_ascii_lowercase()
-            .contains("zh")
-    {
-        return Language::Chinese;
-    }
-
     Language::English
+}
+
+/// 调用 `GetUserDefaultLocaleName` 取当前用户的区域名称。
+///
+/// 失败（返回值 <= 0）或结果非 UTF-16 时返回 `None`。
+#[cfg(windows)]
+fn user_default_locale() -> Option<String> {
+    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+
+    // 区域名称最长 85 字节（含结尾 NUL）；留出余量避免边界问题。
+    let mut buffer = [0_u16; 128];
+    // SAFETY: 缓冲区在调用期间存活，长度以 u16 元素个数计，与 API 约定一致。
+    let written = unsafe { GetUserDefaultLocaleName(buffer.as_mut_ptr(), buffer.len() as i32) };
+    if written <= 0 {
+        return None;
+    }
+    // `written` 包含结尾 NUL，需剔除后再解码。
+    let length = (written as usize).saturating_sub(1);
+    String::from_utf16(&buffer[..length]).ok()
+}
+
+/// 非 Windows 平台不做系统语言识别，直接回退英文。
+#[cfg(not(windows))]
+fn user_default_locale() -> Option<String> {
+    None
 }
 
 #[cfg(test)]

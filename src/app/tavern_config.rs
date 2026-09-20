@@ -1221,6 +1221,10 @@ mod tests {
             font_load_request_id: 0,
             font_load_pending: 0,
             font_load_failed: false,
+            environment_detect_receiver: None,
+            window_size: iced::Size::new(1280.0, 720.0),
+            main_window_id: None,
+            monitor_relocated: false,
             environment_task_receiver: None,
             environment_task_cancel: None,
             nodejs_required_visible: false,
@@ -1244,17 +1248,17 @@ mod tests {
             global_notices: Default::default(),
             global_notice_serial: 0,
             pending_console_launch: false,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview: None,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_suppressed: false,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_ready: false,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_retry_count: 0,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_retry_at: None,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_load_deadline: None,
             settings_store: SettingsStore::load(settings_path).0,
             window_position: None,

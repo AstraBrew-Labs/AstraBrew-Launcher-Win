@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::core::settings::EnvSource;
+
 const GITHUB_CLONE_URL: &str = "https://github.com/SillyTavern/SillyTavern.git";
 const GITHUB_DOWNLOAD_URL: &str =
     "https://github.com/SillyTavern/SillyTavern/archive/refs/tags/1.18.0.tar.gz";
@@ -128,7 +130,10 @@ pub enum DownloadChannelTestEvent {
     },
 }
 
-/// 自动下载渠道测速结果的缓存，保存在 macOS 的 Caches 目录而不是设置目录。
+/// 自动下载渠道测速结果的缓存。
+///
+/// 实际落盘位置由 [`download_channel_cache_path`] 决定，是软件根目录而不是 Caches：
+/// 测速结果决定「自动」渠道解析成哪个镜像，属于需要跨启动保留的数据。
 #[derive(Debug, Clone)]
 pub struct DownloadChannelCache {
     pub resolved_channel: DownloadChannel,
@@ -143,30 +148,22 @@ impl DownloadChannelCache {
     }
 }
 
-fn cache_home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-}
-
-/// 自动下载渠道缓存文件：`~/Library/Application Support/AstraBrew Launcher/download_channel_cache.json`。
+/// 自动下载渠道缓存文件：`%AppData%/AstraBrew Launcher/download_channel_cache.json`。
 ///
-/// 放在数据目录而不是 Caches：测速结果决定“自动”渠道解析成哪个镜像，属于需要跨启动保留的数据；
-/// 放进 Caches 会被系统或清理工具删除，表现为每次打开程序都要重新测速。
+/// 放在软件根目录而不是临时目录：测速结果决定「自动」渠道解析成哪个镜像，属于需要跨启动保留的数据；
+/// 放进 `%Temp%` 会被系统或清理工具删除，表现为每次打开程序都要重新测速。
 pub fn download_channel_cache_path() -> PathBuf {
     crate::utils::app_paths()
         .root
         .join("download_channel_cache.json")
 }
 
-/// 旧版缓存路径：`~/Library/Caches/AstraBrew Launcher/download_channel_cache.json`。
+/// 旧版缓存路径：`%Temp%/astrabrew-launcher/caches/download_channel_cache.json`。
 ///
 /// 只用于升级后读取一次历史结果，避免用户白白重新测速一次。
 fn legacy_download_channel_cache_path() -> PathBuf {
-    cache_home_dir()
-        .join("Library")
-        .join("Caches")
-        .join(TEST_ROOT_DIR)
+    crate::utils::app_paths()
+        .caches
         .join("download_channel_cache.json")
 }
 
@@ -276,75 +273,173 @@ pub fn cache_download_channel_result(
     save_download_channel_cache(selected, results).map(Some)
 }
 
-/// 通过 `scutil --proxy` 读取 macOS 系统代理设置。
+/// 读取 Windows 系统代理设置。
 ///
-/// 优先 HTTPS 代理，回退 HTTP 代理；如果系统代理明确未启用，返回
-/// `Some(("".to_owned(), false))`，读取失败时回退环境变量。
+/// 返回 `Some((代理地址, 是否启用))`：代理地址可能是空串（表示「用户明确禁用了代理」），
+/// 与 `None`（读取失败，调用方应自行兜底）语义不同。
+///
+/// 优先级从高到低：
+/// 1. 环境变量 `HTTPS_PROXY` / `HTTP_PROXY`（用户手动覆盖，务必最高优先）；
+/// 2. IE/WinINET 注册表代理 —— 用户在「设置 → 网络和 Internet → 代理」里配的就是这里；
+/// 3. WinHTTP 代理（`netsh winhttp show proxy`），通常只服务系统组件，作为最后回退。
 pub fn read_system_proxy() -> Option<(String, bool)> {
-    if let Some(output) = Command::new("scutil").arg("--proxy").output().ok()
-        && output.status.success()
-    {
-        let text = String::from_utf8_lossy(&output.stdout);
-        let text_lower = text.to_lowercase();
-        if !text_lower.contains("not configured") && !text_lower.contains("no such") {
-            let parsed = parse_system_proxy_output(&text);
-            if let Some(proxy) = parsed.active_proxy {
-                return Some((proxy, true));
-            }
-            if let Some(server) = environment_proxy() {
-                return Some((server, true));
-            }
-            if parsed.configured {
-                return Some((String::new(), false));
+    if let Some(server) = environment_proxy() {
+        return Some((server, true));
+    }
+    if let Some(result) = read_registry_proxy() {
+        return Some(result);
+    }
+    read_winhttp_proxy()
+}
+
+/// 从 IE/WinINET 注册表读取代理设置。
+///
+/// 注册表路径：`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`
+/// - `ProxyEnable`（REG_DWORD）：0 = 禁用，非 0 = 启用；
+/// - `ProxyServer`（REG_SZ）：`127.0.0.1:7890` 或 `http=host:port;https=host:port`。
+///
+/// 读到 `ProxyEnable = 0` 时返回 `None` 而不是空串：此时用户是明确关了代理，
+/// 后续的 WinHTTP 回退不该被跳过，仍要试一次。
+fn read_registry_proxy() -> Option<(String, bool)> {
+    let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
+    let subkey = hkcu
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+        .ok()?;
+
+    let enabled: u32 = subkey.get_value("ProxyEnable").unwrap_or(0);
+    if enabled == 0 {
+        return None;
+    }
+
+    let server: String = subkey.get_value("ProxyServer").ok()?;
+    let address = resolve_proxy_server(&server);
+    if address.is_empty() {
+        return None;
+    }
+    Some((address, true))
+}
+
+/// 从 `ProxyServer` 值里解析出可用的代理地址。
+///
+/// 支持两种格式：
+/// - `127.0.0.1:7890` —— 单地址，直接返回；
+/// - `http=127.0.0.1:7890;https=127.0.0.1:7890` —— 按协议分离，按 `https` → `http` → `socks`
+///   的顺序取第一个非空项（HTTPS 覆盖更广，优先级最高）。
+fn resolve_proxy_server(server: &str) -> String {
+    let server = server.trim();
+    if server.contains('=') {
+        for protocol in ["https=", "http=", "socks="] {
+            if let Some(start) = server.find(protocol).map(|position| position + protocol.len()) {
+                let end = server[start..]
+                    .find(';')
+                    .map(|offset| start + offset)
+                    .unwrap_or(server.len());
+                let address = server[start..end].trim();
+                if !address.is_empty() {
+                    return address.to_owned();
+                }
             }
         }
     }
+    server.to_owned()
+}
 
-    environment_proxy().map(|server| (server, true))
+/// 通过 `netsh winhttp show proxy` 读取 WinHTTP 代理。
+///
+/// 输出为非 UTF-8 之前的 OEM 编码，但「代理服务器/Proxy Server」与「直接访问/Direct access」
+/// 这些关键词在中英文系统上都是当前代码页下的 ASCII 或常见汉字，按 UTF-8 宽松解码后仍能匹配。
+fn read_winhttp_proxy() -> Option<(String, bool)> {
+    let mut command = Command::new("netsh");
+    command.args(["winhttp", "show", "proxy"]);
+    crate::core::env::apply_no_window_to_command(&mut command);
+    let output = command.output().ok()?;
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    if text
+        .lines()
+        .any(|line| line.contains("直接访问") || line.contains("Direct access"))
+    {
+        return None;
+    }
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        for prefix in ["代理服务器:", "Proxy Server:"] {
+            if let Some(rest) = trimmed.strip_prefix(prefix) {
+                let server = rest.trim();
+                if !server.is_empty() {
+                    return Some((server.to_owned(), true));
+                }
+            }
+        }
+    }
+    None
 }
 
 /// 获取局域网 IPv4 地址，排除回环和链路本地地址。
+///
+/// 解析 `ipconfig` 输出：中英文系统的行前缀分别是 `IPv4 地址` 与 `IPv4 Address`，
+/// 冒号前后有大量用于对齐的点号，因此按 `split(':')` 取值而不是按固定列宽。
 pub fn get_lan_ipv4() -> Option<String> {
-    let output = Command::new("ifconfig").output().ok()?;
-    output
-        .status
-        .success()
-        .then(|| parse_lan_ipv4(&String::from_utf8_lossy(&output.stdout)))
-        .flatten()
+    parse_lan_ipv4(&ipconfig_output()?)
 }
 
 /// 获取局域网全局 IPv6 地址，排除回环和链路本地地址。
 pub fn get_lan_ipv6() -> Option<String> {
-    let output = Command::new("ifconfig").output().ok()?;
+    parse_lan_ipv6(&ipconfig_output()?)
+}
+
+/// 运行 `ipconfig` 并取回标准输出。
+///
+/// 该命令会弹出控制台窗口，必须带上 `CREATE_NO_WINDOW`，否则界面会闪黑框。
+fn ipconfig_output() -> Option<String> {
+    let mut command = Command::new("ipconfig");
+    // 强制 UTF-8 代码页，避免中文系统上的本地化字段名被解码成乱码而匹配不上。
+    command.args(["/all"]);
+    crate::core::env::apply_no_window_to_command(&mut command);
+    let output = command.output().ok()?;
     output
         .status
         .success()
-        .then(|| parse_lan_ipv6(&String::from_utf8_lossy(&output.stdout)))
-        .flatten()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn parse_lan_ipv4(output: &str) -> Option<String> {
     output.lines().find_map(|line| {
-        let address = line
-            .trim()
-            .strip_prefix("inet ")?
-            .split_whitespace()
-            .next()?;
-        (!address.starts_with("127.") && !address.starts_with("169.254."))
-            .then(|| address.to_owned())
+        let trimmed = line.trim();
+        // 中文是 `IPv4 地址 . . . : 192.168.1.100`，英文是 `IPv4 Address. . . . : ...`。
+        // `IP Address` 是更老的英文系统写法，一并兼容。
+        let matched = trimmed.starts_with("IPv4")
+            || trimmed.starts_with("IP Address")
+            || trimmed.starts_with("IPv4 Address");
+        if !matched {
+            return None;
+        }
+        let address = trimmed.rsplit(':').next()?.trim();
+        let is_usable = !address.is_empty()
+            && address.contains('.')
+            && address != "127.0.0.1"
+            && !address.starts_with("169.254.");
+        is_usable.then(|| address.to_owned())
     })
 }
 
 fn parse_lan_ipv6(output: &str) -> Option<String> {
     output.lines().find_map(|line| {
-        let raw = line
-            .trim()
-            .strip_prefix("inet6 ")?
-            .split_whitespace()
-            .next()?;
-        let address = raw.split('%').next().unwrap_or(raw);
+        let trimmed = line.trim();
+        if !trimmed.starts_with("IPv6") {
+            return None;
+        }
+        // 行尾可能是 `2001:db8::1`，也可能是带 `%12` 接口号的临时地址，
+        // 且 `IPv6 地址` 自身的冒号会干扰切分，因此从右侧逐段尝试。
+        let raw = trimmed.rsplit(':').next()?.trim();
+        let address = raw.split('%').next()?.trim();
         let lower = address.to_ascii_lowercase();
-        (address != "::1" && !lower.starts_with("fe80:")).then(|| address.to_owned())
+        let is_usable = !address.is_empty()
+            && address != "::1"
+            && !lower.starts_with("fe80:")
+            && address.contains(':');
+        is_usable.then(|| address.to_owned())
     })
 }
 
@@ -542,27 +637,45 @@ pub fn is_local_ip(ip: &str) -> bool {
         || LOCAL_IP_SET.contains(ip)
 }
 
-/// 启动时缓存 macOS 网卡地址，避免每条日志都调用 ifconfig。
+/// 启动时缓存本机网卡地址，避免每条日志都去跑一次 `ipconfig`。
+///
+/// 这里收集的是**全部**本机地址（含链路本地与回环以外的所有接口），
+/// 用于把酒馆连接日志里的「自己连自己」过滤掉，与 [`get_lan_ipv4`] 只取一个地址的用途不同。
 static LOCAL_IP_SET: LazyLock<std::collections::HashSet<String>> = LazyLock::new(|| {
     let mut addresses = std::collections::HashSet::new();
-    let Ok(output) = Command::new("ifconfig").output() else {
+    let Some(output) = ipconfig_output() else {
         return addresses;
     };
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
+    for line in output.lines() {
         let trimmed = line.trim();
-        if let Some(address) = trimmed.strip_prefix("inet ").and_then(|rest| rest.split_whitespace().next())
-            && address != "127.0.0.1" && !address.starts_with("169.254.")
-        {
-            addresses.insert(address.to_owned());
-        } else if let Some(raw) = trimmed.strip_prefix("inet6 ").and_then(|rest| rest.split_whitespace().next()) {
-            let address = raw.split('%').next().unwrap_or(raw);
-            if address != "::1" && !address.to_ascii_lowercase().starts_with("fe80:") {
-                addresses.insert(address.to_owned());
-            }
+        if let Some(address) = parse_address_column(trimmed, "IPv4") {
+            addresses.insert(address);
+        } else if let Some(address) = parse_address_column(trimmed, "IPv6") {
+            addresses.insert(address);
         }
     }
     addresses
 });
+
+/// 从 `ipconfig` 的一行里取出地址列。
+///
+/// 中英文系统的行首分别是 `IPv4 地址` 与 `IPv4 Address`，共同点是都以 `IPv4`/`IPv6` 开头；
+/// 字段名与值之间用点号对齐，所以取最后一个冒号之后的内容即为地址。
+fn parse_address_column(line: &str, family: &str) -> Option<String> {
+    if !line.starts_with(family) {
+        return None;
+    }
+    let raw = line.rsplit(':').next()?.trim();
+    let address = raw.split('%').next()?.trim();
+    let lower = address.to_ascii_lowercase();
+    let usable = !address.is_empty()
+        && address != "::1"
+        && address != "127.0.0.1"
+        && !address.starts_with("169.254.")
+        && !lower.starts_with("fe80:")
+        && !lower.starts_with("::");
+    usable.then(|| address.to_owned())
+}
 
 fn public_ip(
     local_address: std::net::IpAddr,
@@ -592,65 +705,6 @@ fn environment_proxy() -> Option<String> {
             let value = std::env::var(key).ok()?;
             (!value.trim().is_empty()).then_some(value)
         })
-}
-
-struct ParsedSystemProxy {
-    active_proxy: Option<String>,
-    configured: bool,
-}
-
-fn parse_system_proxy_output(text: &str) -> ParsedSystemProxy {
-    let mut https_enable = false;
-    let mut https_proxy = String::new();
-    let mut https_port: u16 = 0;
-    let mut http_enable = false;
-    let mut http_proxy = String::new();
-    let mut http_port: u16 = 0;
-    let mut configured = false;
-
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if let Some(val) = trimmed.strip_prefix("HTTPSEnable : ") {
-            configured = true;
-            https_enable = val.trim() == "1";
-        } else if let Some(val) = trimmed.strip_prefix("HTTPSProxy : ") {
-            configured = true;
-            https_proxy = val.trim().to_owned();
-        } else if let Some(val) = trimmed.strip_prefix("HTTPSPort : ") {
-            configured = true;
-            https_port = val.trim().parse().unwrap_or(0);
-        } else if let Some(val) = trimmed.strip_prefix("HTTPEnable : ") {
-            configured = true;
-            http_enable = val.trim() == "1";
-        } else if let Some(val) = trimmed.strip_prefix("HTTPProxy : ") {
-            configured = true;
-            http_proxy = val.trim().to_owned();
-        } else if let Some(val) = trimmed.strip_prefix("HTTPPort : ") {
-            configured = true;
-            http_port = val.trim().parse().unwrap_or(0);
-        }
-    }
-
-    let active_proxy = if https_enable && !https_proxy.is_empty() {
-        Some(if https_port > 0 {
-            format!("{https_proxy}:{https_port}")
-        } else {
-            https_proxy
-        })
-    } else if http_enable && !http_proxy.is_empty() {
-        Some(if http_port > 0 {
-            format!("{http_proxy}:{http_port}")
-        } else {
-            http_proxy
-        })
-    } else {
-        None
-    };
-
-    ParsedSystemProxy {
-        active_proxy,
-        configured,
-    }
 }
 
 fn normalize_proxy_url(proxy: &str) -> Result<String, &'static str> {
@@ -1040,15 +1094,24 @@ fn test_http_endpoint(
     }
 }
 
+/// 解析外部命令的可执行文件路径。
+///
+/// 用 `where` 而不是硬编码目录：Windows 上 NodeJS / Git 可能装在任意盘符，
+/// 内置环境（`%AppData%/AstraBrew Launcher/lib/`）也通过 PATH 注入被 `where` 看到。
+/// 全部找不到时原样返回命令名，由 `Command` 自己按 PATH 再试一次。
 fn resolve_command(name: &str) -> String {
-    ["/opt/homebrew/bin", "/usr/local/bin"]
-        .into_iter()
-        .map(|base| format!("{base}/{name}"))
-        .find(|path| std::path::Path::new(path).is_file())
+    crate::core::env::get_system_cmd_path(name)
+        .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| name.to_owned())
 }
 
+/// 为 Git 命令配置代理。
+///
+/// **同时负责隐藏控制台窗口**：Git 在 Windows 上是控制台程序，从 GUI 进程直接拉起时
+/// 系统会为它新建一个控制台，表现为黑框闪过；clone/fetch 这类长任务的黑框还会一直
+/// 停在启动器前面。放在这里统一处理，是因为本模块所有 Git 调用都必然先经过它。
 fn configure_git_proxy(command: &mut Command, proxy_mode: &str, proxy_host: &str) {
+    crate::core::env::apply_no_window_to_command(command);
     match selected_proxy_url(proxy_mode, proxy_host).ok().flatten() {
         Some(proxy) => {
             command.arg("-c").arg(format!("http.proxy={proxy}"));
@@ -1061,15 +1124,16 @@ fn configure_git_proxy(command: &mut Command, proxy_mode: &str, proxy_host: &str
     }
 }
 
+/// 为一次测速生成不会互相冲突的临时目录。
+///
+/// 用系统临时目录而不是硬编码路径：Windows 上 `%TEMP%` 可能被重定向到别的盘。
 fn unique_test_root() -> std::path::PathBuf {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
     let suffix = format!("{}-{timestamp}", std::process::id());
-    std::path::PathBuf::from("/tmp")
-        .join(TEST_ROOT_DIR)
-        .join(suffix)
+    std::env::temp_dir().join(TEST_ROOT_DIR).join(suffix)
 }
 
 fn test_git_clone(
@@ -1728,12 +1792,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_https_system_proxy_before_http_proxy() {
-        let parsed = parse_system_proxy_output(
-            "HTTPSEnable : 1\nHTTPSProxy : secure.proxy\nHTTPSPort : 8443\nHTTPEnable : 1\nHTTPProxy : plain.proxy\nHTTPPort : 8080\n",
+    fn protocol_tagged_proxy_entries_prefer_https() {
+        // `ProxyServer` 写成 `http=...;https=...` 时，https 条目的覆盖面更广，应优先。
+        assert_eq!(
+            resolve_proxy_server("http=127.0.0.1:8080;https=127.0.0.1:8443"),
+            "127.0.0.1:8443"
         );
-        assert_eq!(parsed.active_proxy.as_deref(), Some("secure.proxy:8443"));
-        assert!(parsed.configured);
+        // 只有 http 条目时退回它。
+        assert_eq!(
+            resolve_proxy_server("http=127.0.0.1:8080;socks=127.0.0.1:1080"),
+            "127.0.0.1:8080"
+        );
+        // socks 是最后的选择。
+        assert_eq!(resolve_proxy_server("socks=127.0.0.1:1080"), "127.0.0.1:1080");
+    }
+
+    #[test]
+    fn plain_proxy_server_is_used_verbatim() {
+        // 没有 `=` 的单地址格式原样返回，前后空白要去掉。
+        assert_eq!(resolve_proxy_server("  127.0.0.1:7890  "), "127.0.0.1:7890");
+        assert_eq!(resolve_proxy_server(""), "");
+    }
+
+    #[test]
+    fn ipconfig_ipv4_parsing_skips_loopback_and_link_local() {
+        // 中文系统的真实格式：字段名与值之间用点号填充，末尾才是冒号。
+        let fixture = "Windows IP 配置\n\n以太网适配器 以太网:\n\n   连接特定的 DNS 后缀 . . . . . . . : \n   IPv4 地址 . . . . . . . . . . . . : 192.168.8.20\n   子网掩码  . . . . . . . . . . . . : 255.255.255.0";
+        assert_eq!(parse_lan_ipv4(fixture).as_deref(), Some("192.168.8.20"));
+    }
+
+    #[test]
+    fn ipconfig_ipv4_parsing_handles_english_locale() {
+        let fixture = "Windows IP Configuration\n\nEthernet adapter Ethernet:\n\n   IPv4 Address. . . . . . . . . . . : 10.0.0.7\n   Subnet Mask . . . . . . . . . . . : 255.0.0.0";
+        assert_eq!(parse_lan_ipv4(fixture).as_deref(), Some("10.0.0.7"));
+    }
+
+    #[test]
+    fn ipconfig_ipv4_parsing_ignores_unusable_addresses() {
+        // 回环与自动私有地址（169.254.x.x）都不该被当成局域网地址返回。
+        let fixture = "   IPv4 地址 . . . . . . . . . . . . : 127.0.0.1\n   IPv4 地址 . . . . . . . . . . . . : 169.254.10.20";
+        assert_eq!(parse_lan_ipv4(fixture), None);
+    }
+
+    #[test]
+    fn ipconfig_ipv6_parsing_skips_loopback_and_link_local() {
+        let fixture = "   IPv6 地址 . . . . . . . . . . . . : 240a:42cc::1234\n   临时 IPv6 地址. . . . . . . . . . : 240a:42cc::5678";
+        assert_eq!(parse_lan_ipv6(fixture).as_deref(), Some("240a:42cc::1234"));
+
+        let link_local = "   IPv6 地址 . . . . . . . . . . . . : fe80::1234%12";
+        assert_eq!(parse_lan_ipv6(link_local), None);
+
+        let loopback = "   IPv6 地址 . . . . . . . . . . . . : ::1";
+        assert_eq!(parse_lan_ipv6(loopback), None);
     }
 
     #[test]
@@ -2062,19 +2172,17 @@ const MIRROR_REFS_CACHE_NAME: &str = "sillytavern_mirror_refs_cache.json";
 /// 同时避免每次进入版本页都执行 `git ls-remote`。
 const MIRROR_REFS_CACHE_TTL: u64 = 10 * 60;
 
-/// 在线酒馆安装目录：`~/Library/Application Support/AstraBrew Launcher/sillytavern`。
+/// 在线酒馆安装目录：`%AppData%/AstraBrew Launcher/sillytavern/`。
 #[allow(dead_code)]
 pub fn sillytavern_install_dir() -> PathBuf {
     crate::utils::app_paths().sillytavern_dir()
 }
 
-/// 在线版本缓存文件路径。
+/// 在线版本缓存文件路径：`%Temp%/astrabrew-launcher/caches/`。
 #[allow(dead_code)]
 pub fn sillytavern_versions_cache_path() -> PathBuf {
-    cache_home_dir()
-        .join("Library")
-        .join("Caches")
-        .join(TEST_ROOT_DIR)
+    crate::utils::app_paths()
+        .caches
         .join(SILLYTAVERN_CACHE_NAME)
 }
 
@@ -2104,10 +2212,9 @@ pub fn installed_sillytavern_state() -> Option<InstalledSillyTavern> {
 }
 
 fn git_output(args: &[&str]) -> Option<String> {
-    let output = Command::new(resolve_command("git"))
-        .args(args)
-        .output()
-        .ok()?;
+    let mut command = Command::new(resolve_command("git"));
+    crate::core::env::apply_no_window_to_command(&mut command);
+    let output = command.args(args).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -2576,12 +2683,10 @@ fn parse_release_version(version: &str) -> Option<(u64, u64, u64)> {
     Some((major, minor, patch))
 }
 
-/// 镜像 ref 快照缓存路径：`~/Library/Caches/AstraBrew Launcher/sillytavern_mirror_refs_cache.json`。
+/// 镜像 ref 快照缓存路径：`%Temp%/astrabrew-launcher/caches/sillytavern_mirror_refs_cache.json`。
 fn mirror_refs_cache_path() -> PathBuf {
-    cache_home_dir()
-        .join("Library")
-        .join("Caches")
-        .join(TEST_ROOT_DIR)
+    crate::utils::app_paths()
+        .caches
         .join(MIRROR_REFS_CACHE_NAME)
 }
 
@@ -3015,6 +3120,7 @@ pub fn run_sillytavern_install(
     npm_registry: String,
     proxy_mode: String,
     proxy_host: String,
+    env_source: EnvSource,
     sender: Sender<SillyTavernInstallEvent>,
 ) {
     run_sillytavern_install_with_cancel(
@@ -3024,6 +3130,7 @@ pub fn run_sillytavern_install(
         npm_registry,
         proxy_mode,
         proxy_host,
+        env_source,
         sender,
         Arc::new(AtomicBool::new(false)),
     );
@@ -3037,6 +3144,7 @@ pub fn run_sillytavern_install_with_cancel(
     npm_registry: String,
     proxy_mode: String,
     proxy_host: String,
+    env_source: EnvSource,
     sender: Sender<SillyTavernInstallEvent>,
     cancel: Arc<AtomicBool>,
 ) {
@@ -3106,8 +3214,8 @@ pub fn run_sillytavern_install_with_cancel(
         let _ = sender.send(SillyTavernInstallEvent::DownloadComplete);
         wait_before_npm_install(&cancel)?;
         let _ = sender.send(SillyTavernInstallEvent::InstallStarted);
-        // node@24 是 keg-only formula，必须使用统一命令环境为 npm 的 shebang 注入 Node PATH。
-        let mut npm = crate::core::settings::env_detect::cmd("npm");
+        // 统一命令环境：内置环境使用 lib/nodejs 下的 npm.cmd，系统环境走 where 解析。
+        let mut npm = crate::core::settings::env_detect::command_for("npm", env_source);
         npm.current_dir(&target).arg("install");
         if !npm_registry.trim().is_empty() {
             npm.env("npm_config_registry", npm_registry);
@@ -3310,21 +3418,4 @@ where
             }
         }
     });
-}
-
-#[cfg(test)]
-mod access_address_tests {
-    use super::{parse_lan_ipv4, parse_lan_ipv6};
-
-    #[test]
-    fn lan_ipv4_skips_loopback_and_link_local() {
-        let fixture = "\ninet 127.0.0.1 netmask 0xff000000\ninet 169.254.2.3 netmask 0xffff0000\ninet 192.168.8.20 netmask 0xffffff00\n";
-        assert_eq!(parse_lan_ipv4(fixture).as_deref(), Some("192.168.8.20"));
-    }
-
-    #[test]
-    fn lan_ipv6_skips_loopback_and_link_local_and_removes_zone() {
-        let fixture = "\ninet6 ::1 prefixlen 128\ninet6 fe80::1234%en0 prefixlen 64\ninet6 240a:42cc::1234%en0 prefixlen 64\n";
-        assert_eq!(parse_lan_ipv6(fixture).as_deref(), Some("240a:42cc::1234"));
-    }
 }

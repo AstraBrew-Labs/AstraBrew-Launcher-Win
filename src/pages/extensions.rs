@@ -1688,7 +1688,7 @@ mod tests {
 
     fn bound_state() -> ExtensionsState {
         let mut state = ExtensionsState::default();
-        state.target_path = Some(PathBuf::from("/tmp/astrabrew-extensions-test"));
+        state.target_path = Some(PathBuf::from(r"C:\AstraBrew\extensions"));
         state
     }
 

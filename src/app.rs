@@ -41,8 +41,6 @@ use crate::pages::console::{ConsoleAction, ConsoleMessage, ConsoleState, Console
 use crate::pages::extensions::{ExtensionAction, ExtensionsMessage, ExtensionsState};
 use crate::pages::notice::{TransientNotice, TransientNoticeAction};
 use crate::pages::resource_manage::{ResourceManageMessage, ResourceManageState};
-#[cfg(not(test))]
-use crate::pages::settings::EnvironmentVersions;
 use crate::pages::settings::{
     CpuCores, DisplayLanguage, DownloadChannelTestState, EnvironmentDependency,
     EnvironmentTaskState, GithubLiveItem, GithubLiveItemStatus, GithubTestState, NpmRegistry,
@@ -93,17 +91,17 @@ struct InitStep {
 const INIT_STEPS: [InitStep; 4] = [
     InitStep {
         name: "app.path.data",
-        path: "~/Library/Application Support/AstraBrew Launcher",
+        path: "%AppData%/AstraBrew Launcher",
         threshold: 25.0,
     },
     InitStep {
         name: "app.path.caches",
-        path: "~/Library/Caches/AstraBrew Launcher",
+        path: "%Temp%/astrabrew-launcher/caches",
         threshold: 50.0,
     },
     InitStep {
         name: "app.path.logs",
-        path: "~/Library/Logs/AstraBrew Launcher",
+        path: "%AppData%/AstraBrew Launcher/logs",
         threshold: 75.0,
     },
     InitStep {
@@ -134,6 +132,16 @@ struct WindowProfile {
 ///
 /// 宽高比 ≥ 1.5 视为宽屏（含 16:9 与 MacBook 的 16:10），采用 16:9 档位；
 /// 否则按 4:3 档位处理。无法获取显示器尺寸时默认按宽屏处理（最常用情况）。
+/// 用指定浏览器可执行文件打开地址。
+///
+/// 只在 PATH 中查找（Chrome/Edge 安装时会登记到 PATH 或 `App Paths`）。
+/// 返回 `false` 表示未找到该浏览器，调用方应退回系统默认程序。
+fn try_launch_browser(executable: &str, url: &str) -> bool {
+    let mut command = std::process::Command::new(executable);
+    crate::core::env::apply_no_window_to_command(&mut command);
+    command.arg(url).spawn().is_ok()
+}
+
 /// 把安装子进程通过 `__NOTICE__:` 上报的进度键转成当前语言文案。
 ///
 /// 子进程只能传字符串，无法携带编译期的 `&'static str`，因此在这里集中做一次
@@ -221,6 +229,8 @@ pub(crate) enum Message {
     SettingsShowStartupCommand(bool),
     /// 修改 NPM 软件源
     SettingsNpmRegistrySelected(NpmRegistry),
+    /// 切换环境模式（内置 `lib/` 或系统 PATH）。
+    SettingsEnvModeSelected(crate::core::settings::EnvSource),
     /// 修改酒馆下载渠道。
     SettingsDownloadChannelSelected(DownloadChannel),
     /// 修改网络代理模式
@@ -240,8 +250,17 @@ pub(crate) enum Message {
     DownloadChannelTestClose,
     /// 消费下载渠道测速弹窗内部及遮罩点击。
     DownloadChannelTestInteract,
-    /// 安装或更新旧版环境依赖。
-    EnvironmentInstall(EnvironmentDependency),
+    /// 安装环境依赖到指定环境来源。
+    EnvironmentInstall {
+        dependency: EnvironmentDependency,
+        source: crate::core::settings::EnvSource,
+    },
+    /// 后台环境探测完成，携带两套环境的完整结果。
+    ///
+    /// 探测结果通过 `environment_detect_receiver` 轮询取回（见
+    /// `poll_environment_detect`），本变体仅用于显式注入结果，例如测试。
+    #[allow(dead_code)]
+    EnvironmentDetected(crate::pages::settings::EnvironmentSnapshot),
     /// 驱动旧版安装任务的日志轮询、超时与自动关闭。
     EnvironmentTaskTick(Instant),
     /// 关闭已经完成或超时的安装窗口。
@@ -284,6 +303,11 @@ pub(crate) enum Message {
     WindowRescaled(window::Id),
     /// 窗口移动后更新内存中的最新坐标。
     WindowMoved(Point),
+    /// 周期检查窗口是否仍落在已连接的显示器上。
+    ///
+    /// 副屏被拔出后窗口会停留在不存在的坐标上，用户将看不到界面；
+    /// 检测到这种情况时把窗口移回主屏居中。
+    MonitorWatchTick,
     /// 用户请求关闭窗口，保存位置后显式关闭。
     WindowCloseRequested(window::Id),
     /// macOS 系统明暗外观发生变化。
@@ -350,6 +374,9 @@ pub struct Launcher {
     environment_task_receiver: Option<Receiver<String>>,
     /// 当前环境安装任务的取消信号。
     environment_task_cancel: Option<Arc<AtomicBool>>,
+    /// 后台双来源环境探测的接收端；为 `Some` 表示探测线程仍在运行。
+    environment_detect_receiver:
+        Option<Receiver<crate::pages::settings::EnvironmentSnapshot>>,
     /// 本地实例依赖检查发现 Node.js 缺失时显示全局安装引导。
     nodejs_required_visible: bool,
     /// GitHub 测试完成结果的后台通道。
@@ -392,22 +419,22 @@ pub struct Launcher {
     /// 配置保存完成后自动继续执行的启动请求。
     pending_console_launch: bool,
     /// 桌面模式使用的原生 WebView 窗口。
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "windows")]
     desktop_webview: Option<crate::core::desktop_webview::DesktopWebView>,
     /// 用户主动关闭桌面窗口后，避免定时轮询立即把它重新打开。
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "windows")]
     desktop_webview_suppressed: bool,
     /// 当前 WebView 导航是否已经成功完成。
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "windows")]
     desktop_webview_ready: bool,
     /// 当前加载失败后的重试次数。
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "windows")]
     desktop_webview_retry_count: u8,
     /// 延迟重试时间点，避免失败时在主线程中紧密循环。
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "windows")]
     desktop_webview_retry_at: Option<Instant>,
     /// 当前导航的完成期限，WebKit 没有回调时也能退出空白等待。
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "windows")]
     desktop_webview_load_deadline: Option<Instant>,
     /// 保留旧版未知字段的配置存储器。
     settings_store: SettingsStore,
@@ -417,6 +444,12 @@ pub struct Launcher {
     system_theme: theme::Mode,
     /// 窗口完成首次固定尺寸校准后才启用用户界面缩放。
     window_ready: bool,
+    /// 当前窗口逻辑尺寸；窗口尺寸固定，记录后用于显示器断开检测。
+    window_size: Size,
+    /// 主窗口句柄，由窗口打开事件记录，用于显示器断开后搬回主屏。
+    main_window_id: Option<window::Id>,
+    /// 显示器热插拔巡检是否已经把窗口拉回过主屏，避免重复搬动。
+    monitor_relocated: bool,
     /// 主页版本快捷切换菜单是否展开。
     home_version_selector_open: bool,
 }
@@ -503,15 +536,16 @@ impl Launcher {
         if settings.proxy_mode == ProxyMode::System {
             settings.system_proxy_status = Self::current_system_proxy_status();
         }
-        // 与旧版一致：应用创建时同步检测全部环境依赖。
-        #[cfg(not(test))]
+        // 环境依赖探测会拉起多个子进程（git/node/caddy/pm2），耗时可达数百毫秒，
+        // 因此不在构造阶段同步执行；界面先显示「检测中」，
+        // 由 `start_environment_detect` 在后台线程探测完成后填充结果。
+        #[cfg(test)]
         {
-            settings.environment = EnvironmentVersions::detect_all();
+            settings.environment = crate::pages::settings::EnvironmentSnapshot::default();
         }
-        let background_preference_repaired = settings.server_mode_enabled
-            && settings.allow_tavern_background
-            && settings.environment.pm2.is_none();
-        if background_preference_repaired {
+        // 后台托管偏好（PM2 常驻）在首次探测确认 PM2 可用前一律视为未启用，
+        // 避免用户在环境尚未就绪时打开一个无法工作的开关。
+        if settings.server_mode_enabled && settings.allow_tavern_background {
             settings.allow_tavern_background = false;
         }
 
@@ -541,6 +575,7 @@ impl Launcher {
             font_load_failed: false,
             environment_task_receiver: None,
             environment_task_cancel: None,
+            environment_detect_receiver: None,
             nodejs_required_visible: false,
             github_test_receiver: None,
             github_test_id: 0,
@@ -562,22 +597,26 @@ impl Launcher {
             global_notices: VecDeque::new(),
             global_notice_serial: 0,
             pending_console_launch: false,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview: None,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_suppressed: false,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_ready: false,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_retry_count: 0,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_retry_at: None,
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             desktop_webview_load_deadline: None,
             settings_store,
             window_position: preferences.window_position,
             system_theme: theme::Mode::Light,
             window_ready: false,
+            // 首帧之前还不知道显示器比例，先按 16:9 档位占位，由窗口事件校准。
+            window_size: Size::new(1280.0, 720.0),
+            main_window_id: None,
+            monitor_relocated: false,
             home_version_selector_open: false,
         };
         if launcher.settings.server_mode_enabled {
@@ -590,6 +629,12 @@ impl Launcher {
         }
         // 应用启动即加载默认稳定版目录，避免用户必须进入页面后点击安装才能恢复状态。
         launcher.start_version_catalog_load(false);
+        // 上一次更新会留下被重命名的旧可执行文件，启动时顺手清理（见 updater 模块）。
+        #[cfg(not(test))]
+        crate::core::updater::cleanup_stale_executables();
+        // 环境依赖探测放到启动任务里异步执行，窗口可以立即显示。
+        #[cfg(not(test))]
+        launcher.start_environment_detect();
         // “自动”渠道缺少有效缓存时，启动后立刻在后台补一次测速，
         // 否则版本列表会一直退化成官方直连，用户每次都要手动去设置页测速。
         #[cfg(not(test))]
@@ -598,10 +643,8 @@ impl Launcher {
         launcher.load_local_instances();
         #[cfg(not(test))]
         launcher.reconcile_tavern_config();
-        if launcher.settings.auto_start != preferences.auto_start
-            || font_preference_repaired
-            || background_preference_repaired
-        {
+        if launcher.settings.auto_start != preferences.auto_start || font_preference_repaired {
+
             launcher.persist_preferences();
         }
 
@@ -651,8 +694,17 @@ impl Launcher {
 
         let environment_timer = if self.settings.environment_task.running
             || self.settings.environment_task.done_at.is_some()
+            || self.environment_detect_receiver.is_some()
         {
             time::every(Duration::from_millis(100)).map(Message::EnvironmentTaskTick)
+        } else {
+            Subscription::none()
+        };
+
+        // 显示器热插拔监听：窗口就绪后低频巡检，把落在已断开显示器上的窗口拉回主屏。
+        // 频率取 2 秒——显示器变化是低频事件，过于频繁的枚举只是白烧 CPU。
+        let monitor_watch = if self.window_ready {
+            time::every(Duration::from_secs(2)).map(|_| Message::MonitorWatchTick)
         } else {
             Subscription::none()
         };
@@ -754,6 +806,7 @@ impl Launcher {
             update_timer,
             resource_pager_timer,
             window_events,
+            monitor_watch,
             system_theme,
         ])
     }
@@ -984,20 +1037,11 @@ impl Launcher {
             }
             Message::SettingsAutoStart(enabled) => {
                 match crate::core::auto_launch::set_auto_launch(enabled) {
-                    Ok(outcome) => {
+                    Ok(_outcome) => {
                         // 以系统真实状态回填开关，避免「界面显示已启用但实际没生效」。
                         self.settings.auto_start =
                             crate::core::auto_launch::is_auto_launch_enabled();
                         self.persist_preferences();
-                        if matches!(
-                            outcome,
-                            crate::core::auto_launch::AutoLaunchOutcome::NeedsApproval
-                        ) {
-                            self.push_global_notice(TransientNotice::warning(
-                                "notice.settings_updated",
-                                "autolaunch.register_approval",
-                            ));
-                        }
                     }
                     Err(error) => {
                         self.settings.auto_start =
@@ -1034,7 +1078,10 @@ impl Launcher {
                 let _ = self.console.update(ConsoleMessage::Poll);
                 if !self.launch_mode_controls_locked()
                     && self.settings.server_mode_enabled
-                    && self.settings.environment.pm2.is_some()
+                    && self
+                        .settings
+                        .environment
+                        .has_any(EnvironmentDependency::Pm2)
                 {
                     self.settings.allow_tavern_background = enabled;
                     self.persist_preferences();
@@ -1057,6 +1104,17 @@ impl Launcher {
             Message::SettingsNpmRegistrySelected(registry) => {
                 self.settings.npm_registry = registry;
                 self.persist_preferences();
+            }
+            Message::SettingsEnvModeSelected(source) => {
+                if self.settings.env_mode != source {
+                    self.settings.env_mode = source;
+                    self.persist_preferences();
+                    // 新来源可能尚未探测过，立即刷新一次环境版本。
+                    self.start_environment_detect();
+                }
+            }
+            Message::EnvironmentDetected(snapshot) => {
+                self.settings.environment = snapshot;
             }
             Message::SettingsDownloadChannelSelected(channel) => {
                 self.settings.download_channel = channel;
@@ -1162,10 +1220,11 @@ impl Launcher {
                 self.settings.update.pending = None;
             }
             Message::UpdateDialogInteract => {}
-            Message::EnvironmentInstall(dependency) => {
-                self.start_environment_install(dependency);
+            Message::EnvironmentInstall { dependency, source } => {
+                self.start_environment_install(dependency, source);
             }
             Message::EnvironmentTaskTick(now) => {
+                self.poll_environment_detect();
                 self.poll_environment_task(now);
             }
             Message::EnvironmentTaskClose => {
@@ -1194,8 +1253,12 @@ impl Launcher {
                 self.page = Page::Settings;
 
                 // 复用设置页 Node.js 右侧安装按钮的同一消息，确保两条入口行为一致。
+                let source = self.settings.env_mode;
                 return Task::batch([
-                    Task::done(Message::EnvironmentInstall(EnvironmentDependency::NodeJs)),
+                    Task::done(Message::EnvironmentInstall {
+                        dependency: EnvironmentDependency::NodeJs,
+                        source,
+                    }),
                     iced::widget::operation::snap_to(
                         crate::pages::settings::settings_scroll_id(),
                         iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.42 },
@@ -1211,9 +1274,13 @@ impl Launcher {
                 if self.launch_mode_controls_locked() {
                     return Task::none();
                 }
+                // 恢复默认不应把用户已安装好的环境判定也清空，
+                // 否则界面会在下次探测前错误地显示「未安装」。
                 let environment = self.settings.environment.clone();
+                let env_mode = self.settings.env_mode;
                 self.settings = SettingsState::default();
                 self.settings.environment = environment;
+                self.settings.env_mode = env_mode;
                 self.settings.configure_fonts(&self.font_catalog);
                 self.active_font = FontChoice::default_choice();
                 self.font_load_request_id = self.font_load_request_id.wrapping_add(1);
@@ -1287,18 +1354,15 @@ impl Launcher {
             Message::GlobalNoticeTick => {}
             Message::RevealDownloadedFile(id, path) => {
                 self.global_notices.retain(|notice| notice.id != id);
-                if let Err(error) = std::process::Command::new("open")
-                    .arg("-R")
-                    .arg(&path)
-                    .spawn()
-                {
+                if let Err(error) = crate::core::shell::reveal_in_explorer(&path) {
                     self.push_global_notice(TransientNotice::danger(
                         "webview.download.reveal_failed",
-                        error.to_string(),
+                        error,
                     ));
                 }
             }
             Message::WindowOpened(id, position) => {
+                self.main_window_id = Some(id);
                 if let Some(position) = position {
                     self.window_position = Some([position.x, position.y]);
                 }
@@ -1314,6 +1378,7 @@ impl Launcher {
             Message::MonitorMeasured(id, monitor, apply_default) => {
                 let profile = window_profile(monitor);
                 self.window_ready = true;
+                self.window_size = profile.default_size;
                 let tasks = vec![
                     window::set_min_size(id, Some(profile.default_size)),
                     window::set_max_size(id, Some(profile.default_size)),
@@ -1322,16 +1387,42 @@ impl Launcher {
                 ];
                 if apply_default {
                     // 首开时通过原生 API 禁用绿色缩放按钮并移除独占全屏能力
-                    #[cfg(target_os = "macos")]
+                    #[cfg(target_os = "windows")]
                     crate::platform::disable_zoom_button_and_fullscreen();
                     // 同时写入 Dock 应用图标（macOS 的图标属于应用而非窗口）
-                    #[cfg(target_os = "macos")]
+                    #[cfg(target_os = "windows")]
                     crate::platform::apply_application_icon();
                 }
                 return Task::batch(tasks);
             }
             Message::WindowMoved(position) => {
                 self.window_position = Some([position.x, position.y]);
+                // 用户主动挪窗后重新允许巡检搬迁，覆盖上一次的自动搬回状态。
+                self.monitor_relocated = false;
+            }
+            Message::MonitorWatchTick => {
+                // 窗口尚未就绪时坐标不可信，直接跳过。
+                if !self.window_ready {
+                    return Task::none();
+                }
+                // 副屏断开后窗口坐标会落在不存在的区域：此时把窗口拉回主屏居中。
+                // 已经搬过一次就不再重复，避免与手动拖动互相打断。
+                let Some([x, y]) = self.window_position else {
+                    return Task::none();
+                };
+                let Some(window_id) = self.main_window_id else {
+                    return Task::none();
+                };
+                let position = Point::new(x, y);
+                if crate::platform::is_position_visible(position, self.window_size)
+                    || self.monitor_relocated
+                {
+                    return Task::none();
+                }
+                let target = crate::platform::centered_on_primary(self.window_size);
+                self.window_position = Some([target.x, target.y]);
+                self.monitor_relocated = true;
+                return window::move_to(window_id, target);
             }
             Message::WindowCloseRequested(id) => {
                 if self.defer_config_close(id) {
@@ -1355,7 +1446,7 @@ impl Launcher {
                 {
                     let _ = self.console.update(ConsoleMessage::Kill);
                 }
-                #[cfg(target_os = "macos")]
+                #[cfg(target_os = "windows")]
                 if let Some(mut webview) = self.desktop_webview.take() {
                     webview.close();
                 }
@@ -1442,6 +1533,7 @@ impl Launcher {
             auto_stop_tavern_on_window_close: self.settings.auto_stop_tavern_on_window_close,
             allow_tavern_background: self.settings.allow_tavern_background,
             show_startup_command: self.settings.show_startup_command,
+            env_mode: self.settings.env_mode,
             staging_risk_confirmed: self.versions.staging_risk_confirmed,
         }
     }
@@ -1569,9 +1661,9 @@ impl Launcher {
             if let Some(staging) = self.versions.staging.as_ref() {
                 self.versions.current_version = Some("staging".to_owned());
                 self.versions.online_instance_path = Some(
-                    crate::core::network::sillytavern_install_dir()
-                        .to_string_lossy()
-                        .into_owned(),
+                    crate::core::local_instances::display_path(
+                        &crate::core::network::sillytavern_install_dir(),
+                    ),
                 );
                 self.versions.current_path = self.versions.online_instance_path.clone();
                 self.versions.current_source = Some(crate::pages::versions::VersionSource::Online);
@@ -1728,6 +1820,7 @@ impl Launcher {
             ProxyMode::Custom => "custom".to_owned(),
         };
         let proxy_host = self.settings.custom_proxy.clone();
+        let env_source = self.settings.env_mode;
         let cancel = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = mpsc::channel();
         self.version_install_cancel = Some(cancel.clone());
@@ -1744,6 +1837,7 @@ impl Launcher {
                 npm_registry,
                 proxy_mode,
                 proxy_host,
+                env_source,
                 sender,
                 cancel,
             );
@@ -2034,7 +2128,7 @@ impl Launcher {
 
     /// 根据版本选择和设置构建冻结的启动参数。
     fn start_tavern_now(&mut self) {
-        #[cfg(target_os = "macos")]
+        #[cfg(target_os = "windows")]
         {
             self.desktop_webview_suppressed = false;
             self.desktop_webview_ready = false;
@@ -2097,6 +2191,7 @@ impl Launcher {
                 allow_background: self.settings.allow_tavern_background,
                 show_startup_command: self.settings.show_startup_command,
                 export_path: self.settings.tavern_export_path.clone(),
+                env_source: self.settings.env_mode,
             },
             network_mode,
         );
@@ -2109,7 +2204,7 @@ impl Launcher {
             return;
         };
         if self.console.active_launch_mode == Some(TavernLaunchMode::Desktop) {
-            #[cfg(target_os = "macos")]
+            #[cfg(target_os = "windows")]
             {
                 if let Some(webview) = self.desktop_webview.as_mut() {
                     webview.bring_to_front();
@@ -2129,20 +2224,22 @@ impl Launcher {
             }
             return;
         }
-        let mut command = std::process::Command::new("open");
-        match self.tavern.browser_type() {
-            BrowserType::Chrome => { command.args(["-a", "Google Chrome"]); }
-            BrowserType::Firefox => { command.args(["-a", "Firefox"]); }
-            BrowserType::Edge => { command.args(["-a", "Microsoft Edge"]); }
-            BrowserType::Safari => { command.args(["-a", "Safari"]); }
-            BrowserType::Unknown | BrowserType::System => {}
-        }
-        if let Err(error) = command.arg(&url).spawn() {
+        // 指定浏览器时先试该浏览器的可执行文件，找不到再退回系统默认程序；
+        // 这样即使用户换了安装位置也不会打开失败。
+        let launched = match self.tavern.browser_type() {
+            BrowserType::Chrome => try_launch_browser("chrome.exe", &url),
+            BrowserType::Firefox => try_launch_browser("firefox.exe", &url),
+            BrowserType::Edge => try_launch_browser("msedge.exe", &url),
+            BrowserType::Unknown | BrowserType::System => false,
+        };
+        if !launched
+            && let Err(error) = crate::core::shell::open_target(&url)
+        {
             self.console.add_error(tf("app.console.open_failed", &[("error", &error)]));
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "windows")]
     fn open_desktop_webview(&mut self, url: &str) {
         let title = if self.console.active_version.is_empty() {
             "SillyTavern".to_owned()
@@ -2202,7 +2299,7 @@ impl Launcher {
 
     /// URL 就绪后自动打开桌面窗口，并处理加载、重试和关闭策略。
     fn sync_desktop_webview(&mut self) {
-        #[cfg(target_os = "macos")]
+        #[cfg(target_os = "windows")]
         {
             use crate::core::desktop_webview::{
                 DesktopWebView, WebViewDownloadEvent, WebViewEvent, drain_download_notifications,
@@ -2211,7 +2308,8 @@ impl Launcher {
             for event in drain_download_notifications() {
                 match event {
                     WebViewDownloadEvent::Saved(path) => {
-                        let detail = path.display().to_string();
+                        // 控制台里会显示这条路径，同样是给用户看的，需要剥掉 verbatim 前缀。
+                        let detail = crate::core::local_instances::display_path(&path);
                         self.console.add_success(format!(
                             "{} {detail}",
                             t_in("webview.download.saved", effective_language(self.settings.language))
@@ -2358,7 +2456,7 @@ impl Launcher {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "windows")]
     fn queue_desktop_webview_retry(&mut self, error: String) {
         if self.desktop_webview_retry_at.is_some() {
             return;
@@ -2406,7 +2504,11 @@ impl Launcher {
             QuickStartMode::Server => {
                 self.settings.server_mode_enabled = true;
                 self.settings.start_mode = StartMode::Normal;
-                if self.settings.environment.pm2.is_none() {
+                if !self
+                    .settings
+                    .environment
+                    .has_any(EnvironmentDependency::Pm2)
+                {
                     self.settings.allow_tavern_background = false;
                 }
             }
@@ -2730,9 +2832,59 @@ impl Launcher {
         }
     }
 
-    fn start_environment_install(&mut self, dependency: EnvironmentDependency) {
-        // 旧版 Homebrew 安装按钮本身就是占位入口，保持其原有行为。
-        if dependency == EnvironmentDependency::Homebrew {
+    /// 在后台线程探测两套环境（内置 `lib/` 与系统 PATH）的依赖版本。
+    ///
+    /// 探测会拉起 `git`/`node`/`caddy`/`pm2` 多个子进程，单次可达数百毫秒，
+    /// 必须离开 iced 主线程，否则窗口会明显卡顿。
+    fn start_environment_detect(&mut self) {
+        if self.environment_detect_receiver.is_some() {
+            return;
+        }
+        let (sender, receiver) = mpsc::channel();
+        self.environment_detect_receiver = Some(receiver);
+        std::thread::spawn(move || {
+            let _ = sender.send(crate::pages::settings::EnvironmentSnapshot::detect_all());
+        });
+    }
+
+    /// 收集后台环境探测结果；线程未结束或通道未断开时保留接收端。
+    fn poll_environment_detect(&mut self) {
+        let Some(receiver) = self.environment_detect_receiver.take() else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(snapshot) => {
+                self.settings.environment = snapshot;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.environment_detect_receiver = Some(receiver);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+        }
+    }
+
+    /// 解析当前代理设置为 npm 需要的三元组。
+    fn npm_proxy_settings(&self) -> (String, String, String) {
+        let registry = self.settings.npm_registry.url().to_owned();
+        let mode = match self.settings.proxy_mode {
+            ProxyMode::None => "none",
+            ProxyMode::System => "system",
+            ProxyMode::Custom => "custom",
+        }
+        .to_owned();
+        let host = self.settings.custom_proxy.clone();
+        (registry, mode, host)
+    }
+
+    fn start_environment_install(
+        &mut self,
+        dependency: EnvironmentDependency,
+        source: crate::core::settings::EnvSource,
+    ) {
+        use crate::core::settings::{EnvSource, install};
+
+        // 系统环境由用户自行维护，启动器不代管安装，避免污染用户机器。
+        if source == EnvSource::System {
             return;
         }
 
@@ -2742,6 +2894,7 @@ impl Launcher {
         self.environment_task_cancel = Some(cancel.clone());
         self.settings.environment_task = EnvironmentTaskState {
             dependency: Some(dependency),
+            source,
             show: true,
             log: String::new(),
             running: true,
@@ -2750,39 +2903,19 @@ impl Launcher {
             timed_out: false,
             failed: false,
             show_details: false,
+            progress: None,
+            stage: None,
         };
 
-        // PM2 通过 npm 安装，应与本地实例依赖安装共用用户选择的软件源和代理。
-        let npm_registry = self.settings.npm_registry.url().to_owned();
-        let proxy_mode = match self.settings.proxy_mode {
-            ProxyMode::None => "none",
-            ProxyMode::System => "system",
-            ProxyMode::Custom => "custom",
-        }
-        .to_owned();
-        let proxy_host = self.settings.custom_proxy.clone();
-
-        std::thread::spawn(move || match dependency {
-            EnvironmentDependency::Git => {
-                crate::core::settings::env_detect::run_brew_install("git", sender, cancel)
-            }
-            EnvironmentDependency::NodeJs => {
-                crate::core::settings::env_detect::run_brew_install("node@24", sender, cancel)
-            }
-            EnvironmentDependency::Caddy => {
-                crate::core::settings::env_detect::run_brew_install("caddy", sender, cancel)
-            }
-            EnvironmentDependency::Pm2 => {
-                crate::core::settings::env_detect::run_npm_install_global(
-                    "pm2",
-                    &npm_registry,
-                    &proxy_mode,
-                    &proxy_host,
-                    sender,
-                    cancel,
-                )
-            }
-            EnvironmentDependency::Homebrew => {}
+        // 安装流程统一使用用户选择的软件源与代理设置。
+        let (npm_registry, proxy_mode, proxy_host) = self.npm_proxy_settings();
+        std::thread::spawn(move || {
+            let options = install::InstallOptions {
+                npm_registry,
+                proxy_mode,
+                proxy_host,
+            };
+            install::install_dependency(dependency, source, options, sender, cancel);
         });
     }
 
@@ -2872,10 +3005,25 @@ impl Launcher {
                         }
                         if let Some(version) = line.strip_prefix("__VERSION__:") {
                             if let Some(dependency) = self.settings.environment_task.dependency {
-                                self.settings
-                                    .environment
-                                    .set(dependency, version.to_owned());
+                                let source = self.settings.environment_task.source;
+                                self.settings.environment.set(source, dependency, version.to_owned());
                             }
+                            continue;
+                        }
+                        if let Some(raw) = line.strip_prefix("__PROGRESS__:") {
+                            // 只有解析成功且落在 0-100 内才覆盖，避免异常值把进度条推飞。
+                            if let Ok(percent) = raw.trim().parse::<f32>()
+                                && (0.0..=100.0).contains(&percent)
+                            {
+                                self.settings.environment_task.progress = Some(percent);
+                            }
+                            continue;
+                        }
+                        if let Some(key) = line.strip_prefix("__STATUS__:") {
+                            // 安装线程运行在 i18n 的语言线程之外，
+                            // 因此这里收的是文案键，必须在主线程解析成实际文案。
+                            self.settings.environment_task.stage =
+                                Some(crate::lang::resolve(key.trim()));
                             continue;
                         }
                         if !self.settings.environment_task.log.is_empty() {
@@ -2955,19 +3103,19 @@ impl Launcher {
                 |paths| Message::Extensions(ExtensionsMessage::OfflineFilesChosen(paths)),
             ),
             ExtensionAction::OpenPath(path) => {
-                if let Err(error) = std::process::Command::new("open").arg(&path).spawn() {
+                if let Err(error) = crate::core::shell::open_path(&path) {
                     self.extensions.set_action_error(crate::core::extensions::ExtensionError::new(
                         "extensions.error.open_failed",
-                        error.to_string(),
+                        error,
                     ));
                 }
                 Task::none()
             }
             ExtensionAction::OpenUrl(url) => {
-                if let Err(error) = std::process::Command::new("open").arg(&url).spawn() {
+                if let Err(error) = crate::core::shell::open_target(&url) {
                     self.extensions.set_action_error(crate::core::extensions::ExtensionError::new(
                         "extensions.error.open_failed",
-                        error.to_string(),
+                        error,
                     ));
                 }
                 Task::none()
@@ -3232,9 +3380,12 @@ impl Launcher {
 
     fn pick_directory(initial: &str) -> Option<String> {
         let dialog = rfd::FileDialog::new().set_directory(expand_home_path(initial));
-        dialog
-            .pick_folder()
-            .map(|path| path.to_string_lossy().into_owned())
+        dialog.pick_folder().map(|path| {
+            // 系统目录选择器在部分场景返回扩展长度路径（`\\?\D:\...`）：
+            // 该前缀只对 Win32 API 有意义，写进设置或实例列表后会被用户当成
+            // 路径的一部分，因此统一剥掉再交给上层。
+            crate::core::local_instances::display_path(&path)
+        })
     }
 
     /// 根据字体选择启动读取与渲染器注册流程。
@@ -3318,6 +3469,7 @@ impl Launcher {
             auto_stop_tavern_on_window_close: self.settings.auto_stop_tavern_on_window_close,
             allow_tavern_background: self.settings.allow_tavern_background,
             show_startup_command: self.settings.show_startup_command,
+            env_mode: self.settings.env_mode,
             staging_risk_confirmed: self.versions.staging_risk_confirmed,
         };
         self.settings.save_error = self
@@ -3671,25 +3823,20 @@ impl Launcher {
     }
 }
 
+/// 把 Unix 时间戳格式化成 `YYYY-MM-DD HH:MM`（本地时区）。
+///
+/// Windows 没有 `date` 命令，换算逻辑见 [`crate::core::time`]。
 fn format_version_sync_time(timestamp: u64) -> String {
     if timestamp == 0 {
         return t("resources.unknown").to_owned();
     }
-    // macOS 自带 date，使用本地时间显示缓存写入时间，不会触发网络请求。
-    std::process::Command::new("date")
-        .args(["-r", &timestamp.to_string(), "+%Y-%m-%d %H:%M"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| timestamp.to_string())
+    crate::core::time::readable_stamp(timestamp)
 }
 
 fn expand_home_path(path: &str) -> PathBuf {
     let trimmed = path.trim();
     if let Some(rest) = trimmed.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
+        if let Some(home) = std::env::var_os("USERPROFILE") {
             return PathBuf::from(home).join(rest);
         }
     }
@@ -3815,6 +3962,7 @@ mod tests {
         launcher.environment_task_receiver = Some(receiver);
         launcher.settings.environment_task = EnvironmentTaskState {
             dependency: Some(EnvironmentDependency::Git),
+            source: crate::core::settings::EnvSource::Builtin,
             show: true,
             log: String::new(),
             running: true,
@@ -3823,6 +3971,8 @@ mod tests {
             timed_out: false,
             failed: false,
             show_details: false,
+            progress: None,
+            stage: None,
         };
         sender
             .send("__ERROR__:命令执行失败（退出码：7）".into())
@@ -3954,6 +4104,7 @@ mod tests {
         launcher.environment_task_receiver = Some(receiver);
         launcher.settings.environment_task = EnvironmentTaskState {
             dependency: Some(EnvironmentDependency::Git),
+            source: crate::core::settings::EnvSource::Builtin,
             show: true,
             log: String::new(),
             running: true,
@@ -3962,6 +4113,8 @@ mod tests {
             timed_out: false,
             failed: false,
             show_details: false,
+            progress: None,
+            stage: None,
         };
         sender
             .send("__VERSION__:2.47.0".into())
@@ -3969,7 +4122,16 @@ mod tests {
         sender.send("__DONE__".into()).expect("send completion");
 
         let _ = launcher.update(Message::EnvironmentTaskTick(now));
-        assert_eq!(launcher.settings.environment.git.as_deref(), Some("2.47.0"));
+        // 安装结果写入本次任务的目标来源（内置环境）。
+        assert_eq!(
+            launcher
+                .settings
+                .environment
+                .for_source(crate::core::settings::EnvSource::Builtin)
+                .git
+                .as_deref(),
+            Some("2.47.0")
+        );
         assert!(!launcher.settings.environment_task.running);
         assert!(launcher.settings.environment_task.show);
 
@@ -3980,9 +4142,14 @@ mod tests {
     }
 
     #[test]
-    fn homebrew_install_keeps_the_old_placeholder_behavior() {
+    fn system_source_install_is_rejected_without_touching_task_state() {
         let mut launcher = launcher();
-        let _ = launcher.update(Message::EnvironmentInstall(EnvironmentDependency::Homebrew));
+        // 系统环境由用户自行维护，启动器只负责内置环境安装；
+        // 因此对 System 来源的安装请求应当被静默拒绝，不弹出安装窗口。
+        let _ = launcher.update(Message::EnvironmentInstall {
+            dependency: EnvironmentDependency::Caddy,
+            source: crate::core::settings::EnvSource::System,
+        });
         assert!(launcher.environment_task_receiver.is_none());
         assert!(!launcher.settings.environment_task.show);
     }

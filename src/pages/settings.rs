@@ -232,64 +232,167 @@ impl UpdateState {
     }
 }
 
+/// 环境依赖条目。
+///
+/// 与旧版 macOS 版本相比去掉了 Homebrew（Windows 不需要包管理器），
+/// 新增 WebView2（桌面模式渲染酒馆界面所需）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvironmentDependency {
-    Homebrew,
     Git,
     NodeJs,
     Caddy,
     Pm2,
+    WebView2,
 }
 
 impl EnvironmentDependency {
+    /// 依赖名称。
+    ///
+    /// 这些是产品名（Git、Node.js、Caddy、PM2、WebView2），属于专有名词，
+    /// 不属于需要翻译的界面文案，因此直接使用字面量。
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Homebrew => "Homebrew",
             Self::Git => "Git",
             Self::NodeJs => "Node.js",
             Self::Caddy => "Caddy",
             Self::Pm2 => "PM2",
+            Self::WebView2 => "WebView2",
         }
     }
 }
 
+/// 某个环境来源下各依赖的已装版本。
+///
+/// `None` 表示未安装；WebView2 在系统来源下由注册表提供版本号，
+/// 在内置来源下由 `lib/webview2/version.txt` 提供。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EnvironmentVersions {
-    pub homebrew: Option<String>,
     pub git: Option<String>,
     pub nodejs: Option<String>,
     pub caddy: Option<String>,
     pub pm2: Option<String>,
+    pub webview2: Option<String>,
 }
 
 impl EnvironmentVersions {
-    #[cfg(not(test))]
-    pub fn detect_all() -> Self {
+    /// 按指定来源探测全部依赖版本。
+    ///
+    /// 探测会拉起多个子进程（`git --version`、`node --version` 等），
+    /// 单次耗时可达数百毫秒，必须放在后台线程执行，避免阻塞 iced 主线程。
+    pub fn detect(source: crate::core::settings::EnvSource) -> Self {
         use crate::core::settings::env_detect;
         Self {
-            homebrew: env_detect::detect_homebrew(),
-            git: env_detect::detect_git(),
-            nodejs: env_detect::detect_nodejs(),
-            caddy: env_detect::detect_caddy(),
-            pm2: env_detect::detect_pm2(),
+            git: env_detect::detect_git(source),
+            nodejs: env_detect::detect_nodejs(source),
+            caddy: env_detect::detect_caddy(source),
+            pm2: env_detect::detect_pm2(source),
+            webview2: env_detect::detect_version("webview2", source),
+        }
+    }
+
+    /// 读取指定依赖的版本。
+    pub fn get(&self, dependency: EnvironmentDependency) -> Option<&String> {
+        match dependency {
+            EnvironmentDependency::Git => self.git.as_ref(),
+            EnvironmentDependency::NodeJs => self.nodejs.as_ref(),
+            EnvironmentDependency::Caddy => self.caddy.as_ref(),
+            EnvironmentDependency::Pm2 => self.pm2.as_ref(),
+            EnvironmentDependency::WebView2 => self.webview2.as_ref(),
         }
     }
 
     pub fn set(&mut self, dependency: EnvironmentDependency, version: String) {
         let slot = match dependency {
-            EnvironmentDependency::Homebrew => &mut self.homebrew,
             EnvironmentDependency::Git => &mut self.git,
             EnvironmentDependency::NodeJs => &mut self.nodejs,
             EnvironmentDependency::Caddy => &mut self.caddy,
             EnvironmentDependency::Pm2 => &mut self.pm2,
+            EnvironmentDependency::WebView2 => &mut self.webview2,
         };
         *slot = Some(version);
+    }
+}
+
+/// 双来源环境探测结果。
+///
+/// 界面需要同时知道两套环境的安装情况：用户切换环境模式时要立即显示
+/// 新来源的状态，而不是等下一次后台探测回来才刷新。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EnvironmentSnapshot {
+    /// 内置 `lib/` 环境。
+    pub builtin: EnvironmentVersions,
+    /// 系统 PATH 环境。
+    pub system: EnvironmentVersions,
+    /// 是否已至少完成一次探测（未完成前界面显示「检测中」）。
+    pub detected: bool,
+}
+
+impl EnvironmentSnapshot {
+    /// 探测两套环境。
+    pub fn detect_all() -> Self {
+        use crate::core::settings::EnvSource;
+        Self {
+            builtin: EnvironmentVersions::detect(EnvSource::Builtin),
+            system: EnvironmentVersions::detect(EnvSource::System),
+            detected: true,
+        }
+    }
+
+    /// 取出指定来源的探测结果。
+    pub fn for_source(&self, source: crate::core::settings::EnvSource) -> &EnvironmentVersions {
+        match source {
+            crate::core::settings::EnvSource::Builtin => &self.builtin,
+            crate::core::settings::EnvSource::System => &self.system,
+        }
+    }
+
+    /// 可变取出指定来源的探测结果。
+    pub fn for_source_mut(
+        &mut self,
+        source: crate::core::settings::EnvSource,
+    ) -> &mut EnvironmentVersions {
+        match source {
+            crate::core::settings::EnvSource::Builtin => &mut self.builtin,
+            crate::core::settings::EnvSource::System => &mut self.system,
+        }
+    }
+
+    /// 指定来源下某个依赖是否已安装。
+    ///
+    /// 用于「该依赖当前是否可用」这类布尔判断，避免调用方层层展开字段。
+    pub fn has(
+        &self,
+        source: crate::core::settings::EnvSource,
+        dependency: EnvironmentDependency,
+    ) -> bool {
+        self.for_source(source).get(dependency).is_some()
+    }
+
+    /// 两套环境中任一来源装有该依赖即可用。
+    ///
+    /// 适用于「能不能用」而非「装在哪」的判断：例如酒馆既可以用内置 PM2，
+    /// 也可以用用户自己装好的系统 PM2，只要有一套可用就不该拦截操作。
+    pub fn has_any(&self, dependency: EnvironmentDependency) -> bool {
+        self.has(crate::core::settings::EnvSource::Builtin, dependency)
+            || self.has(crate::core::settings::EnvSource::System, dependency)
+    }
+
+    /// 更新某个来源下某个依赖的版本号。
+    pub fn set(
+        &mut self,
+        source: crate::core::settings::EnvSource,
+        dependency: EnvironmentDependency,
+        version: String,
+    ) {
+        self.for_source_mut(source).set(dependency, version);
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct EnvironmentTaskState {
     pub dependency: Option<EnvironmentDependency>,
+    /// 本次安装写入的目标环境来源。
+    pub source: crate::core::settings::EnvSource,
     pub show: bool,
     pub log: String,
     pub running: bool,
@@ -299,6 +402,10 @@ pub struct EnvironmentTaskState {
     pub failed: bool,
     /// 安装日志默认收起，用户需要时再展开查看完整详情。
     pub show_details: bool,
+    /// 确定进度百分比（0-100）；下载类安装会持续更新。
+    pub progress: Option<f32>,
+    /// 当前阶段说明（已解析的文案，进入通道时固化）。
+    pub stage: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -402,7 +509,10 @@ pub struct SettingsState {
     pub proxy_mode: ProxyMode,
     pub custom_proxy: String,
     pub system_proxy_status: SystemProxyStatus,
-    pub environment: EnvironmentVersions,
+    /// 当前选中的环境来源（内置 `lib/` 或系统 PATH）。
+    pub env_mode: crate::core::settings::EnvSource,
+    /// 双来源环境探测结果。
+    pub environment: EnvironmentSnapshot,
     pub environment_task: EnvironmentTaskState,
     pub github_test: GithubTestState,
     /// 启动器更新模块的界面状态。
@@ -448,7 +558,8 @@ impl Default for SettingsState {
             proxy_mode: ProxyMode::System,
             custom_proxy: String::new(),
             system_proxy_status: SystemProxyStatus::Unknown,
-            environment: EnvironmentVersions::default(),
+            env_mode: crate::core::settings::EnvSource::Builtin,
+            environment: EnvironmentSnapshot::default(),
             environment_task: EnvironmentTaskState::default(),
             github_test: GithubTestState::default(),
             update: UpdateState::default(),
@@ -1364,7 +1475,10 @@ fn basic_settings(state: &SettingsState, mode_controls_locked: bool) -> Element<
     }
 
     if state.server_mode_enabled {
-        let pm2_available = state.environment.pm2.is_some();
+        // 后台常驻依赖 PM2；内置与系统两套环境中任一可用即可放开开关。
+        let pm2_available = state
+            .environment
+            .has_any(EnvironmentDependency::Pm2);
         rows.push(setting_row(
             Icon::CloudCog,
             "settings.field.allow_background",
@@ -1439,23 +1553,19 @@ fn console_settings(state: &SettingsState) -> Element<'_, Message> {
 }
 
 fn environment_settings(state: &SettingsState) -> Element<'_, Message> {
-    use crate::core::settings::env_detect;
+    use crate::core::settings::{EnvSource, env_detect};
 
-    let brew_installed = state.environment.homebrew.is_some();
-    let nodejs_installed = state.environment.nodejs.is_some();
-    let homebrew_outdated = state
-        .environment
-        .homebrew
-        .as_deref()
-        .is_some_and(env_detect::is_homebrew_outdated);
-    let nodejs_outdated = state
-        .environment
+    let source = state.env_mode;
+    let versions = state.environment.for_source(source);
+    let is_system = source == EnvSource::System;
+
+    let nodejs_installed = versions.nodejs.is_some();
+    let nodejs_outdated = versions
         .nodejs
         .as_deref()
         .is_some_and(env_detect::is_nodejs_outdated);
-
-    let homebrew_title = dependency_title("Homebrew", homebrew_outdated);
     let nodejs_title = dependency_title("Node.js", nodejs_outdated);
+
     let caddy_description = if state.server_mode_enabled {
         "settings.dep.caddy.required"
     } else {
@@ -1468,26 +1578,19 @@ fn environment_settings(state: &SettingsState) -> Element<'_, Message> {
     };
 
     let rows = section_rows(vec![
-        environment_dependency_row(
-            Icon::Beer,
-            homebrew_title,
-            "settings.dep.homebrew",
-            environment_version_or_action(
-                EnvironmentDependency::Homebrew,
-                state.environment.homebrew.clone(),
-                false,
-                true,
-            ),
-        ),
+        // 环境模式：决定后续每一行从哪套环境读取版本、往哪套环境安装。
+        environment_mode_row(state),
         environment_dependency_row(
             Icon::GitBranch,
             "Git".to_owned(),
             "settings.dep.git",
             environment_version_or_action(
+                source,
                 EnvironmentDependency::Git,
-                state.environment.git.clone(),
+                versions.git.clone(),
                 false,
-                brew_installed,
+                // 系统环境由用户自行维护，启动器不提供安装入口。
+                !is_system,
             ),
         ),
         environment_dependency_row(
@@ -1495,10 +1598,11 @@ fn environment_settings(state: &SettingsState) -> Element<'_, Message> {
             nodejs_title,
             "settings.dep.nodejs",
             environment_version_or_action(
+                source,
                 EnvironmentDependency::NodeJs,
-                state.environment.nodejs.clone(),
+                versions.nodejs.clone(),
                 nodejs_outdated,
-                brew_installed,
+                !is_system,
             ),
         ),
         npm_registry_setting(state),
@@ -1507,10 +1611,11 @@ fn environment_settings(state: &SettingsState) -> Element<'_, Message> {
             "Caddy".to_owned(),
             caddy_description,
             environment_version_or_action(
+                source,
                 EnvironmentDependency::Caddy,
-                state.environment.caddy.clone(),
+                versions.caddy.clone(),
                 false,
-                brew_installed,
+                !is_system,
             ),
         ),
         environment_dependency_row(
@@ -1518,10 +1623,24 @@ fn environment_settings(state: &SettingsState) -> Element<'_, Message> {
             "PM2".to_owned(),
             pm2_description,
             environment_version_or_action(
+                source,
                 EnvironmentDependency::Pm2,
-                state.environment.pm2.clone(),
+                versions.pm2.clone(),
                 false,
-                nodejs_installed,
+                // PM2 是 npm 全局包，必须先有 Node.js。
+                !is_system && nodejs_installed,
+            ),
+        ),
+        environment_dependency_row(
+            Icon::MonitorSmartphone,
+            "WebView2".to_owned(),
+            "settings.dep.webview2",
+            environment_version_or_action(
+                source,
+                EnvironmentDependency::WebView2,
+                versions.webview2.clone(),
+                false,
+                !is_system,
             ),
         ),
     ]);
@@ -1532,6 +1651,42 @@ fn environment_settings(state: &SettingsState) -> Element<'_, Message> {
         "settings.section.environment.hint",
         rows,
     )
+}
+
+/// 环境模式切换行。
+///
+/// 使用分段控件而非下拉框，使两个选项始终可见，避免用户误以为只有一种模式。
+fn environment_mode_row(state: &SettingsState) -> Element<'_, Message> {
+    use crate::core::settings::EnvSource;
+
+    row![
+        setting_icon(Icon::Wrench),
+        column![
+            text("settings.env_mode.title")
+                .size(13)
+                .font(crate::core::typography::medium())
+                .style(crate::theme::text_style),
+            text("settings.env_mode.hint")
+                .size(11)
+                .font(crate::core::typography::regular())
+                .style(crate::theme::muted_text_style),
+        ]
+        .spacing(4)
+        .width(Fill),
+        segmented_control(
+            &[
+                (EnvSource::Builtin, "settings.env_mode.builtin", Icon::Package),
+                (EnvSource::System, "settings.env_mode.system", Icon::Globe),
+            ],
+            state.env_mode,
+            Message::SettingsEnvModeSelected,
+        ),
+    ]
+    .spacing(12)
+    .padding([13, 16])
+    .align_y(Alignment::Center)
+    .width(Fill)
+    .into()
 }
 
 fn npm_registry_setting(state: &SettingsState) -> Element<'_, Message> {
@@ -1588,6 +1743,7 @@ fn dependency_title(name: &str, outdated: bool) -> String {
 }
 
 fn environment_version_or_action(
+    source: crate::core::settings::EnvSource,
     dependency: EnvironmentDependency,
     version: Option<String>,
     outdated: bool,
@@ -1598,6 +1754,7 @@ fn environment_version_or_action(
             "settings.dep.update",
             Icon::ArrowUp,
             dependency,
+            source,
             enabled,
         ),
         Some(version) => raw(version)
@@ -1605,11 +1762,18 @@ fn environment_version_or_action(
             .font(crate::core::typography::medium())
             .style(crate::theme::text_style)
             .into(),
+        // 系统环境下只能提示「未安装」，安装入口交给用户自己处理。
+        None if !enabled => text("settings.dep.not_installed")
+            .size(13)
+            .font(crate::core::typography::regular())
+            .style(crate::theme::muted_text_style)
+            .into(),
         None => environment_action_button(
             "versions.online.install",
             Icon::Download,
             dependency,
-            enabled,
+            source,
+            true,
         ),
     }
 }
@@ -1622,6 +1786,7 @@ fn environment_action_button(
     label: &'static str,
     icon: Icon,
     dependency: EnvironmentDependency,
+    source: crate::core::settings::EnvSource,
     enabled: bool,
 ) -> Element<'static, Message> {
     let content = row![
@@ -1635,7 +1800,7 @@ fn environment_action_button(
         .padding([7, 11])
         .style(button_style(ButtonVariant::Secondary));
     if enabled {
-        control = control.on_press(Message::EnvironmentInstall(dependency));
+        control = control.on_press(Message::EnvironmentInstall { dependency, source });
     }
     control.into()
 }
@@ -2623,7 +2788,7 @@ fn font_control(state: &SettingsState) -> Element<'_, Message> {
     .menu_style(pick_list_menu_style);
 
     if state.font_loading {
-        column![
+        return column![
             picker,
             raw(t_in("settings.interface.font.loading", current_language()))
             .size(10)
@@ -2631,10 +2796,24 @@ fn font_control(state: &SettingsState) -> Element<'_, Message> {
             .style(crate::theme::muted_text_style),
         ]
         .spacing(4)
-        .into()
-    } else {
-        picker.into()
+        .into();
     }
+
+    // 选中不含中文字形的西文字体时提示用户：中文会退回系统字体渲染，
+    // 与拉丁数字形成粗细差。这里不阻止选择，只把后果说明白。
+    if !state.selected_font.covers_cjk() {
+        return column![
+            picker,
+            raw(t_in("settings.interface.font.no_cjk_warning", current_language()))
+                .size(10)
+                .font(crate::core::typography::regular())
+                .style(crate::theme::warning_text_style),
+        ]
+        .spacing(4)
+        .into();
+    }
+
+    picker.into()
 }
 
 fn input_control<'a>(

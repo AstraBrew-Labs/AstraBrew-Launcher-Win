@@ -16,6 +16,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::core::pm2::Pm2Manager;
+use crate::core::settings::EnvSource;
 
 /// 进程日志的级别标记：发射端与解析端之间的内部协议，不是可翻译文案。
 ///
@@ -61,13 +62,15 @@ pub struct TavernLaunchSpec {
     pub allow_background: bool,
     pub show_startup_command: bool,
     pub export_path: String,
+    /// 本次运行使用的环境来源（内置 `lib/` 或系统 PATH）。
+    pub env_source: EnvSource,
 }
 
 impl TavernLaunchSpec {
     pub fn runtime_mode(&self) -> RuntimeMode {
         if self.launch_mode == TavernLaunchMode::Server
             && self.allow_background
-            && Pm2Manager::is_installed()
+            && Pm2Manager::new(self.env_source).is_installed()
         {
             RuntimeMode::Pm2
         } else {
@@ -203,11 +206,23 @@ struct WorkerState {
     restart_spec: Option<TavernLaunchSpec>,
     conflict_port: Option<u16>,
     conflict_retried: bool,
-    pm2: Pm2Manager,
+    pm2: Option<Pm2Manager>,
     pm2_out_offset: u64,
     pm2_error_offset: u64,
     last_pm2_poll: Instant,
     restoring_pm2_logs: bool,
+}
+
+impl WorkerState {
+    /// 取出当前 PM2 管理器。
+    ///
+    /// 只有在 `active_mode` 已进入 `Pm2` 或 `start` 刚完成初始化时才存在；
+    /// 调用点都处于这两种状态之一，因此缺失视为「PM2 不可用」。
+    fn pm2(&self) -> Result<&Pm2Manager, String> {
+        self.pm2
+            .as_ref()
+            .ok_or_else(|| t("pm2.not_available").to_owned())
+    }
 }
 
 fn worker_loop(commands: Receiver<ProcessCommand>, events: Sender<ProcessEvent>) {
@@ -218,7 +233,7 @@ fn worker_loop(commands: Receiver<ProcessCommand>, events: Sender<ProcessEvent>)
         restart_spec: None,
         conflict_port: None,
         conflict_retried: false,
-        pm2: Pm2Manager,
+        pm2: None,
         pm2_out_offset: 0,
         pm2_error_offset: 0,
         last_pm2_poll: Instant::now() - Duration::from_secs(2),
@@ -246,17 +261,33 @@ fn worker_loop(commands: Receiver<ProcessCommand>, events: Sender<ProcessEvent>)
 }
 
 fn restore_pm2(state: &mut WorkerState, events: &Sender<ProcessEvent>) {
-    if !Pm2Manager::is_installed() {
-        return;
-    }
-    if let Ok(Some(info)) = state.pm2.info()
-        && info.status == "online"
-    {
+    // 内置与系统两套环境都可能托管着酒馆进程，逐一检查，
+    // 使用户在切换环境模式后仍能自动接管正在运行的实例。
+    for source in [EnvSource::Builtin, EnvSource::System] {
+        let pm2 = Pm2Manager::new(source);
+        if !pm2.is_installed() {
+            continue;
+        }
+        let Ok(Some(info)) = pm2.info() else {
+            continue;
+        };
+        if info.status != "online" {
+            continue;
+        }
+        state.pm2 = Some(pm2);
         state.active_mode = Some(RuntimeMode::Pm2);
         // 仅回放尾部 2 MiB，足以覆盖控制台最近 2000 行，同时避免超大日志阻塞界面。
         const RESTORE_BYTES: u64 = 2 * 1024 * 1024;
-        state.pm2_out_offset = state.pm2.tail_offset(false, RESTORE_BYTES);
-        state.pm2_error_offset = state.pm2.tail_offset(true, RESTORE_BYTES);
+        state.pm2_out_offset = state
+            .pm2
+            .as_ref()
+            .map(|pm2| pm2.tail_offset(false, RESTORE_BYTES))
+            .unwrap_or(0);
+        state.pm2_error_offset = state
+            .pm2
+            .as_ref()
+            .map(|pm2| pm2.tail_offset(true, RESTORE_BYTES))
+            .unwrap_or(0);
         state.restoring_pm2_logs = true;
         state.last_pm2_poll = Instant::now() - Duration::from_secs(2);
         let _ = events.send(ProcessEvent::Pm2Restored {
@@ -269,7 +300,9 @@ fn restore_pm2(state: &mut WorkerState, events: &Sender<ProcessEvent>) {
 
 fn start(state: &mut WorkerState, spec: TavernLaunchSpec, events: &Sender<ProcessEvent>) {
     if state.active_mode == Some(RuntimeMode::Pm2) {
-        if let Ok(Some(info)) = state.pm2.info() {
+        if let Some(pm2) = state.pm2.as_ref()
+            && let Ok(Some(info)) = pm2.info()
+        {
             let _ = events.send(ProcessEvent::Pm2Restored {
                 pid: info.pid,
                 cwd: info.cwd,
@@ -286,6 +319,8 @@ fn start(state: &mut WorkerState, spec: TavernLaunchSpec, events: &Sender<Proces
     state.conflict_retried = false;
     let requested_pm2 = spec.launch_mode == TavernLaunchMode::Server && spec.allow_background;
     let mode = spec.runtime_mode();
+    // 按本次启动使用的环境来源重建 PM2 管理器，保证 CLI 与 Node.js 版本配套。
+    state.pm2 = Some(Pm2Manager::new(spec.env_source));
     // Starting 是新日志会话的边界，必须先于校验失败和任何新进程日志。
     let _ = events.send(ProcessEvent::Starting(mode));
     if let Err(error) = validate_spec(&spec) {
@@ -299,7 +334,7 @@ fn start(state: &mut WorkerState, spec: TavernLaunchSpec, events: &Sender<Proces
     if requested_pm2 && mode == RuntimeMode::Direct {
         let _ = events.send(ProcessEvent::Pm2Unavailable);
     }
-    if spec.github_proxy_url.is_some() && !node_supports_import() {
+    if spec.github_proxy_url.is_some() && !node_supports_import(spec.env_source) {
         let warning = format!("{LOG_MARK_WARNING}{}", t("tavern.process.interceptor_unsupported"));
         let _ = events.send(ProcessEvent::Log(warning));
     }
@@ -334,7 +369,7 @@ fn validate_spec(spec: &TavernLaunchSpec) -> Result<(), String> {
     if !spec.instance_path.join("server.js").is_file() {
         return Err(tf("tavern.process.not_a_tavern", &[("path", &spec.instance_path.display())]));
     }
-    if crate::core::settings::env_detect::detect_nodejs().is_none() {
+    if crate::core::settings::env_detect::detect_nodejs(spec.env_source).is_none() {
         return Err(t("tavern.process.nodejs_required").to_owned());
     }
     let config = spec.config_path();
@@ -398,7 +433,7 @@ fn launch_command(spec: &TavernLaunchSpec) -> Result<LaunchCommand, String> {
     let mut environment = Vec::new();
     let mut proxy = spec.proxy.clone().map(|value| normalize_proxy_url(&value));
     let node_import = if let Some(url) = spec.github_proxy_url.as_deref() {
-        if node_supports_import() {
+        if node_supports_import(spec.env_source) {
             proxy = None;
             let path = prepare_interceptor()?;
             environment.push(("GITHUB_PROXY_URL".to_owned(), url.to_owned()));
@@ -435,7 +470,7 @@ fn start_direct(
     events: &Sender<ProcessEvent>,
 ) -> Result<(), String> {
     let launch = launch_command(spec)?;
-    let mut command = crate::core::settings::env_detect::cmd("node");
+    let mut command = crate::core::settings::env_detect::command_for("node", spec.env_source);
     if let Some(import) = launch.node_import {
         command.arg("--import").arg(import);
     }
@@ -486,7 +521,11 @@ fn start_pm2(
     events: &Sender<ProcessEvent>,
 ) -> Result<(), String> {
     let launch = launch_command(spec)?;
-    state.pm2.clear_logs();
+    let pm2 = state
+        .pm2
+        .as_ref()
+        .ok_or_else(|| t("pm2.not_available").to_owned())?;
+    pm2.clear_logs();
     state.pm2_out_offset = 0;
     state.pm2_error_offset = 0;
     state.restoring_pm2_logs = false;
@@ -494,16 +533,37 @@ fn start_pm2(
         .node_import
         .as_deref()
         .map(|path| format!("--import {path}"));
-    state.pm2.start(
+    pm2.start(
         &spec.instance_path,
         node_args.as_deref(),
         &launch.arguments[1..],
         &launch.environment,
     )?;
-    if let Some(info) = state.pm2.info()? {
+    if let Some(info) = pm2.info()? {
         let _ = events.send(ProcessEvent::Pid(info.pid));
     }
     Ok(())
+}
+
+/// 结束指定进程。
+///
+/// `force = false` 时先尝试 `/T`（连同子进程树一起请求关闭）：Node 会先收到控制台关闭事件，
+/// 有机会把日志刷完；`force = true` 时加上 `/F` 强制终止 —— Node 子进程通常不响应
+/// 优雅关闭，端口释放路径必须能走到这一步。
+///
+/// 用 `taskkill` 而不是 `Child::kill()`：后台模式下进程树里还有 Node 派生的孙进程，
+/// 只杀父进程会让端口继续被占着。
+fn terminate_process(pid: u32, force: bool) -> Result<(), String> {
+    let mut command = Command::new("taskkill");
+    if force {
+        command.arg("/F");
+    }
+    command.arg("/T").args(["/PID", &pid.to_string()]);
+    crate::core::env::apply_no_window_to_command(&mut command);
+    command
+        .status()
+        .map(|_| ())
+        .map_err(|error| tf("tavern.process.stop_failed", &[("error", &error)]))
 }
 
 fn stop(state: &mut WorkerState, events: &Sender<ProcessEvent>) {
@@ -514,14 +574,11 @@ fn stop(state: &mut WorkerState, events: &Sender<ProcessEvent>) {
     match mode {
         RuntimeMode::Direct => {
             if let Some(process) = state.direct.as_mut() {
-                let _ = Command::new("kill")
-                    .arg("-TERM")
-                    .arg(process.child.id().to_string())
-                    .status();
+                let _ = terminate_process(process.child.id(), false);
                 process.stop_deadline = Some(Instant::now() + Duration::from_secs(8));
             }
         }
-        RuntimeMode::Pm2 => match state.pm2.stop() {
+        RuntimeMode::Pm2 => match state.pm2().and_then(Pm2Manager::stop) {
             Ok(()) => finish_stopped(state, events),
             Err(error) => recover_pm2_after_command_error(state, events, error),
         },
@@ -537,7 +594,7 @@ fn kill(state: &mut WorkerState, events: &Sender<ProcessEvent>) {
             }
             finish_stopped(state, events);
         }
-        Some(RuntimeMode::Pm2) => match state.pm2.delete() {
+        Some(RuntimeMode::Pm2) => match state.pm2().and_then(Pm2Manager::delete) {
             Ok(()) => finish_stopped(state, events),
             Err(error) => recover_pm2_after_command_error(state, events, error),
         },
@@ -548,11 +605,14 @@ fn kill(state: &mut WorkerState, events: &Sender<ProcessEvent>) {
 fn restart(state: &mut WorkerState, events: &Sender<ProcessEvent>) {
     if state.active_mode == Some(RuntimeMode::Pm2) {
         let _ = events.send(ProcessEvent::Starting(RuntimeMode::Pm2));
-        state.pm2.clear_logs();
         state.pm2_out_offset = 0;
         state.pm2_error_offset = 0;
         state.restoring_pm2_logs = false;
-        match state.pm2.restart() {
+        let result = state.pm2().map(|pm2| {
+            pm2.clear_logs();
+            pm2.restart()
+        });
+        match result.and_then(|result| result) {
             Ok(()) => {
                 let _ = events.send(ProcessEvent::Running(RuntimeMode::Pm2));
             }
@@ -610,10 +670,7 @@ fn release_port_and_retry(
         return;
     }
     for process in &confirmed {
-        let _ = Command::new("kill")
-            .arg("-TERM")
-            .arg(process.pid.to_string())
-            .status();
+        let _ = terminate_process(process.pid, false);
     }
     thread::sleep(Duration::from_millis(500));
     let remaining = query_port_processes(conflict.port).unwrap_or_default();
@@ -622,10 +679,9 @@ fn release_port_and_retry(
             .iter()
             .any(|old| old.pid == process.pid && old.name == process.name)
         {
-            let _ = Command::new("kill")
-                .arg("-KILL")
-                .arg(process.pid.to_string())
-                .status();
+            // Windows 上没有优雅/强制的两段式信号：Node 子进程不响应关闭消息，
+            // 第二次直接强制结束，与旧版行为一致。
+            let _ = terminate_process(process.pid, true);
         }
     }
     state.conflict_retried = true;
@@ -703,19 +759,34 @@ fn poll_direct(state: &mut WorkerState, events: &Sender<ProcessEvent>) {
 fn poll_pm2(state: &mut WorkerState, events: &Sender<ProcessEvent>) {
     let historical = state.restoring_pm2_logs;
     for error_log in [false, true] {
-        let offset = if error_log {
-            &mut state.pm2_error_offset
+        // 先取出偏移量副本，避免在后续读取日志时同时持有对 `state` 的可变借用。
+        let mut offset = if error_log {
+            state.pm2_error_offset
         } else {
-            &mut state.pm2_out_offset
+            state.pm2_out_offset
         };
-        if let Ok(lines) = state.pm2.read_log(error_log, offset) {
+        // 先把本批日志读完再交给渲染路径，避免在持有 `state` 不可变借用时
+        // 再次可变借用以写日志行（`emit_log` 需要 `&mut WorkerState`）。
+        let batch = state.pm2().ok().and_then(|pm2| {
+            pm2.read_log(error_log, &mut offset).ok()
+        });
+        if let Some(lines) = batch {
             for line in lines {
                 emit_log(state, events, line, historical);
             }
         }
+        if error_log {
+            state.pm2_error_offset = offset;
+        } else {
+            state.pm2_out_offset = offset;
+        }
     }
     state.restoring_pm2_logs = false;
-    match state.pm2.info() {
+    let info = match state.pm2() {
+        Ok(pm2) => pm2.info(),
+        Err(error) => Err(error),
+    };
+    match info {
         Ok(Some(info)) if info.status == "online" => {
             let _ = events.send(ProcessEvent::Pid(info.pid));
         }
@@ -741,7 +812,11 @@ fn recover_pm2_after_command_error(
     error: String,
 ) {
     let _ = events.send(ProcessEvent::Log(format!("{LOG_MARK_ERROR}{error}")));
-    match state.pm2.info() {
+    let info = match state.pm2() {
+        Ok(pm2) => pm2.info(),
+        Err(error) => Err(error),
+    };
+    match info {
         Ok(Some(info)) if info.status == "online" => {
             state.active_mode = Some(RuntimeMode::Pm2);
             let _ = events.send(ProcessEvent::Pid(info.pid));
@@ -809,8 +884,8 @@ pub fn normalize_proxy_url(value: &str) -> String {
     }
 }
 
-fn node_supports_import() -> bool {
-    crate::core::settings::env_detect::detect_nodejs()
+fn node_supports_import(source: EnvSource) -> bool {
+    crate::core::settings::env_detect::detect_nodejs(source)
         .and_then(|version| {
             version
                 .trim_start_matches('v')
@@ -969,41 +1044,77 @@ pub fn extract_conflict_port(line: &str) -> Option<u16> {
         })
 }
 
+/// 查询占用指定端口的监听进程。
+///
+/// 用 `netstat -ano` 而不是 Unix 的 `lsof`：`-a` 列出全部连接、`-n` 用数字形式显示地址与端口
+/// （省去反向域名解析，快很多）、`-o` 附带拥有该连接的 PID。
 pub fn query_port_processes(port: u16) -> Result<Vec<PortProcess>, String> {
-    let output = Command::new("lsof")
-        .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fpc"])
+    let mut command = Command::new("netstat");
+    command.args(["-ano", "-p", "TCP"]);
+    crate::core::env::apply_no_window_to_command(&mut command);
+    let output = command
         .output()
         .map_err(|error| tf("tavern.process.port_query_failed", &[("error", &error)]))?;
+    // netstat 在「没有匹配连接」时也会返回成功，因此不能只看退出码。
     if !output.status.success() && output.stdout.is_empty() {
         return Ok(Vec::new());
     }
-    parse_lsof_processes(&String::from_utf8_lossy(&output.stdout))
+    parse_netstat_processes(&String::from_utf8_lossy(&output.stdout), port)
 }
 
-pub fn parse_lsof_processes(output: &str) -> Result<Vec<PortProcess>, String> {
-    let mut processes = Vec::new();
-    let mut pid = None;
+/// 从 `netstat -ano` 输出里解析出监听指定端口的进程。
+///
+/// 每行的形态是：
+/// ```text
+///   TCP    0.0.0.0:8000           0.0.0.0:0              LISTENING       12345
+///   TCP    [::]:8000              [::]:0                 LISTENING       12345
+/// ```
+/// 只看 `LISTENING` 行，并按本地地址末尾的端口号过滤 —— 用 `:8000` 而不是
+/// `8000` 做匹配，避免 `18000` 被误判成 `8000`。
+fn parse_netstat_processes(output: &str, port: u16) -> Result<Vec<PortProcess>, String> {
+    let suffix = format!(":{port}");
+    let mut processes: Vec<PortProcess> = Vec::new();
+
     for line in output.lines() {
-        if let Some(value) = line.strip_prefix('p') {
-            pid = value.parse::<u32>().ok();
-        } else if let Some(name) = line.strip_prefix('c')
-            && let Some(pid) = pid.take()
-        {
-            if !processes
-                .iter()
-                .any(|process: &PortProcess| process.pid == pid)
-            {
-                processes.push(PortProcess {
-                    pid,
-                    name: name.to_owned(),
-                });
-            }
+        let columns: Vec<&str> = line.split_whitespace().collect();
+        // 至少要有「协议 本地地址 外部地址 状态 PID」五列。
+        if columns.len() < 5 || !columns[0].eq_ignore_ascii_case("TCP") {
+            continue;
         }
+        if !columns[3].eq_ignore_ascii_case("LISTENING") {
+            continue;
+        }
+        if !columns[1].ends_with(&suffix) {
+            continue;
+        }
+        let Ok(pid) = columns[4].parse::<u32>() else {
+            continue;
+        };
+        // PID 0 是系统空闲进程，杀掉它没有任何意义。
+        if pid == 0 || processes.iter().any(|process| process.pid == pid) {
+            continue;
+        }
+        processes.push(PortProcess {
+            pid,
+            name: process_name(pid).unwrap_or_else(|| "unknown".to_owned()),
+        });
     }
-    if processes.is_empty() && !output.trim().is_empty() {
-        return Err(t("tavern.process.port_parse_failed").to_owned());
-    }
+
     Ok(processes)
+}
+
+/// 由 PID 反查进程名；查不到时返回 `None`。
+///
+/// `tasklist` 的输出受系统语言影响，因此不解析表头，直接从数据行里取：
+/// 第一列是映像名，第二列是 PID。
+fn process_name(pid: u32) -> Option<String> {
+    let mut command = Command::new("tasklist");
+    command.args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"]);
+    crate::core::env::apply_no_window_to_command(&mut command);
+    let output = command.output().ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let name = text.lines().next()?.split(',').next()?.trim().trim_matches('"');
+    (!name.is_empty() && !name.contains("没有运行") && !name.contains("No tasks")).then(|| name.to_owned())
 }
 
 /// 创建规范日志目录，并保证当前日志文件存在。
@@ -1053,31 +1164,33 @@ pub fn append_sillytavern_log_line(line: &str) -> Result<(), String> {
 mod tests {
     use super::{
         TavernDataMode, TavernLaunchMode, TavernLaunchSpec, extract_conflict_port,
-        extract_tavern_url, launch_command, normalize_proxy_url, parse_lsof_processes,
+        extract_tavern_url, launch_command, normalize_proxy_url, parse_netstat_processes,
         strip_terminal_sequences,
     };
+    use crate::core::settings::EnvSource;
     use std::path::PathBuf;
 
     #[test]
     fn builds_global_data_and_proxy_arguments() {
         let command = launch_command(&TavernLaunchSpec {
-            instance_path: PathBuf::from("/tmp/tavern"),
+            instance_path: PathBuf::from(r"C:\AstraBrew\sillytavern"),
             instance_version: "1.0.0".to_owned(),
             data_mode: TavernDataMode::Global,
-            global_data_path: PathBuf::from("/tmp/global"),
+            global_data_path: PathBuf::from(r"C:\AstraBrew\data\global"),
             proxy: Some("127.0.0.1:7890".to_owned()),
             github_proxy_url: None,
             launch_mode: TavernLaunchMode::Server,
             allow_background: false,
             show_startup_command: true,
-            export_path: "/tmp".to_owned(),
+            export_path: r"C:\AstraBrew\exports".to_owned(),
+            env_source: EnvSource::System,
         })
         .unwrap();
         assert!(
             command
                 .arguments
                 .windows(2)
-                .any(|pair| pair == ["--dataRoot", "/tmp/global"])
+                .any(|pair| pair == ["--dataRoot", r"C:\AstraBrew\data\global"])
         );
         assert!(
             command
@@ -1096,16 +1209,17 @@ mod tests {
     #[test]
     fn browser_launch_argument_matches_launch_mode() {
         let base = TavernLaunchSpec {
-            instance_path: PathBuf::from("/tmp/tavern"),
+            instance_path: PathBuf::from(r"C:\AstraBrew\sillytavern"),
             instance_version: "1.0.0".to_owned(),
             data_mode: TavernDataMode::Current,
-            global_data_path: PathBuf::from("/tmp/global"),
+            global_data_path: PathBuf::from(r"C:\AstraBrew\data\global"),
             proxy: None,
             github_proxy_url: None,
             launch_mode: TavernLaunchMode::Normal,
             allow_background: false,
             show_startup_command: false,
-            export_path: "/tmp".to_owned(),
+            export_path: r"C:\AstraBrew\exports".to_owned(),
+            env_source: EnvSource::System,
         };
         let normal = launch_command(&base).unwrap();
         assert!(
@@ -1181,10 +1295,33 @@ mod tests {
     }
 
     #[test]
-    fn parses_lsof_records() {
-        let processes = parse_lsof_processes("p42\ncnode\np43\ncother\n").unwrap();
-        assert_eq!(processes.len(), 2);
+    fn parses_netstat_listeners_for_the_requested_port() {
+        // 真实 `netstat -ano` 输出的列布局：协议 / 本地地址 / 外部地址 / 状态 / PID。
+        let output = "  协议  本地地址          外部地址        状态           PID\n\
+                      \x20 TCP    0.0.0.0:8000           0.0.0.0:0              LISTENING       42\n\
+                      \x20 TCP    [::]:8000              [::]:0                 LISTENING       42\n\
+                      \x20 TCP    0.0.0.0:18000          0.0.0.0:0              LISTENING       99\n\
+                      \x20 TCP    0.0.0.0:8000           1.2.3.4:55000          ESTABLISHED     77\n";
+        let processes = parse_netstat_processes(output, 8000).unwrap();
+        // 同一 PID 的两个监听地址（IPv4/IPv6）去重成一条；`18000` 不能被当成 `8000`；
+        // `ESTABLISHED` 的连接不算监听。
+        assert_eq!(processes.len(), 1);
         assert_eq!(processes[0].pid, 42);
-        assert_eq!(processes[0].name, "node");
+    }
+
+    #[test]
+    fn netstat_output_without_listeners_is_empty() {
+        let output = "  协议  本地地址          外部地址        状态           PID\n\
+                      \x20 TCP    0.0.0.0:9000           0.0.0.0:0              LISTENING       7\n";
+        assert!(parse_netstat_processes(output, 8000).unwrap().is_empty());
+        // 空输出（端口完全没人监听）同样应是空列表而不是错误。
+        assert!(parse_netstat_processes("", 8000).unwrap().is_empty());
+    }
+
+    #[test]
+    fn netstat_parsing_skips_the_idle_process() {
+        // PID 0 是系统空闲进程，永远不该被当成「占用端口的进程」。
+        let output = "  TCP    0.0.0.0:8000           0.0.0.0:0              LISTENING       0\n";
+        assert!(parse_netstat_processes(output, 8000).unwrap().is_empty());
     }
 }

@@ -126,6 +126,16 @@ pub fn subtle_text_style(theme: &Theme) -> iced::widget::text::Style {
     }
 }
 
+/// 警告文字样式，用于「当前选择可用但有副作用」这类提示。
+///
+/// 用固定的警告色而不是主题文字色：提示语与正文混排在同一列里，
+/// 只有颜色能把它区分出来；深浅色主题下用的都是同一组语义色。
+pub fn warning_text_style(_theme: &Theme) -> iced::widget::text::Style {
+    iced::widget::text::Style {
+        color: Some(Color::from_rgb8(245, 165, 36)),
+    }
+}
+
 /// 主题感知的弱化图标，避免直接传入固定浅色 token。
 pub fn muted_icon<'a, Message: 'a>(glyph: Icon, size: u32) -> Element<'a, Message> {
     let icon: iced::widget::Text<'a> = glyph.into();

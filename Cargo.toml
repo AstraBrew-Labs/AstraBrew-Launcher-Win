@@ -1,8 +1,8 @@
 [package]
-name = "astrabrew-launcher-mac"
+name = "astrabrew-launcher-win"
 version = "0.2.1"
 edition = "2024"
-description = "Native macOS launcher for AstraBrew-Labs"
+description = "Native Windows launcher for AstraBrew-Labs"
 license = "MIT"
 publish = false
 
@@ -31,23 +31,45 @@ reqwest = { version = "0.12", default-features = true, features = ["blocking", "
 rfd = "0.15"
 # 安全校验并解压离线扩展 ZIP 包。
 zip = { version = "2", default-features = false, features = ["deflate"] }
-# 枚举并读取 macOS 已安装字体，供界面动态切换。
+# 枚举系统已安装字体，供界面动态切换。
 fontdb = { version = "0.23", default-features = false, features = ["std", "fs", "memmap"] }
-# 启动器自动更新：读取 latest.json、minisign 校验签名并替换 .app 包。
+# 读取字体 cmap，判断某个系统字体是否自带中文字形（用于字体选择器的提醒标记）。
+# 版本刻意与 fontdb 依赖的 0.25 对齐，避免同一 crate 出现两份副本。
+ttf-parser = "0.25"
+# 启动器自动更新：读取 latest.json、minisign 校验签名并替换安装包。
 cargo-packager-updater = "0.2"
+# 更新包落盘时生成不会互相覆盖的随机临时文件名。
+tempfile = "3"
 
-# macOS 原生窗口定制（禁用绿色缩放按钮、移除独占全屏、设置 Dock 应用图标），版本与 winit 保持一致以去重
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.5.2"
-objc2-foundation = { version = "0.2.2", features = ["NSArray", "NSEnumerator", "NSThread", "dispatch"] }
-objc2-app-kit = { version = "0.2.2", features = ["NSApplication", "NSWindow", "NSButton", "NSControl", "NSScreen", "NSImage"] }
-# 桌面模式 WebView 使用与 WebKit 绑定一致的 objc2 0.6 依赖，别名避免影响现有窗口代码。
-objc2_06 = { package = "objc2", version = "0.6.4" }
-objc2_foundation_06 = { package = "objc2-foundation", version = "0.3.2", features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSObject", "NSString", "NSURL", "NSURLRequest", "NSValue"] }
-objc2_app_kit_06 = { package = "objc2-app-kit", version = "0.3.2", features = ["NSApplication", "NSWindow", "NSOpenPanel", "NSWorkspace", "NSResponder", "NSView", "objc2-uniform-type-identifiers"] }
-objc2_uniform_type_identifiers_06 = { package = "objc2-uniform-type-identifiers", version = "0.3.2" }
-objc2-web-kit = { version = "0.3.2", features = ["WKContentWorld", "WKNavigation", "WKNavigationAction", "WKNavigationResponse", "WKOpenPanelParameters", "WKScriptMessage", "WKUserContentController", "WKUserScript", "WKWebView", "WKWebViewConfiguration"] }
-block2 = "0.6.2"
+# Windows 平台专属依赖。
+# 说明：本启动器仅支持 Windows10 以上，不再保留 macOS 的 objc2 绑定。
+# 版本选择以「与现有依赖树去重」为准：windows-sys 0.61 已是 iced/softbuffer、
+# tokio、schannel 等共同使用的版本；winit 0.30 与 iced 内部版本一致。
+[target.'cfg(target_os = "windows")'.dependencies]
+# 注册表读写：开机自启动、WebView2 版本检测、系统代理读取。
+winreg = "0.54"
+# Win32 API：隐藏控制台窗口、ShellExecuteW 打开目标、枚举显示器、系统语言。
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Gdi",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# 桌面模式使用 WebView2 承载酒馆界面。
+webview2-com = "0.38"
+wry = { version = "0.55", features = ["devtools"] }
+winit = "0.30"
+# 本地实例扫描：替代 macOS 的 /usr/bin/find 子进程。
+jwalk = "0.8"
+
+[build-dependencies]
+# 把应用图标与版本信息写进 exe 的 PE 资源，使任务栏/资源管理器显示正确图标。
+winresource = "0.1"
 
 [profile.release]
 lto = "thin"
@@ -57,18 +79,23 @@ strip = true
 # 用 `[package.metadata.packager]` 而不是独立的 `Packager.toml`：只有走 Cargo.toml 这条路
 # 时 `version` 才会自动取自 `[package].version`；独立的配置文件必须把版本号再写一遍，
 # 两处一旦不同步，打出来的包版本就会和更新清单对不上。
-# 另外 cargo-packager 只负责打包、不会编译，二进制必须先由 `build.sh` 放到 binaries_dir。
+# 另外 cargo-packager 只负责打包、不会编译，二进制必须先由 `build.ps1` 放到 binaries_dir。
 [package.metadata.packager]
 product_name = "AstraBrew Launcher"
 identifier = "cn.astrabrew.launcher"
-icons = ["assets/icon/icon.icns"]
+icons = ["assets/icon/icon.ico"]
 out_dir = "dist"
-binaries_dir = "target/current/release"
+binaries_dir = "target/release"
+formats = ["nsis"]
 
-[package.metadata.packager.macos]
-minimum_system_version = "10.15"
+[package.metadata.packager.nsis]
+# both：同时支持当前用户安装（无需管理员）与全机器安装。
+install_mode = "both"
+languages = ["SimpChinese", "English"]
+display_language_selector = true
+compression = "lzma"
 
-# ── 构建渠道开关（build.sh 与 .github/workflows/release.yml 读取）────────────
+# ── 构建渠道开关（build.ps1 与 .github/workflows/release.yml 读取）───────────
 #   beta = true  → 测试版：二进制注入 `ASTRA_BUILD_CHANNEL=beta`，左上角显示「测试版」标记，
 #                  发布 tag 用 `beta-v{版本}`。
 #   beta = false 或整块省略 → 正式版（左上角无标记，tag 用 `v{版本}`）。
