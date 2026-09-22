@@ -48,11 +48,14 @@ tempfile = "3"
 [target.'cfg(target_os = "windows")'.dependencies]
 # 注册表读写：开机自启动、WebView2 版本检测、系统代理读取。
 winreg = "0.54"
-# Win32 API：隐藏控制台窗口、ShellExecuteW 打开目标、枚举显示器、系统语言。
+# Win32 API：隐藏控制台窗口、ShellExecuteW 打开目标、枚举显示器、系统语言，
+# 以及桌面模式自建原生窗口（注册窗口类、消息循环、DPI 查询）。
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
     "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_System_Time",
@@ -61,9 +64,12 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 # 桌面模式使用 WebView2 承载酒馆界面。
+# 注意：**不再使用 winit** —— winit 的事件循环在进程内只能创建一次，
+# 而 iced 已占用该配额，详情见 `src/core/desktop_webview.rs` 的模块文档。
 webview2-com = "0.38"
 wry = { version = "0.55", features = ["devtools"] }
-winit = "0.30"
+# 自建原生窗口后仍需向 wry 提供 `HasWindowHandle` 实现。
+raw-window-handle = "0.6"
 # 本地实例扫描：替代 macOS 的 /usr/bin/find 子进程。
 jwalk = "0.8"
 

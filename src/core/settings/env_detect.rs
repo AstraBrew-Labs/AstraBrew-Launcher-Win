@@ -30,8 +30,12 @@ use crate::core::settings::EnvSource;
 /// - 系统环境：先用 `where` 解析绝对路径，找不到时回退到裸命令名，
 ///   交由 Windows 的 `CreateProcess` 依据 `PATH` 与 `PATHEXT` 继续查找。
 ///
-/// 所有分支都会附加「无黑窗」标志，并把内置环境目录前置注入 `PATH`，
-/// 使 npm / node 这类会二次拉起子进程的工具也能正常工作。
+/// 所有分支都会附加「无黑窗」标志；**仅内置环境**会把内置目录前置注入 `PATH`，
+/// 使 npm / node 这类会二次拉起子进程的工具也能命中内置环境。
+///
+/// 系统环境必须完全依赖用户自己的 `PATH`：一旦把 `lib/` 前置进去，
+/// 即使选了「系统环境」，子进程仍会优先命中内置的 node / git，
+/// 表现为「选了系统却实际用了内置」。
 pub fn command_for(name: &str, source: EnvSource) -> Command {
     let resolved = match source {
         EnvSource::Builtin => resolve_builtin_command(name),
@@ -44,7 +48,11 @@ pub fn command_for(name: &str, source: EnvSource) -> Command {
     };
 
     apply_no_window_to_command(&mut command);
-    apply_builtin_path_to_command(&mut command);
+    // 仅内置环境才把 lib/ 前置注入 PATH；系统环境必须完全走用户 PATH，
+    // 否则「选系统」时仍会优先命中内置的 node/git（见旧版 tavern_process.rs）。
+    if source == EnvSource::Builtin {
+        apply_builtin_path_to_command(&mut command);
+    }
     command
 }
 
@@ -496,6 +504,46 @@ mod tests {
         let command = command_for("git", EnvSource::System);
         // `creation_flags` 无法直接读回，这里通过 Debug 输出确认已被设置。
         assert!(format!("{command:?}").contains("creation_flags"));
+    }
+
+    /// 取出命令上显式设置的 `PATH`；未设置时返回 `None`。
+    fn explicit_path(command: &Command) -> Option<String> {
+        for (key, value) in command.get_envs() {
+            if !key.to_string_lossy().eq_ignore_ascii_case("PATH") {
+                continue;
+            }
+            // 显式设置为「删除该变量」时视为未注入。
+            return value.map(|value| value.to_string_lossy().into_owned());
+        }
+        None
+    }
+
+    /// 回归：**只有内置环境**才允许把 `lib/` 前置注入 PATH。
+    ///
+    /// 曾经无条件注入，导致选「系统环境」时子进程仍优先命中内置的 node / git，
+    /// 表现为「选了系统却实际用了内置」。此测试锁定该行为，防止再次退化。
+    #[test]
+    fn only_builtin_source_injects_builtin_path() {
+        let system = command_for("node", EnvSource::System);
+        assert_eq!(
+            explicit_path(&system),
+            None,
+            "系统环境不得注入内置 PATH"
+        );
+
+        // 内置环境必须注入；若本机尚未安装内置环境（`lib/` 为空）则无从断言。
+        let builtin = command_for("node", EnvSource::Builtin);
+        let expected = crate::core::env::get_builtin_path_entries();
+        if expected.is_empty() {
+            return;
+        }
+        let path = explicit_path(&builtin).expect("内置环境必须注入 PATH");
+        for entry in expected {
+            assert!(
+                path.contains(&entry.to_string_lossy().into_owned()),
+                "内置 PATH 缺少 {entry:?}"
+            );
+        }
     }
 
     #[test]

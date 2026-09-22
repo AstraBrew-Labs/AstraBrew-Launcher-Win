@@ -911,6 +911,7 @@ pub fn test_github_multi(
     _proxy_port: u16,
     accelerate_url: Option<String>,
     include_api: bool,
+    env_source: EnvSource,
 ) -> Vec<GithubMultiTestItem> {
     let (sender, receiver) = std::sync::mpsc::channel();
     run_github_test(
@@ -918,6 +919,7 @@ pub fn test_github_multi(
         proxy_host,
         accelerate_url,
         include_api,
+        env_source,
         Some(sender),
     );
     receiver
@@ -935,6 +937,7 @@ pub fn run_github_test(
     proxy_host: &str,
     accelerate_url: Option<String>,
     include_api: bool,
+    env_source: EnvSource,
     sender: Option<Sender<GithubTestEvent>>,
 ) {
     run_github_test_with_cancel_for_channel(
@@ -943,6 +946,7 @@ pub fn run_github_test(
         DownloadChannel::Official,
         accelerate_url,
         include_api,
+        env_source,
         sender,
         Arc::new(AtomicBool::new(false)),
     );
@@ -955,6 +959,7 @@ pub fn run_github_test_with_cancel(
     proxy_host: &str,
     accelerate_url: Option<String>,
     include_api: bool,
+    env_source: EnvSource,
     sender: Option<Sender<GithubTestEvent>>,
     cancel: Arc<AtomicBool>,
 ) {
@@ -964,6 +969,7 @@ pub fn run_github_test_with_cancel(
         DownloadChannel::Official,
         accelerate_url,
         include_api,
+        env_source,
         sender,
         cancel,
     );
@@ -976,6 +982,7 @@ pub fn run_github_test_with_cancel_for_channel(
     channel: DownloadChannel,
     accelerate_url: Option<String>,
     include_api: bool,
+    env_source: EnvSource,
     sender: Option<Sender<GithubTestEvent>>,
     cancel: Arc<AtomicBool>,
 ) {
@@ -1005,7 +1012,13 @@ pub fn run_github_test_with_cancel_for_channel(
     }
 
     let clone_item = test_git_clone(
-        proxy_mode, proxy_host, channel, accelerate, &sender, &cancel,
+        proxy_mode,
+        proxy_host,
+        channel,
+        accelerate,
+        env_source,
+        &sender,
+        &cancel,
     );
     emit(&sender, GithubTestEvent::ItemFinished(clone_item.clone()));
     results.push(clone_item);
@@ -1096,13 +1109,30 @@ fn test_http_endpoint(
 
 /// 解析外部命令的可执行文件路径。
 ///
-/// 用 `where` 而不是硬编码目录：Windows 上 NodeJS / Git 可能装在任意盘符，
-/// 内置环境（`%AppData%/AstraBrew Launcher/lib/`）也通过 PATH 注入被 `where` 看到。
+/// 必须按 [`EnvSource`] 区分：内置环境取 `lib/` 下的绝对路径，
+/// 系统环境才用 `where` 在用户 `PATH` 中查找。
+///
+/// **切勿硬编码系统环境**：否则选「内置」时仍会调用系统 git，
+/// 表现为「选了内置却实际用了系统环境」。
 /// 全部找不到时原样返回命令名，由 `Command` 自己按 PATH 再试一次。
-fn resolve_command(name: &str) -> String {
-    crate::core::env::get_system_cmd_path(name)
+fn resolve_command(name: &str, source: EnvSource) -> String {
+    let resolved = match source {
+        EnvSource::Builtin => crate::core::settings::env_detect::resolve_builtin_command(name),
+        EnvSource::System => crate::core::env::get_system_cmd_path(name),
+    };
+    resolved
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| name.to_owned())
+}
+
+/// 按指定环境来源构建 Git 命令。
+///
+/// 统一收敛「解析可执行文件 + 隐藏控制台窗口」两件事，
+/// 避免调用点遗漏来源参数而退回系统 git。
+fn git_command(source: EnvSource) -> Command {
+    let mut command = Command::new(resolve_command("git", source));
+    crate::core::env::apply_no_window_to_command(&mut command);
+    command
 }
 
 /// 为 Git 命令配置代理。
@@ -1141,6 +1171,7 @@ fn test_git_clone(
     proxy_host: &str,
     channel: DownloadChannel,
     accelerate_url: Option<&str>,
+    env_source: EnvSource,
     sender: &Option<Sender<GithubTestEvent>>,
     cancel: &Arc<AtomicBool>,
 ) -> GithubMultiTestItem {
@@ -1173,7 +1204,7 @@ fn test_git_clone(
 
     let url = accelerated_url(channel.clone_url(), accelerate_url);
     let start = Instant::now();
-    let mut command = Command::new(resolve_command("git"));
+    let mut command = git_command(env_source);
     configure_git_proxy(&mut command, proxy_mode, proxy_host);
     command
         .args(["clone", "--progress"])
@@ -1399,6 +1430,7 @@ fn emit_download_channel(
 pub fn run_download_channel_test(
     proxy_mode: &str,
     proxy_host: &str,
+    env_source: EnvSource,
     sender: Option<Sender<DownloadChannelTestEvent>>,
     cancel: Arc<AtomicBool>,
 ) {
@@ -1411,7 +1443,8 @@ pub fn run_download_channel_test(
             &sender,
             DownloadChannelTestEvent::ChannelStarted { channel },
         );
-        let result = test_download_channel_clone(channel, proxy_mode, proxy_host, &sender, &cancel);
+        let result =
+            test_download_channel_clone(channel, proxy_mode, proxy_host, env_source, &sender, &cancel);
         emit_download_channel(
             &sender,
             DownloadChannelTestEvent::ChannelFinished(result.clone()),
@@ -1447,6 +1480,7 @@ fn test_download_channel_clone(
     channel: DownloadChannel,
     proxy_mode: &str,
     proxy_host: &str,
+    env_source: EnvSource,
     sender: &Option<Sender<DownloadChannelTestEvent>>,
     cancel: &Arc<AtomicBool>,
 ) -> DownloadChannelTestResult {
@@ -1462,7 +1496,7 @@ fn test_download_channel_clone(
     }
 
     let start = Instant::now();
-    let mut command = Command::new(resolve_command("git"));
+    let mut command = git_command(env_source);
     configure_git_proxy(&mut command, proxy_mode, proxy_host);
     command
         .args(["clone", "--progress", "--depth=1", "--no-tags"])
@@ -1790,6 +1824,53 @@ pub fn timeout_results() -> Vec<GithubMultiTestItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 回归：所有 Git 调用都必须按 `EnvSource` 解析，不得硬编码系统环境。
+    ///
+    /// 曾经 `resolve_command` 固定走 `get_system_cmd_path`，导致选「内置」时
+    /// 仍调用系统 git，表现为「选了内置却用了系统环境」。
+    /// 这里把源码当文本扫描：任何 `resolve_command(` 调用都必须显式带上来源参数。
+    #[test]
+    fn every_git_call_resolves_by_env_source() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("core")
+            .join("network.rs");
+        let text = std::fs::read_to_string(&path).expect("应能读取 network.rs");
+        // 只扫描生产代码：测试模块自身也包含 "resolve_command(" 字面量。
+        let production = text
+            .split("#[cfg(test)]")
+            .next()
+            .expect("文件应包含生产代码段");
+        assert!(
+            production.contains("git_command("),
+            "应当存在统一的 git_command(source) 构造器"
+        );
+
+        let mut offenders = Vec::new();
+        for (index, line) in production.lines().enumerate() {
+            let trimmed = line.trim_start();
+            // 只看真正的调用，跳过定义行与注释行。
+            if trimmed.starts_with("//") || trimmed.starts_with("fn resolve_command") {
+                continue;
+            }
+            let Some(position) = line.find("resolve_command(") else {
+                continue;
+            };
+            // 取出实参部分，确认其中包含来源变量（避免只有一个裸命令名）。
+            let arguments = &line[position + "resolve_command(".len()..];
+            let arguments = arguments.split(')').next().unwrap_or_default();
+            if !arguments.contains("source") {
+                offenders.push(format!("{}: {}", index + 1, line.trim()));
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "以下 Git 调用点没有按 EnvSource 解析可执行文件，会退回系统环境：\n{}",
+            offenders.join("\n")
+        );
+    }
 
     #[test]
     fn protocol_tagged_proxy_entries_prefer_https() {
@@ -2188,22 +2269,25 @@ pub fn sillytavern_versions_cache_path() -> PathBuf {
 
 /// 读取规范在线酒馆目录当前精确检出的 Git tag。
 #[allow(dead_code)]
-pub fn installed_sillytavern_tag() -> Option<String> {
-    installed_sillytavern_state().and_then(|state| state.tag_name)
+pub fn installed_sillytavern_tag(env_source: EnvSource) -> Option<String> {
+    installed_sillytavern_state(env_source).and_then(|state| state.tag_name)
 }
 
 /// 读取规范在线酒馆目录的 tag、分支和 HEAD，供重启时恢复 UI 状态。
 #[allow(dead_code)]
-pub fn installed_sillytavern_state() -> Option<InstalledSillyTavern> {
+pub fn installed_sillytavern_state(env_source: EnvSource) -> Option<InstalledSillyTavern> {
     let target = sillytavern_install_dir();
     let target = target.to_str()?;
     if !sillytavern_install_dir().is_dir() {
         return None;
     }
-    let head = git_output(&["-C", target, "rev-parse", "HEAD"])?;
-    let tag_name = git_output(&["-C", target, "describe", "--tags", "--exact-match", "HEAD"]);
-    let branch =
-        git_output(&["-C", target, "branch", "--show-current"]).filter(|branch| !branch.is_empty());
+    let head = git_output(&["-C", target, "rev-parse", "HEAD"], env_source)?;
+    let tag_name = git_output(
+        &["-C", target, "describe", "--tags", "--exact-match", "HEAD"],
+        env_source,
+    );
+    let branch = git_output(&["-C", target, "branch", "--show-current"], env_source)
+        .filter(|branch| !branch.is_empty());
     Some(InstalledSillyTavern {
         tag_name,
         branch,
@@ -2211,9 +2295,8 @@ pub fn installed_sillytavern_state() -> Option<InstalledSillyTavern> {
     })
 }
 
-fn git_output(args: &[&str]) -> Option<String> {
-    let mut command = Command::new(resolve_command("git"));
-    crate::core::env::apply_no_window_to_command(&mut command);
+fn git_output(args: &[&str], env_source: EnvSource) -> Option<String> {
+    let mut command = git_command(env_source);
     let output = command.args(args).output().ok()?;
     if !output.status.success() {
         return None;
@@ -2402,6 +2485,7 @@ pub fn fetch_sillytavern_catalog(
     selected_channel: DownloadChannel,
     proxy_mode: &str,
     proxy_host: &str,
+    env_source: EnvSource,
 ) -> Result<SillyTavernCatalog, String> {
     let now = unix_seconds().unwrap_or_default();
     let channel = resolve_download_channel(selected_channel);
@@ -2410,7 +2494,7 @@ pub fn fetch_sillytavern_catalog(
         && cache.is_fresh_at(branch, now)
     {
         let mut catalog = catalog_from_cache(cache, branch, channel);
-        refresh_catalog_mirror_state(&mut catalog, channel, proxy_mode, proxy_host, now);
+        refresh_catalog_mirror_state(&mut catalog, channel, proxy_mode, proxy_host, env_source, now);
         return Ok(catalog);
     }
 
@@ -2446,7 +2530,7 @@ pub fn fetch_sillytavern_catalog(
                 cached_at: now,
                 used_stale_cache: false,
             };
-            refresh_catalog_mirror_state(&mut catalog, channel, proxy_mode, proxy_host, now);
+            refresh_catalog_mirror_state(&mut catalog, channel, proxy_mode, proxy_host, env_source, now);
             save_sillytavern_versions_cache(
                 "release",
                 channel,
@@ -2466,7 +2550,7 @@ pub fn fetch_sillytavern_catalog(
                 cached_at: now,
                 used_stale_cache: false,
             };
-            refresh_catalog_mirror_state(&mut catalog, channel, proxy_mode, proxy_host, now);
+            refresh_catalog_mirror_state(&mut catalog, channel, proxy_mode, proxy_host, env_source, now);
             save_sillytavern_versions_cache("staging", channel, &[], catalog.staging.as_ref())
                 .map_err(|error| tf("network.cache.save_failed", &[("error", &error)]))?;
             catalog.cached_at = unix_seconds().unwrap_or_default();
@@ -2479,7 +2563,7 @@ pub fn fetch_sillytavern_catalog(
             Some(mut catalog) => {
                 catalog.used_stale_cache = true;
                 // 旧缓存同样要重新判定镜像状态，镜像站通常是可访问的。
-                refresh_catalog_mirror_state(&mut catalog, channel, proxy_mode, proxy_host, now);
+                refresh_catalog_mirror_state(&mut catalog, channel, proxy_mode, proxy_host, env_source, now);
                 Ok(catalog)
             }
             None => Err(error),
@@ -2813,6 +2897,7 @@ fn probe_mirror_tags(
     channel: DownloadChannel,
     proxy_mode: &str,
     proxy_host: &str,
+    env_source: EnvSource,
     cached: Option<&MirrorRefsCache>,
     now: u64,
 ) -> MirrorTagProbe {
@@ -2830,7 +2915,7 @@ fn probe_mirror_tags(
             snapshot: None,
         };
     }
-    match list_remote_tags(channel, proxy_mode, proxy_host) {
+    match list_remote_tags(channel, proxy_mode, proxy_host, env_source) {
         Ok(tags) => {
             let mut snapshot = cached
                 .map(|cache| cache.for_channel(channel))
@@ -2857,6 +2942,7 @@ fn probe_mirror_branches(
     channel: DownloadChannel,
     proxy_mode: &str,
     proxy_host: &str,
+    env_source: EnvSource,
     cached: Option<&MirrorRefsCache>,
     now: u64,
 ) -> MirrorBranchProbe {
@@ -2874,7 +2960,7 @@ fn probe_mirror_branches(
             snapshot: None,
         };
     }
-    match list_remote_branches(channel, proxy_mode, proxy_host) {
+    match list_remote_branches(channel, proxy_mode, proxy_host, env_source) {
         Ok(branches) => {
             let mut snapshot = cached
                 .map(|cache| cache.for_channel(channel))
@@ -2906,6 +2992,7 @@ fn refresh_catalog_mirror_state(
     channel: DownloadChannel,
     proxy_mode: &str,
     proxy_host: &str,
+    env_source: EnvSource,
     now: u64,
 ) {
     if channel == DownloadChannel::Official {
@@ -2921,7 +3008,14 @@ fn refresh_catalog_mirror_state(
     let mut cache = load_mirror_refs_cache();
     let mut dirty = false;
     if !catalog.releases.is_empty() {
-        let probe = probe_mirror_tags(channel, proxy_mode, proxy_host, cache.as_ref(), now);
+        let probe = probe_mirror_tags(
+            channel,
+            proxy_mode,
+            proxy_host,
+            env_source,
+            cache.as_ref(),
+            now,
+        );
         if let Some(snapshot) = probe.snapshot {
             cache = Some(snapshot);
             dirty = true;
@@ -2933,7 +3027,7 @@ fn refresh_catalog_mirror_state(
         );
     }
     if let Some(staging) = catalog.staging.clone() {
-        let probe = probe_mirror_branches(channel, proxy_mode, proxy_host, cache.as_ref(), now);
+        let probe = probe_mirror_branches(channel, proxy_mode, proxy_host, env_source, cache.as_ref(), now);
         if let Some(snapshot) = probe.snapshot {
             cache = Some(snapshot);
             dirty = true;
@@ -3020,11 +3114,13 @@ pub fn list_sillytavern_remote_tags(
     selected_channel: DownloadChannel,
     proxy_mode: &str,
     proxy_host: &str,
+    env_source: EnvSource,
 ) -> Result<Vec<String>, String> {
     list_remote_tags(
         resolve_download_channel(selected_channel),
         proxy_mode,
         proxy_host,
+        env_source,
     )
 }
 
@@ -3032,11 +3128,12 @@ fn list_remote_tags(
     channel: DownloadChannel,
     proxy_mode: &str,
     proxy_host: &str,
+    env_source: EnvSource,
 ) -> Result<Vec<String>, String> {
     if channel == DownloadChannel::Official {
         return Ok(Vec::new());
     }
-    let mut command = Command::new(resolve_command("git"));
+    let mut command = git_command(env_source);
     configure_git_proxy(&mut command, proxy_mode, proxy_host);
     let output = command
         .args(["ls-remote", "--tags", channel.clone_url()])
@@ -3056,11 +3153,12 @@ fn list_remote_branches(
     channel: DownloadChannel,
     proxy_mode: &str,
     proxy_host: &str,
+    env_source: EnvSource,
 ) -> Result<Vec<String>, String> {
     if channel == DownloadChannel::Official {
         return Ok(vec!["staging".to_owned()]);
     }
-    let mut command = Command::new(resolve_command("git"));
+    let mut command = git_command(env_source);
     configure_git_proxy(&mut command, proxy_mode, proxy_host);
     let output = command
         .args(["ls-remote", "--heads", channel.clone_url()])
@@ -3084,12 +3182,13 @@ pub fn resolve_sillytavern_install_channel(
     tag_name: &str,
     proxy_mode: &str,
     proxy_host: &str,
+    env_source: EnvSource,
 ) -> DownloadChannel {
     let channel = resolve_download_channel(selected_channel);
     if channel == DownloadChannel::Official {
         return DownloadChannel::Official;
     }
-    match list_remote_tags(channel, proxy_mode, proxy_host) {
+    match list_remote_tags(channel, proxy_mode, proxy_host, env_source) {
         Ok(tags) if tags.iter().any(|tag| tag == tag_name) => channel,
         _ => DownloadChannel::Official,
     }
@@ -3100,12 +3199,13 @@ fn resolve_sillytavern_branch_channel(
     branch: &str,
     proxy_mode: &str,
     proxy_host: &str,
+    env_source: EnvSource,
 ) -> DownloadChannel {
     let channel = resolve_download_channel(selected_channel);
     if channel == DownloadChannel::Official {
         return DownloadChannel::Official;
     }
-    match list_remote_branches(channel, proxy_mode, proxy_host) {
+    match list_remote_branches(channel, proxy_mode, proxy_host, env_source) {
         Ok(branches) if branches.iter().any(|item| item == branch) => channel,
         _ => DownloadChannel::Official,
     }
@@ -3155,9 +3255,21 @@ pub fn run_sillytavern_install_with_cancel(
         };
         let configured_channel = resolve_download_channel(source_channel);
         let preferred_channel = if is_branch {
-            resolve_sillytavern_branch_channel(source_channel, &ref_name, &proxy_mode, &proxy_host)
+            resolve_sillytavern_branch_channel(
+                source_channel,
+                &ref_name,
+                &proxy_mode,
+                &proxy_host,
+                env_source,
+            )
         } else {
-            resolve_sillytavern_install_channel(source_channel, &ref_name, &proxy_mode, &proxy_host)
+            resolve_sillytavern_install_channel(
+                source_channel,
+                &ref_name,
+                &proxy_mode,
+                &proxy_host,
+                env_source,
+            )
         };
         let mut channels = vec![preferred_channel];
         if preferred_channel != DownloadChannel::Official {
@@ -3189,6 +3301,7 @@ pub fn run_sillytavern_install_with_cancel(
                 target_existed,
                 &proxy_mode,
                 &proxy_host,
+                env_source,
                 &sender,
                 &cancel,
             ) {
@@ -3243,6 +3356,7 @@ fn install_git_ref(
     target_existed: bool,
     proxy_mode: &str,
     proxy_host: &str,
+    env_source: EnvSource,
     sender: &Sender<SillyTavernInstallEvent>,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
@@ -3253,7 +3367,7 @@ fn install_git_ref(
         if !target.join(".git").is_dir() {
             return Err(t("network.install.unsafe_existing_dir").to_owned());
         }
-        let mut set_remote = Command::new(resolve_command("git"));
+        let mut set_remote = git_command(env_source);
         configure_git_proxy(&mut set_remote, proxy_mode, proxy_host);
         set_remote.args([
             "-C",
@@ -3265,7 +3379,7 @@ fn install_git_ref(
         ]);
         run_install_command(set_remote, sender, cancel)?;
 
-        let mut fetch = Command::new(resolve_command("git"));
+        let mut fetch = git_command(env_source);
         configure_git_proxy(&mut fetch, proxy_mode, proxy_host);
         if is_branch {
             // 显式写入远程跟踪分支；仅执行 `fetch origin staging` 只会更新 FETCH_HEAD，
@@ -3277,7 +3391,7 @@ fn install_git_ref(
         }
         run_install_command(fetch, sender, cancel)?;
 
-        let mut checkout = Command::new(resolve_command("git"));
+        let mut checkout = git_command(env_source);
         configure_git_proxy(&mut checkout, proxy_mode, proxy_host);
         if is_branch {
             let remote_ref = format!("origin/{ref_name}");
@@ -3297,7 +3411,7 @@ fn install_git_ref(
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|error| tf("network.install.create_dir_failed", &[("error", &error)]))?;
         }
-        let mut clone = Command::new(resolve_command("git"));
+        let mut clone = git_command(env_source);
         configure_git_proxy(&mut clone, proxy_mode, proxy_host);
         clone
             .args([

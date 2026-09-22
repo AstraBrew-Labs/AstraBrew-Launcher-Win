@@ -14,7 +14,7 @@
 [![iced](https://img.shields.io/github/v/release/iced-rs/iced?label=iced)](https://github.com/iced-rs/iced)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
-[官网](https://launcher.astrabrew.cn) | [Windows版](../../../AstraBrew-Launcher-Win/)
+[官网](https://launcher.astrabrew.cn) | [Mac版](../../../AstraBrew-Launcher-Mac/)
 
 </div>
 

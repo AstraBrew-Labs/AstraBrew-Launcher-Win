@@ -551,7 +551,7 @@ impl Launcher {
 
         let mut versions = VersionState::default();
         versions.set_staging_risk_confirmed(preferences.staging_risk_confirmed);
-        if let Some(installed) = crate::core::network::installed_sillytavern_state() {
+        if let Some(installed) = crate::core::network::installed_sillytavern_state(settings.env_mode) {
             versions.restore_installed(&installed);
         }
 
@@ -1602,12 +1602,14 @@ impl Launcher {
             ProxyMode::Custom => "custom".to_owned(),
         };
         let proxy_host = self.settings.custom_proxy.clone();
+        let env_source = self.settings.env_mode;
         std::thread::spawn(move || {
             let result = crate::core::network::fetch_sillytavern_catalog(
                 &branch,
                 channel,
                 &proxy_mode,
                 &proxy_host,
+                env_source,
             );
             let _ = sender.send(result);
         });
@@ -1615,7 +1617,7 @@ impl Launcher {
 
     /// 将网络层的版本模型转换为版本页面模型；`notify` 决定是否弹出“列表已更新”提示。
     fn apply_version_catalog(&mut self, catalog: SillyTavernCatalog, notify: bool) {
-        let installed = crate::core::network::installed_sillytavern_state();
+        let installed = crate::core::network::installed_sillytavern_state(self.settings.env_mode);
         self.versions
             .set_online_instance_exists(installed.is_some());
         let installed_tag = installed
@@ -1724,7 +1726,7 @@ impl Launcher {
                 return;
             }
             VersionMessage::SwitchOnline(version) => {
-                let installed = crate::core::network::installed_sillytavern_state();
+                let installed = crate::core::network::installed_sillytavern_state(self.settings.env_mode);
                 self.switch_online_version(version.clone(), installed.as_ref());
                 return;
             }
@@ -1899,9 +1901,9 @@ impl Launcher {
                     match result {
                         Ok(()) => {
                             self.versions.update(VersionMessage::InstallCompleted);
-                            if let Some(installed) =
-                                crate::core::network::installed_sillytavern_state()
-                            {
+                            if let Some(installed) = crate::core::network::installed_sillytavern_state(
+                                self.settings.env_mode,
+                            ) {
                                 self.versions.restore_installed(&installed);
                             }
                         }
@@ -1965,6 +1967,7 @@ impl Launcher {
             ProxyMode::Custom => "custom",
         };
         let proxy_host = self.settings.custom_proxy.clone();
+        let env_source = self.settings.env_mode;
         self.download_channel_test_cancel = Some(cancel.clone());
         self.download_channel_test_receiver = Some(receiver);
         self.settings.download_channel_test = DownloadChannelTestState {
@@ -1985,6 +1988,7 @@ impl Launcher {
             crate::core::network::run_download_channel_test(
                 proxy_mode,
                 &proxy_host,
+                env_source,
                 Some(sender),
                 cancel,
             );
@@ -2526,6 +2530,7 @@ impl Launcher {
             ProxyMode::Custom => "custom",
         };
         let proxy_host = self.settings.custom_proxy.clone();
+        let env_source = self.settings.env_mode;
         // GitHub 连接测试固定测试官方仓库，不受酒馆下载渠道选择影响。
         let selected_channel = DownloadChannel::Official;
         let accelerate_url = None;
@@ -2595,6 +2600,7 @@ impl Launcher {
                 selected_channel,
                 accelerate_url,
                 true,
+                env_source,
                 Some(sender),
                 cancel,
             );

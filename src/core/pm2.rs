@@ -88,6 +88,11 @@ pub fn pm2_command_for(source: EnvSource) -> Option<Command> {
         let mut command = Command::new(node);
         command.creation_flags(CREATE_NO_WINDOW);
         command.arg(script);
+        // 内置环境必须把 lib/ 前置注入 PATH，否则 PM2 拉起的子进程会命中系统 node，
+        // 表现为「选了内置却用了系统环境」（对齐旧版 pm2.rs 的处理）。
+        if source == EnvSource::Builtin {
+            crate::core::env::apply_builtin_path_to_command(&mut command);
+        }
         apply_pm2_runtime_env(&mut command);
         return Some(command);
     }
