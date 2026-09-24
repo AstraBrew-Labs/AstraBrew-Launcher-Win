@@ -1051,7 +1051,10 @@ impl Launcher {
                     }
                 }
             }
-            Message::SettingsCpuCoresSelected(value) => self.settings.cpu_cores = value,
+            Message::SettingsCpuCoresSelected(value) => {
+                self.settings.cpu_cores = value;
+                self.persist_preferences();
+            }
             Message::SettingsAutoStopTavern(enabled) => {
                 self.settings.auto_stop_tavern_on_window_close = enabled;
                 self.persist_preferences();
@@ -1534,6 +1537,7 @@ impl Launcher {
             allow_tavern_background: self.settings.allow_tavern_background,
             show_startup_command: self.settings.show_startup_command,
             env_mode: self.settings.env_mode,
+            cpu_cores: self.settings.cpu_cores,
             staging_risk_confirmed: self.versions.staging_risk_confirmed,
         }
     }
@@ -3476,6 +3480,7 @@ impl Launcher {
             allow_tavern_background: self.settings.allow_tavern_background,
             show_startup_command: self.settings.show_startup_command,
             env_mode: self.settings.env_mode,
+            cpu_cores: self.settings.cpu_cores,
             staging_risk_confirmed: self.versions.staging_risk_confirmed,
         };
         self.settings.save_error = self

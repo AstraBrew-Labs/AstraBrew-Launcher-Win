@@ -119,6 +119,66 @@ impl EnvSource {
     }
 }
 
+/// 后台任务允许占用的 CPU 核心数。
+///
+/// 定义在核心层而非界面层：全盘扫描、依赖安装等核心模块都要按它折算线程预算，
+/// 界面层只负责展示与切换。默认 `Auto` 由核心层自行留出一个核心给界面线程。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CpuCores {
+    /// 自动：留出一个核心给界面，其余全部用于后台任务。
+    #[default]
+    Auto,
+    /// 只使用一半核心。
+    Half,
+    /// 使用全部核心。
+    All,
+}
+
+impl CpuCores {
+    /// 设置页选项使用的文案键。
+    pub const fn label_key(self) -> &'static str {
+        match self {
+            Self::Auto => "settings.cpu_cores.auto",
+            Self::Half => "settings.cpu_cores.half",
+            Self::All => "settings.cpu_cores.all",
+        }
+    }
+
+    /// 从配置文件的字符串还原；不认识的取值回落到默认（自动）。
+    ///
+    /// 中文取值属于历史数据兼容别名（旧版本曾直接持久化展示文案），
+    /// 属于数据不是文案，必须保留。
+    pub fn from_key(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "all" | "全部核心" => Self::All,
+            "half" | "一半核心" => Self::Half,
+            _ => Self::Auto,
+        }
+    }
+
+    /// 持久化到配置文件时使用的字符串。
+    pub const fn storage_key(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Half => "half",
+            Self::All => "all",
+        }
+    }
+
+    /// 折算成可用的工作线程数。
+    ///
+    /// `available` 为系统报告的逻辑核心数。结果至少为 1，保证单核机器也能扫描。
+    pub fn thread_budget(self, available: usize) -> usize {
+        let available = available.max(1);
+        match self {
+            // 留出一个核心给界面渲染与事件循环，避免全盘扫描把 UI 拖到卡顿。
+            Self::Auto => available.saturating_sub(1).max(1),
+            Self::Half => (available / 2).max(1),
+            Self::All => available,
+        }
+    }
+}
+
 /// 已接入持久化的用户偏好。
 #[derive(Debug, Clone, PartialEq)]
 pub struct PersistentPreferences {
@@ -163,6 +223,8 @@ pub struct PersistentPreferences {
     pub show_startup_command: bool,
     /// 环境来源：内置 `lib/` 环境或系统 PATH 环境。
     pub env_mode: EnvSource,
+    /// 后台任务允许占用的 CPU 核心数。
+    pub cpu_cores: CpuCores,
     /// 用户是否已经确认过 staging 开发版风险提示。
     pub staging_risk_confirmed: bool,
 }
@@ -193,6 +255,7 @@ impl Default for PersistentPreferences {
             allow_tavern_background: false,
             show_startup_command: false,
             env_mode: EnvSource::Builtin,
+            cpu_cores: CpuCores::Auto,
             staging_risk_confirmed: false,
         }
     }
@@ -299,6 +362,11 @@ impl SettingsStore {
         self.document.insert(
             "show_startup_command".into(),
             Value::Bool(preferences.show_startup_command),
+        );
+        // 存稳定的英文键而不是 serde 派生名，避免枚举变体重命名后旧配置失效。
+        self.document.insert(
+            "cpu_cores".into(),
+            Value::String(preferences.cpu_cores.storage_key().to_owned()),
         );
         self.document.insert(
             "env_mode".into(),
@@ -527,6 +595,12 @@ fn preferences_from_document(document: &Map<String, Value>) -> PersistentPrefere
         .or_else(|| document.get("stagingRiskConfirmed"))
         .and_then(Value::as_bool)
         .unwrap_or(defaults.staging_risk_confirmed);
+    let cpu_cores = document
+        .get("cpu_cores")
+        .or_else(|| document.get("cpuCores"))
+        .and_then(Value::as_str)
+        .map(CpuCores::from_key)
+        .unwrap_or(defaults.cpu_cores);
 
     PersistentPreferences {
         language,
@@ -552,6 +626,7 @@ fn preferences_from_document(document: &Map<String, Value>) -> PersistentPrefere
         allow_tavern_background,
         show_startup_command,
         env_mode,
+        cpu_cores,
         staging_risk_confirmed,
     }
 }

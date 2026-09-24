@@ -153,6 +153,8 @@ impl Default for InstallTaskState {
 }
 
 pub(crate) mod local;
+/// 扫描进度网格自绘的环形进度指示器。
+pub(crate) mod ring;
 pub use crate::core::local_instances::{DependencyStatus, LocalInstance};
 
 /// 可从远端下载的酒馆发行版本。
@@ -1025,7 +1027,7 @@ fn local_panel(state: &VersionState) -> Element<'_, VersionMessage> {
                 format!(
                     "{}  {}",
                     crate::lang::t(state.local.scan.status_key()),
-                    local::truncate_path(&state.local.scan.progress.path, 60)
+                    local::truncate_path(state.local.scan.progress.current_path(), 60)
                 )
             } else {
                 tf("versions.local.count", &[("count", &state.local_instances.len())])

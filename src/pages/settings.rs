@@ -44,19 +44,9 @@ macro_rules! enum_text {
     };
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CpuCores {
-    #[default]
-    Auto,
-    Half,
-    All,
-}
-enum_text!(
-    CpuCores,
-    [Auto, "channel.auto"],
-    [Half, "settings.cpu_cores.half"],
-    [All, "settings.cpu_cores.all"]
-);
+// 后台任务核心数定义在核心层（扫描、依赖安装都要按它折算线程预算），
+// 这里只做再导出，界面层继续用 `pages::settings::CpuCores` 这一条路径。
+pub use crate::core::settings::CpuCores;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StartMode {
@@ -653,6 +643,7 @@ impl SettingsState {
         self.npm_registry = NpmRegistry::from_url(&preferences.npm_registry);
         self.github_proxy_enabled = preferences.github_proxy_enabled;
         self.github_proxy_url = preferences.github_proxy_url.clone();
+        self.cpu_cores = preferences.cpu_cores;
     }
 }
 
@@ -1407,10 +1398,11 @@ fn basic_settings(state: &SettingsState, mode_controls_locked: bool) -> Element<
             "settings.field.scan_cores",
             "settings.field.scan_cores.hint",
             segmented_control(
+                // 文案键由枚举自己提供，避免界面与核心层各写一份导致不同步。
                 &[
-                    (CpuCores::Auto, "settings.cpu_cores.auto", Icon::Gauge),
-                    (CpuCores::Half, "settings.cpu_cores.half", Icon::CircleGauge),
-                    (CpuCores::All, "settings.cpu_cores.all", Icon::Cpu),
+                    (CpuCores::Auto, CpuCores::Auto.label_key(), Icon::Gauge),
+                    (CpuCores::Half, CpuCores::Half.label_key(), Icon::CircleGauge),
+                    (CpuCores::All, CpuCores::All.label_key(), Icon::Cpu),
                 ],
                 state.cpu_cores,
                 Message::SettingsCpuCoresSelected,
@@ -2314,20 +2306,9 @@ fn live_github_result_row(
     .into()
 }
 
+/// 容量展示统一走工具函数，避免设置页与版本页各写一份换算。
 fn format_bytes(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
-    let value = bytes as f64;
-    if value >= GB {
-        format!("{:.2} GB", value / GB)
-    } else if value >= MB {
-        format!("{:.2} MB", value / MB)
-    } else if value >= KB {
-        format!("{:.1} KB", value / KB)
-    } else {
-        format!("{bytes} B")
-    }
+    crate::utils::format_bytes(bytes)
 }
 
 fn format_speed(bytes_per_second: u64) -> String {

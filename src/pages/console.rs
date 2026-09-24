@@ -189,7 +189,7 @@ impl NetworkMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IpVersion {
+pub enum IpVersion {
     V4,
     V6,
 }
@@ -220,7 +220,19 @@ struct AccessSlot {
     resolved: bool,
     address: Option<String>,
     url: Option<String>,
+    /// 用户在地址框里改写后的地址；`None` 表示仍使用自动检测结果。
+    ///
+    /// 自动检测可能选错网卡（例如代理软件的虚拟网卡），此时用户可以直接改成
+    /// 能访问的地址，而不是只能对着一个打不开的链接干瞪眼。
+    edited_url: Option<String>,
     qr: Option<iced::widget::image::Handle>,
+}
+
+impl AccessSlot {
+    /// 地址框当前显示的地址：优先用户改写值，其次是自动检测结果。
+    fn display_url(&self) -> Option<&str> {
+        self.edited_url.as_deref().or(self.url.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,7 +303,8 @@ pub enum ConsoleMessage {
     OpenAccessDialog,
     CloseAccessDialog,
     RetryAccessDialog,
-    AccessUrlInteract(String),
+    /// 手动改写地址框内容（协议版本，改写后的地址）。
+    AccessUrlInteract(IpVersion, String),
     OpenAccessUrl(String),
     OpenServer,
     ConfirmReleasePort,
@@ -480,7 +493,9 @@ impl ConsoleState {
             ConsoleMessage::OpenAccessDialog => self.start_access_detection(),
             ConsoleMessage::CloseAccessDialog => self.close_access_dialog(),
             ConsoleMessage::RetryAccessDialog => self.start_access_detection(),
-            ConsoleMessage::AccessUrlInteract(_value) => {}
+            ConsoleMessage::AccessUrlInteract(version, value) => {
+                self.edit_access_url(version, value);
+            }
             ConsoleMessage::OpenAccessUrl(url) => {
                 if let Err(error) = crate::core::shell::open_target(&url) {
                     self.add_error_log(tf("console.open_address_failed", &[("url", &url), ("error", &error)]));
@@ -661,6 +676,20 @@ impl ConsoleState {
                 .qr
                 .map(|qr| iced::widget::image::Handle::from_rgba(qr.width, qr.height, qr.rgba));
         }
+    }
+
+    /// 处理地址框的手动改写。
+    ///
+    /// 地址框、二维码、「浏览器打开」按钮必须始终指向同一个地址：
+    /// 改写后同步重建二维码，避免扫出来的地址和框里的地址不一致。
+    fn edit_access_url(&mut self, version: IpVersion, value: String) {
+        let slot = match version {
+            IpVersion::V4 => &mut self.access.ipv4,
+            IpVersion::V6 => &mut self.access.ipv6,
+        };
+        slot.qr = generate_qr_pixels(&value)
+            .map(|qr| iced::widget::image::Handle::from_rgba(qr.width, qr.height, qr.rgba));
+        slot.edited_url = Some(value);
     }
 
     /// 判断酒馆原始输出类型，并让错误堆栈、警告说明等续行继承颜色。
@@ -1096,7 +1125,7 @@ fn access_address_card(slot: &AccessSlot, version: IpVersion) -> Element<'static
         IpVersion::V4 => tr("access.ipv4"),
         IpVersion::V6 => tr("access.ipv6"),
     };
-    let Some(url) = slot.url.clone() else {
+    let Some(url) = slot.display_url().map(str::to_owned) else {
         return container(
             column![
                 text(label).size(14).font(crate::core::typography::medium()),
@@ -1140,11 +1169,15 @@ fn access_address_card(slot: &AccessSlot, version: IpVersion) -> Element<'static
         },
     );
 
+    // 打开按钮与地址框内容保持一致；空内容时按钮不可点，避免交给系统一个空链接。
+    let open_url = normalize_access_url(&url);
     container(
         column![
             text(label).size(14).font(crate::core::typography::medium()),
             text_input("", &url)
-                .on_input(|value| Message::Console(ConsoleMessage::AccessUrlInteract(value)))
+                .on_input(move |value| {
+                    Message::Console(ConsoleMessage::AccessUrlInteract(version, value))
+                })
                 .size(12)
                 .padding([8, 10])
                 .width(Fill)
@@ -1160,7 +1193,10 @@ fn access_address_card(slot: &AccessSlot, version: IpVersion) -> Element<'static
             )
             .padding([7, 10])
             .style(soft_button(BLUE_600))
-            .on_press(Message::Console(ConsoleMessage::OpenAccessUrl(url))),
+            .on_press_maybe(
+                (!open_url.is_empty())
+                    .then(|| Message::Console(ConsoleMessage::OpenAccessUrl(open_url))),
+            ),
             qr,
             raw(tr("access.scan_hint"))
                 .size(10)
@@ -1189,7 +1225,7 @@ fn detect_access_result(
     if is_loopback_address(&address) {
         return None;
     }
-    let url = build_access_url(&address, port, version);
+    let url = build_access_url(&address, port, version)?;
     let qr = generate_qr_pixels(&url);
     Some(AccessResult { address, url, qr })
 }
@@ -1198,10 +1234,34 @@ fn is_loopback_address(address: &str) -> bool {
     address == "::1" || address.starts_with("127.") || address.eq_ignore_ascii_case("localhost")
 }
 
-fn build_access_url(address: &str, port: u16, version: IpVersion) -> String {
+/// 用检测到的地址拼出访问链接；地址不是合法 IP 字面量时返回 `None`。
+///
+/// 这里必须严格校验：`ipconfig` 之类的来源可能夹带地址状态标注或乱码，
+/// 一旦被拼进链接，用户点「浏览器打开」只会拿到系统错误
+/// （`ShellExecuteW` 错误码 2），而不是可用的页面。
+fn build_access_url(address: &str, port: u16, version: IpVersion) -> Option<String> {
     match version {
-        IpVersion::V4 => format!("http://{address}:{port}/"),
-        IpVersion::V6 => format!("http://[{address}]:{port}/"),
+        IpVersion::V4 => address
+            .parse::<std::net::Ipv4Addr>()
+            .ok()
+            .map(|address| format!("http://{address}:{port}/")),
+        IpVersion::V6 => address
+            .parse::<std::net::Ipv6Addr>()
+            .ok()
+            .map(|address| format!("http://[{address}]:{port}/")),
+    }
+}
+
+/// 把地址框里的内容整理成可以直接交给系统的链接。
+///
+/// 允许省略协议：只写 `192.168.1.100:11451` 时补上 `http://`，
+/// 否则 `ShellExecuteW` 会因为缺少协议而打开失败。
+fn normalize_access_url(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() || value.contains("://") {
+        value.to_owned()
+    } else {
+        format!("http://{value}")
     }
 }
 
@@ -1558,10 +1618,10 @@ fn backdrop_surface(_theme: &Theme) -> iced::widget::container::Style {
 #[cfg(test)]
 mod tests {
     use super::{
-        AccessEvent, AccessLayout, AccessResult, ConsoleLog, ConsoleMessage, ConsoleState,
-        IpVersion, LogHighlight, LogHighlighter, LogKind, MAX_LOG_LINES, NetworkMode,
-        build_access_url, classify_log, generate_qr_pixels, is_loopback_address, render_log_line,
-        url_port,
+        AccessEvent, AccessLayout, AccessResult, AccessSlot, ConsoleLog, ConsoleMessage,
+        ConsoleState, IpVersion, LogHighlight, LogHighlighter, LogKind, MAX_LOG_LINES, NetworkMode,
+        build_access_url, classify_log, generate_qr_pixels, is_loopback_address,
+        normalize_access_url, render_log_line, url_port,
     };
     use iced::advanced::text::Highlighter;
     use std::sync::Arc;
@@ -1666,16 +1726,76 @@ mod tests {
     #[test]
     fn access_urls_distinguish_ipv4_and_ipv6() {
         assert_eq!(
-            build_access_url("192.168.1.20", 11451, IpVersion::V4),
-            "http://192.168.1.20:11451/"
+            build_access_url("192.168.1.20", 11451, IpVersion::V4).as_deref(),
+            Some("http://192.168.1.20:11451/")
         );
         assert_eq!(
-            build_access_url("240a:42cc::20", 11451, IpVersion::V6),
-            "http://[240a:42cc::20]:11451/"
+            build_access_url("240a:42cc::20", 11451, IpVersion::V6).as_deref(),
+            Some("http://[240a:42cc::20]:11451/")
         );
         assert!(is_loopback_address("127.0.0.1"));
         assert!(is_loopback_address("::1"));
         assert!(!is_loopback_address("192.168.1.20"));
+    }
+
+    /// 回归：带状态标注或乱码的地址不得生成访问链接。
+    ///
+    /// 曾经把 `ipconfig` 的地址状态标注一起当成主机名，生成
+    /// `http://198.19.140.155(首选):11451/`，点「浏览器打开」只会得到
+    /// 系统错误（`ShellExecuteW` 错误码 2）。这类地址必须判定为无效。
+    #[test]
+    fn access_url_rejects_annotated_or_invalid_address() {
+        assert_eq!(
+            build_access_url("198.19.140.155(首选)", 11451, IpVersion::V4),
+            None
+        );
+        // 中文标注在 OEM 代码页下被按 UTF-8 解码后的乱码形态。
+        assert_eq!(
+            build_access_url("198.19.140.155(\u{fffd}\u{fffd}\u{461})", 11451, IpVersion::V4),
+            None
+        );
+        assert_eq!(build_access_url("", 11451, IpVersion::V4), None);
+        assert_eq!(build_access_url("240a:42cc::20", 11451, IpVersion::V4), None);
+    }
+
+    #[test]
+    fn access_url_normalization_adds_missing_scheme() {
+        assert_eq!(
+            normalize_access_url("192.168.1.20:11451"),
+            "http://192.168.1.20:11451"
+        );
+        assert_eq!(
+            normalize_access_url("  http://192.168.1.20:11451/  "),
+            "http://192.168.1.20:11451/"
+        );
+        assert_eq!(normalize_access_url("   "), "");
+    }
+
+    /// 地址框允许手动改写，改写值必须覆盖自动检测结果（否则用户改了也白改）。
+    #[test]
+    fn manual_address_edit_overrides_detected_url() {
+        let mut state = ConsoleState::default();
+        state.access.ipv4 = AccessSlot {
+            resolved: true,
+            address: Some("198.19.140.155".to_owned()),
+            url: Some("http://198.19.140.155:11451/".to_owned()),
+            edited_url: None,
+            qr: None,
+        };
+        assert_eq!(
+            state.access.ipv4.display_url(),
+            Some("http://198.19.140.155:11451/")
+        );
+
+        let _ = state.update(ConsoleMessage::AccessUrlInteract(
+            IpVersion::V4,
+            "10.1.24.101:11451".to_owned(),
+        ));
+        let edited = state.access.ipv4.display_url().expect("改写后应仍有地址");
+        assert_eq!(edited, "10.1.24.101:11451");
+        assert_eq!(normalize_access_url(edited), "http://10.1.24.101:11451");
+        // 改写会同步重建二维码，避免扫码地址与地址框不一致。
+        assert!(state.access.ipv4.qr.is_some());
     }
 
     #[test]

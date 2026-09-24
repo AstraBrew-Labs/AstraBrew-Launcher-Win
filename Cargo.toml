@@ -54,6 +54,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Globalization",
     "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_LibraryLoader",
     "Win32_System_SystemInformation",
@@ -71,6 +72,7 @@ wry = { version = "0.55", features = ["devtools"] }
 # 自建原生窗口后仍需向 wry 提供 `HasWindowHandle` 实现。
 raw-window-handle = "0.6"
 # 本地实例扫描：替代 macOS 的 /usr/bin/find 子进程。
+# 每个磁盘一个 jwalk 并行遍历器，线程数由「占用核心数」设置决定。
 jwalk = "0.8"
 
 [build-dependencies]

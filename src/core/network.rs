@@ -392,9 +392,13 @@ pub fn get_lan_ipv6() -> Option<String> {
 /// 运行 `ipconfig` 并取回标准输出。
 ///
 /// 该命令会弹出控制台窗口，必须带上 `CREATE_NO_WINDOW`，否则界面会闪黑框。
+///
+/// 输出按 UTF-8 宽松解码：中文系统的字段名与地址状态标注属于 OEM 代码页（CP936），
+/// 会被解码成 U+FFFD 乱码。这里不切换代码页，因为解析只依赖 `IPv4`/`IPv6` 这类
+/// ASCII 行前缀，而地址值交给 [`parse_ipv4_literal`] / [`parse_ipv6_literal`] 严格校验，
+/// 乱码与标注都会在解析阶段被丢弃。
 fn ipconfig_output() -> Option<String> {
     let mut command = Command::new("ipconfig");
-    // 强制 UTF-8 代码页，避免中文系统上的本地化字段名被解码成乱码而匹配不上。
     command.args(["/all"]);
     crate::core::env::apply_no_window_to_command(&mut command);
     let output = command.output().ok()?;
@@ -404,24 +408,86 @@ fn ipconfig_output() -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// 剥离 `ipconfig` 追加在地址末尾的状态标注。
+///
+/// Windows 会在地址后附带地址状态：中文系统是 `(首选)`、`(已弃用)` 等，
+/// 英文系统是 `(Preferred)`、`(Deprecated)` 等，例如
+/// `IPv4 地址 . . . . . . . . . . . . : 192.168.1.100(首选)`。
+///
+/// 标注不是地址的一部分，必须剥离，否则会被拼进访问地址，产生
+/// `http://192.168.1.100(首选):11451/` 这种系统无法打开的链接
+/// （`ShellExecuteW` 返回错误码 2）。
+fn strip_address_annotation(value: &str) -> &str {
+    // 地址本身不含圆括号，取第一个左括号之前的部分即可。
+    let end = value.find(['(', '（']).unwrap_or(value.len());
+    value[..end].trim()
+}
+
+/// 把 `ipconfig` 的地址列解析成规范 IPv4 字面量。
+///
+/// 严格解析而不是「包含点号」这类宽松判断：任何残留标注、乱码都会导致解析失败，
+/// 从而被丢弃，不会流到界面与访问链接里。
+fn parse_ipv4_literal(value: &str) -> Option<std::net::Ipv4Addr> {
+    strip_address_annotation(value).parse().ok()
+}
+
+/// 把 `ipconfig` 的地址列解析成规范 IPv6 字面量。
+///
+/// 链路本地地址可能带 `%12` 形式的接口号，解析前先去掉（标注在最末尾，先去标注）。
+fn parse_ipv6_literal(value: &str) -> Option<std::net::Ipv6Addr> {
+    let address = strip_address_annotation(value);
+    let without_zone = address.split('%').next().unwrap_or(address);
+    without_zone.trim().parse().ok()
+}
+
+/// 判断 IPv4 地址能否作为对外访问地址：排除回环、未指定与自动私有地址（169.254.x.x）。
+fn is_usable_ipv4(address: std::net::Ipv4Addr) -> bool {
+    !address.is_loopback() && !address.is_link_local() && !address.is_unspecified()
+}
+
+/// 判断 IPv6 地址能否作为对外访问地址：排除回环、未指定与链路本地地址（fe80::/10）。
+fn is_usable_ipv6(address: std::net::Ipv6Addr) -> bool {
+    // `Ipv6Addr` 的链路本地判断在标准库中仍是实验特性，按首个段值自行判断。
+    !address.is_loopback()
+        && !address.is_unspecified()
+        && address.segments()[0] & 0xffc0 != 0xfe80
+}
+
+/// IPv4 候选地址的优先级，数值越小越优先。
+///
+/// - `0`：RFC1918 私有地址，同一局域网内的手机等设备可以直接访问；
+/// - `1`：其它地址；
+/// - `2`：RFC2544 保留的 `198.18.0.0/15`，Clash 等代理软件的 TUN 虚拟网卡常用该网段，
+///   局域网内其它设备无法访问，只有在没有别的候选时才使用。
+fn ipv4_priority(address: std::net::Ipv4Addr) -> u8 {
+    let octets = address.octets();
+    if address.is_private() {
+        0
+    } else if octets[0] == 198 && matches!(octets[1], 18 | 19) {
+        2
+    } else {
+        1
+    }
+}
+
 fn parse_lan_ipv4(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        let trimmed = line.trim();
-        // 中文是 `IPv4 地址 . . . : 192.168.1.100`，英文是 `IPv4 Address. . . . : ...`。
-        // `IP Address` 是更老的英文系统写法，一并兼容。
-        let matched = trimmed.starts_with("IPv4")
-            || trimmed.starts_with("IP Address")
-            || trimmed.starts_with("IPv4 Address");
-        if !matched {
-            return None;
-        }
-        let address = trimmed.rsplit(':').next()?.trim();
-        let is_usable = !address.is_empty()
-            && address.contains('.')
-            && address != "127.0.0.1"
-            && !address.starts_with("169.254.");
-        is_usable.then(|| address.to_owned())
-    })
+    // 一台机器可能同时有多个网卡（含代理软件的虚拟网卡），按优先级挑选而不是简单取
+    // 第一行，否则会把虚拟网卡地址当成局域网访问地址。`min_by_key` 在并列时取先出现的项。
+    output
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            // 中文是 `IPv4 地址 . . . : 192.168.1.100`，英文是 `IPv4 Address. . . . : ...`。
+            // `IP Address` 是更老的英文系统写法，一并兼容。
+            let matched = trimmed.starts_with("IPv4") || trimmed.starts_with("IP Address");
+            if !matched {
+                return None;
+            }
+            let address = parse_ipv4_literal(trimmed.rsplit(':').next()?)?;
+            is_usable_ipv4(address).then_some(address)
+        })
+        .min_by_key(|address| ipv4_priority(*address))
+        .map(|address| address.to_string())
 }
 
 fn parse_lan_ipv6(output: &str) -> Option<String> {
@@ -432,14 +498,8 @@ fn parse_lan_ipv6(output: &str) -> Option<String> {
         }
         // 行尾可能是 `2001:db8::1`，也可能是带 `%12` 接口号的临时地址，
         // 且 `IPv6 地址` 自身的冒号会干扰切分，因此从右侧逐段尝试。
-        let raw = trimmed.rsplit(':').next()?.trim();
-        let address = raw.split('%').next()?.trim();
-        let lower = address.to_ascii_lowercase();
-        let is_usable = !address.is_empty()
-            && address != "::1"
-            && !lower.starts_with("fe80:")
-            && address.contains(':');
-        is_usable.then(|| address.to_owned())
+        let address = parse_ipv6_literal(trimmed.rsplit(':').next()?)?;
+        is_usable_ipv6(address).then(|| address.to_string())
     })
 }
 
@@ -452,7 +512,8 @@ pub fn get_public_ipv4() -> Option<String> {
             "https://api4.ipify.org",
             "https://v4.ident.me",
         ],
-        |value| value.contains('.') && !value.contains(':'),
+        // 严格按 IPv4 字面量解析：接口返回的 HTML 错误页等内容不能当成地址使用。
+        |value| parse_ipv4_literal(value).map(|address| address.to_string()),
     )
 }
 
@@ -465,7 +526,7 @@ pub fn get_public_ipv6() -> Option<String> {
             "https://api6.ipify.org",
             "https://v6.ident.me",
         ],
-        |value| value.contains(':'),
+        |value| parse_ipv6_literal(value).map(|address| address.to_string()),
     )
 }
 
@@ -661,26 +722,29 @@ static LOCAL_IP_SET: LazyLock<std::collections::HashSet<String>> = LazyLock::new
 ///
 /// 中英文系统的行首分别是 `IPv4 地址` 与 `IPv4 Address`，共同点是都以 `IPv4`/`IPv6` 开头；
 /// 字段名与值之间用点号对齐，所以取最后一个冒号之后的内容即为地址。
+/// `family` 由调用方传入 `IPv4` 或 `IPv6`，决定按哪种地址字面量解析。
 fn parse_address_column(line: &str, family: &str) -> Option<String> {
     if !line.starts_with(family) {
         return None;
     }
-    let raw = line.rsplit(':').next()?.trim();
-    let address = raw.split('%').next()?.trim();
-    let lower = address.to_ascii_lowercase();
-    let usable = !address.is_empty()
-        && address != "::1"
-        && address != "127.0.0.1"
-        && !address.starts_with("169.254.")
-        && !lower.starts_with("fe80:")
-        && !lower.starts_with("::");
-    usable.then(|| address.to_owned())
+    let raw = line.rsplit(':').next()?;
+    if family == "IPv4" {
+        let address = parse_ipv4_literal(raw)?;
+        is_usable_ipv4(address).then(|| address.to_string())
+    } else {
+        let address = parse_ipv6_literal(raw)?;
+        is_usable_ipv6(address).then(|| address.to_string())
+    }
 }
 
+/// 依次请求各接口，取第一个能解析成合法地址的结果。
+///
+/// `parse` 同时承担「校验」与「规范化」两件事：只有真正的地址字面量才会返回
+/// `Some`，返回值直接用于拼接访问链接，因此不能把原始响应文本透传出去。
 fn public_ip(
     local_address: std::net::IpAddr,
     endpoints: &[&str],
-    valid: impl Fn(&str) -> bool,
+    parse: impl Fn(&str) -> Option<String>,
 ) -> Option<String> {
     let client = reqwest::blocking::Client::builder()
         .local_address(local_address)
@@ -693,8 +757,7 @@ fn public_ip(
         if !response.status().is_success() {
             return None;
         }
-        let value = response.text().ok()?.trim().to_owned();
-        (!value.is_empty() && valid(&value)).then_some(value)
+        parse(&response.text().ok()?)
     })
 }
 
@@ -1915,16 +1978,85 @@ mod tests {
         assert_eq!(parse_lan_ipv4(fixture), None);
     }
 
+    /// 回归：地址末尾的 Windows 状态标注（`(首选)` / `(Preferred)`）不得进入地址。
+    ///
+    /// 曾经把 `198.19.140.155(首选)` 整段当成主机名拼进访问链接，产生
+    /// `http://198.19.140.155(首选):11451/`，点「浏览器打开」必然失败
+    /// （`ShellExecuteW` 返回错误码 2）。
+    #[test]
+    fn ipconfig_ipv4_parsing_strips_state_annotation() {
+        let chinese = "   IPv4 地址 . . . . . . . . . . . . : 192.168.8.20(首选)";
+        assert_eq!(parse_lan_ipv4(chinese).as_deref(), Some("192.168.8.20"));
+
+        let english = "   IPv4 Address. . . . . . . . . . . : 10.0.0.7(Preferred)";
+        assert_eq!(parse_lan_ipv4(english).as_deref(), Some("10.0.0.7"));
+
+        // 中文标注在 OEM 代码页下被按 UTF-8 解码后是 U+FFFD 乱码，同样要能剥掉。
+        let mangled = "   IPv4 地址 . . . . . . . . . . . . : 192.168.8.20(\u{fffd}\u{fffd}\u{461})";
+        assert_eq!(parse_lan_ipv4(mangled).as_deref(), Some("192.168.8.20"));
+    }
+
+    /// 多网卡时优先选真实局域网地址：代理软件的 TUN 虚拟网卡（198.18.0.0/15）
+    /// 局域网内其它设备访问不到，排在私有地址之后。
+    #[test]
+    fn ipconfig_ipv4_parsing_prefers_real_lan_address() {
+        let fixture = "   IPv4 地址 . . . . . . . . . . . . : 198.19.140.155(首选)\n   IPv4 地址 . . . . . . . . . . . . : 10.1.24.101(首选)";
+        assert_eq!(parse_lan_ipv4(fixture).as_deref(), Some("10.1.24.101"));
+
+        // 只有虚拟网卡地址时仍然返回它，而不是让界面显示「获取失败」。
+        let only_virtual = "   IPv4 地址 . . . . . . . . . . . . : 198.19.140.155(首选)";
+        assert_eq!(
+            parse_lan_ipv4(only_virtual).as_deref(),
+            Some("198.19.140.155")
+        );
+    }
+
     #[test]
     fn ipconfig_ipv6_parsing_skips_loopback_and_link_local() {
         let fixture = "   IPv6 地址 . . . . . . . . . . . . : 240a:42cc::1234\n   临时 IPv6 地址. . . . . . . . . . : 240a:42cc::5678";
         assert_eq!(parse_lan_ipv6(fixture).as_deref(), Some("240a:42cc::1234"));
 
-        let link_local = "   IPv6 地址 . . . . . . . . . . . . : fe80::1234%12";
+        // 带状态标注时同样要取到地址本身。
+        let with_annotation = "   IPv6 地址 . . . . . . . . . . . . : 240a:42cc::1234(首选)";
+        assert_eq!(
+            parse_lan_ipv6(with_annotation).as_deref(),
+            Some("240a:42cc::1234")
+        );
+
+        let link_local = "   IPv6 地址 . . . . . . . . . . . . : fe80::1234%12(首选)";
         assert_eq!(parse_lan_ipv6(link_local), None);
 
         let loopback = "   IPv6 地址 . . . . . . . . . . . . : ::1";
         assert_eq!(parse_lan_ipv6(loopback), None);
+    }
+
+    /// 连接日志过滤用的本机地址集合同样要剥掉状态标注，否则「自己连自己」会被误报。
+    #[test]
+    fn local_ip_column_parsing_strips_state_annotation() {
+        assert_eq!(
+            parse_address_column(
+                "   IPv4 地址 . . . . . . . . . . . . : 192.168.8.20(首选)",
+                "IPv4"
+            )
+            .as_deref(),
+            Some("192.168.8.20")
+        );
+        assert_eq!(
+            parse_address_column(
+                "   IPv6 地址 . . . . . . . . . . . . : 240a:42cc::1234(首选)",
+                "IPv6"
+            )
+            .as_deref(),
+            Some("240a:42cc::1234")
+        );
+        // 不是合法地址的内容必须被丢弃，不能进入本机地址集合。
+        assert_eq!(
+            parse_address_column(
+                "   IPv4 地址 . . . . . . . . . . . . : 192.168.8.20.30",
+                "IPv4"
+            ),
+            None
+        );
     }
 
     #[test]

@@ -14,7 +14,8 @@ use std::sync::{
 use super::{Launcher, Message};
 use crate::core::local_instances::{
     self as service, DependencyStatus, LocalError, LocalErrorKind, LocalInstance, dependencies,
-    find_scan, scan::ScanEvent,
+    disk_scan,
+    scan::ScanEvent,
 };
 use crate::pages::notice::TransientNotice;
 use crate::pages::versions::{
@@ -93,14 +94,18 @@ impl Drop for LocalRuntime {
 }
 
 /// 扫描事件使用可取消的背压发送，退出时不能被已满的 UI 通道卡住。
-fn send_scan(tx: &SyncSender<Event>, mut event: Event, cancel: &AtomicBool) -> bool {
+///
+/// 该函数会被多个磁盘工作线程**并发**调用，因此不能持有任何可变状态：
+/// 取消时直接丢弃事件，通道断开说明应用已经退出，同样直接返回。
+fn send_scan(tx: &SyncSender<Event>, id: u64, cancel: &AtomicBool, event: ScanEvent) {
+    let mut event = Event::Scan(id, event);
     loop {
         if cancel.load(Ordering::Relaxed) {
-            return false;
+            return;
         }
         match tx.try_send(event) {
-            Ok(()) => return true,
-            Err(mpsc::TrySendError::Disconnected(_)) => return false,
+            Ok(()) => return,
+            Err(mpsc::TrySendError::Disconnected(_)) => return,
             Err(mpsc::TrySendError::Full(pending)) => {
                 event = pending;
                 std::thread::sleep(std::time::Duration::from_millis(10));
@@ -291,13 +296,19 @@ impl Launcher {
         if !self.local_runtime.workers_enabled {
             return;
         }
+        // 线程预算来自设置里的「占用核心数」：核心越少，同时推进的磁盘越少、
+        // 每个磁盘内部的并行度也越低，避免全盘扫描把机器拖到无法使用。
+        let budget = disk_scan::thread_budget(self.settings.cpu_cores);
         let tx = self.local_runtime.tx.clone();
         let cancel = self.local_runtime.scan_cancel.clone();
+        let emit_cancel = cancel.clone();
         self.local_runtime
             .scan_workers
             .push(std::thread::spawn(move || {
-                find_scan::run_home(service::online_dir(), &cancel, |event| {
-                    send_scan(&tx, Event::Scan(id, event), &cancel)
+                // 闭包必须取得 `tx` / `id` / `emit_cancel` 的所有权：
+                // 扫描事件由多个磁盘工作线程并发投递，生命周期超出本函数。
+                disk_scan::run(service::online_dir(), budget, cancel, move |event| {
+                    send_scan(&tx, id, &emit_cancel, event);
                 });
             }));
     }
@@ -592,15 +603,37 @@ impl Launcher {
                         continue;
                     }
                     match event {
-                        ScanEvent::Progress(mut progress) => {
-                            if let Some(started) = self.versions.local.scan.started_at {
-                                progress.elapsed_seconds = started.elapsed().as_secs();
-                            }
-                            self.versions.local.scan.progress = progress;
+                        ScanEvent::Drives(drives) => {
+                            self.versions.local.scan.progress.drives = drives;
                         }
-                        ScanEvent::ScanningPath(path) => {
-                            self.versions.local.scan.observe_path(path.clone());
-                            append_log(&mut self.versions.local.scan.logs, path);
+                        ScanEvent::Drive(drive) => {
+                            let scan = &mut self.versions.local.scan;
+                            let previous = scan
+                                .progress
+                                .drives
+                                .iter()
+                                .find(|item| item.letter == drive.letter)
+                                .map(|item| item.current.clone());
+                            match scan
+                                .progress
+                                .drives
+                                .iter_mut()
+                                .find(|item| item.letter == drive.letter)
+                            {
+                                Some(slot) => *slot = drive.clone(),
+                                None => scan.progress.drives.push(drive.clone()),
+                            }
+                            // 汇总计数由各磁盘快照求和，避免再单独维护一份易失同步的计数。
+                            scan.progress.checked =
+                                scan.progress.drives.iter().map(|item| item.checked).sum();
+                            scan.progress.found =
+                                scan.progress.drives.iter().map(|item| item.found).sum();
+                            if previous.as_deref() != Some(drive.current.as_str())
+                                && !drive.current.is_empty()
+                            {
+                                scan.observe_path(drive.current.clone());
+                                scan.append_scan_log(drive.current);
+                            }
                         }
                         ScanEvent::Found(instance) => {
                             if self.add_local_instance(instance) {
@@ -618,6 +651,8 @@ impl Launcher {
                                 if let Some(started) = self.versions.local.scan.started_at {
                                     report.progress.elapsed_seconds = started.elapsed().as_secs();
                                 }
+                                // 结束事件携带每个磁盘的最终状态，直接整体替换，
+                                // 不必再等最后一帧的逐盘进度。
                                 self.versions.local.scan.progress = report.progress;
                                 self.versions.local.scan.cancel_confirm_visible = false;
                                 self.versions.local.scan.phase = if report.partial {
@@ -788,6 +823,7 @@ fn format_removed_instances(paths: &[String], cleared_current: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::local_instances::scan::{DrivePhase, DriveProgress};
     use crate::core::settings::SettingsStore;
     use crate::pages::{Page, versions::VersionState};
 
@@ -1019,6 +1055,16 @@ mod tests {
         assert!(app.versions.local_instances.is_empty());
     }
 
+    /// 构造一个「某磁盘正在遍历某目录」的进度事件。
+    fn drive_event(letter: &str, current: &str) -> ScanEvent {
+        ScanEvent::Drive(DriveProgress {
+            letter: letter.into(),
+            current: current.into(),
+            phase: DrivePhase::Running,
+            ..Default::default()
+        })
+    }
+
     #[test]
     fn scan_keeps_only_five_recent_paths_and_preserves_detailed_log() {
         let mut app = launcher();
@@ -1027,11 +1073,12 @@ mod tests {
         for i in 0..8 {
             send(
                 &mut app,
-                Event::Scan(id, ScanEvent::ScanningPath(format!("/fixture/{i}"))),
+                Event::Scan(id, drive_event("C:", &format!("/fixture/{i}"))),
             );
         }
         assert_eq!(app.versions.local.scan.recent_paths.len(), 5);
-        assert_eq!(app.versions.local.scan.logs.len(), 8);
+        // 详细日志按 400ms 限流，一连串连续事件最多只落一条。
+        assert_eq!(app.versions.local.scan.logs.len(), 1);
         send(
             &mut app,
             Event::Scan(
@@ -1065,22 +1112,67 @@ mod tests {
         assert_eq!(app.versions.local.scan.phase, ScanPhase::Running);
     }
 
+    /// 通道打满后，取消必须能把卡在重试循环里的扫描线程放出来。
     #[test]
     fn cancellation_unblocks_full_event_channels() {
         let (tx, _rx) = mpsc::sync_channel(1);
-        tx.send(Event::Scan(0, ScanEvent::Progress(Default::default())))
+        tx.send(Event::Scan(0, drive_event("C:", "/fixture")))
             .unwrap();
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
-        let thread = std::thread::spawn(move || {
-            send_scan(
-                &tx,
-                Event::Scan(0, ScanEvent::Progress(Default::default())),
-                &flag,
-            )
-        });
+        let thread =
+            std::thread::spawn(move || send_scan(&tx, 0, &flag, drive_event("C:", "/fixture/next")));
         cancel.store(true, Ordering::Relaxed);
-        assert!(!thread.join().unwrap());
+        thread.join().expect("扫描事件发送线程应当正常退出");
+    }
+
+    /// 多盘进度事件要合并进同一张网格，并汇总出总数。
+    #[test]
+    fn drive_events_merge_into_grid_and_aggregate_counts() {
+        let mut app = launcher();
+        app.handle_local_message(&VersionMessage::ScanLocal);
+        let id = app.local_runtime.scan_id;
+        send(
+            &mut app,
+            Event::Scan(
+                id,
+                ScanEvent::Drives(vec![
+                    DriveProgress {
+                        letter: "C:".into(),
+                        root: r"C:\".into(),
+                        ..Default::default()
+                    },
+                    DriveProgress {
+                        letter: "D:".into(),
+                        root: r"D:\".into(),
+                        ..Default::default()
+                    },
+                ]),
+            ),
+        );
+        assert_eq!(app.versions.local.scan.progress.drives.len(), 2);
+
+        for (letter, checked, found) in [("C:", 10, 1), ("D:", 5, 2)] {
+            send(
+                &mut app,
+                Event::Scan(
+                    id,
+                    ScanEvent::Drive(DriveProgress {
+                        letter: letter.into(),
+                        phase: DrivePhase::Running,
+                        checked,
+                        found,
+                        ..Default::default()
+                    }),
+                ),
+            );
+        }
+        let progress = &app.versions.local.scan.progress;
+        assert_eq!(progress.checked, 15, "各盘检查条目数应汇总");
+        assert_eq!(progress.found, 3, "各盘发现实例数应汇总");
+        // 网格顺序保持枚举顺序，界面按盘符定位更新，不会因为事件乱序而重排。
+        assert_eq!(progress.drives[0].letter, "C:");
+        assert_eq!(progress.drives[1].letter, "D:");
     }
 
     #[test]

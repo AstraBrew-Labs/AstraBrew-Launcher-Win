@@ -1,7 +1,7 @@
 //! 本地实例的身份识别与原子存储；不在这里操作界面或启动安装。
 
 pub(crate) mod dependencies;
-pub(crate) mod find_scan;
+pub(crate) mod disk_scan;
 pub(crate) mod scan;
 
 use std::fs;
