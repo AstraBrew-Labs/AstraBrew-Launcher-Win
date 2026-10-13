@@ -312,8 +312,14 @@ impl ResourceManageState {
     pub fn configure(&mut self, settings: &SettingsState, versions: &VersionState) {
         let root = match settings.data_mode {
             TavernDataMode::Global => {
-                let path = expand_home(&settings.global_data_path).join("default-user");
-                Some(path)
+                // 全局数据目录统一走 `resolve_global_data_path` 展开：
+                // 配置里存的是 `%APPDATA%/AstraBrew Launcher/data/sillytavern/data`
+                // 这种**可移植写法**，直接当路径用会变成相对路径，
+                // 进而在进程当前工作目录下建出一个名为 `%APPDATA%` 的文件夹。
+                Some(
+                    crate::core::settings::resolve_global_data_path(&settings.global_data_path)
+                        .join("default-user"),
+                )
             }
             TavernDataMode::Current => {
                 let instance = versions.current_path.as_deref().or_else(|| {
@@ -1226,22 +1232,6 @@ fn non_empty(value: String, fallback: String) -> String {
     } else {
         value
     }
-}
-
-/// 展开 `~` 家目录前缀（Windows 上是 `%USERPROFILE%`）。
-fn expand_home(path: &str) -> PathBuf {
-    let user_profile = || {
-        std::env::var_os("USERPROFILE")
-            .map(PathBuf::from)
-            .unwrap_or_default()
-    };
-    if path == "~" {
-        return user_profile();
-    }
-    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
-        return user_profile().join(rest);
-    }
-    PathBuf::from(path)
 }
 
 fn chat_display_time(filename: &str) -> String {

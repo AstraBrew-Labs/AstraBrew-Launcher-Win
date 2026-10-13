@@ -21,8 +21,12 @@
 //! | `__DONE__` | 安装成功 |
 //!
 //! 注意 `__STATUS__` / `__NOTICE__` 传键、`__ERROR__` 传已翻译文案，二者不可混用：
-//! 后台线程读不到界面线程的语言设置（`lang::t` 依赖线程局部变量），
-//! 所以要么传键让界面线程翻译，要么在**本线程**用 `tf()` / `t()` 固化成文案。
+//! 键交给界面线程翻译（延迟到显示时刻），文案则在**本线程**用 `tf()` / `t()` 固化成
+//! 实际文案。当前语言是进程级共享的（见 `lang::set_language`），后台线程也能读到正确
+//! 语言，因此 `__ERROR__` 不会因为线程不同而退回英文。
+//!
+//! 新增后台线程时**不要**自己拼文案键：要么传 `__STATUS__` / `__NOTICE__` 键交给界面，
+//! 要么在本线程 `tf()` 固化。样式上优先传键，界面线程的 `raw()` 才会带上正确的字重。
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -34,7 +38,10 @@ use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 use zip::ZipArchive;
 
-use crate::core::env::{apply_no_window_to_command, get_lib_dir};
+use crate::core::env::{
+    apply_no_window_to_command, apply_builtin_path_to_command, get_builtin_node_path,
+    get_builtin_npm_cli_path, get_lib_dir,
+};
 use crate::core::settings::EnvSource;
 use crate::pages::settings::EnvironmentDependency;
 
@@ -673,25 +680,29 @@ fn install_caddy(context: &InstallContext) -> InstallResult {
 
 /// 通过 npm 把 PM2 安装到 `lib/pm2/`，并生成包装脚本。
 ///
-/// PM2 依赖 Node.js，因此未检测到内置 npm 时直接报错而非回退，
+/// PM2 依赖 Node.js，因此未检测到内置 Node.js / npm 时直接报错而非回退，
 /// 避免把 PM2 散落到用户全局 npm 目录里。
 fn install_pm2(context: &InstallContext) -> InstallResult {
     use crate::core::settings::env_detect::{prepare_install_command, run_logged_command};
 
     let lib = get_lib_dir();
     let target = lib.join("pm2");
-    let npm = lib.join("nodejs").join("npm.cmd");
-    if !npm.is_file() {
-        return Err(InstallError::key("install.error.pm2_needs_nodejs"));
-    }
+    // 用「内置 node + npm 的 JS 入口」而不是 npm.cmd。
+    //
+    // 走 `cmd /c "<npm.cmd>" install pm2 --prefix "<target>"` 会失败：脚本路径与
+    // `--prefix` 的目标路径都含空格，命令行上因此出现 4 个引号，cmd 会命中
+    // 「剥离首尾引号」的旧解析规则，把脚本路径截断成 `...\npm.cmd"`，
+    // 直接报「不是内部或外部命令」并返回退出码 1，日志里看不到任何 npm 输出。
+    let node = get_builtin_node_path().ok_or_else(|| InstallError::key("install.error.pm2_needs_nodejs"))?;
+    let npm_cli =
+        get_builtin_npm_cli_path().ok_or_else(|| InstallError::key("install.error.pm2_needs_nodejs"))?;
 
     context.notice("environment.install.pm2.preparing");
     context.status("environment.install.pm2.installing");
     reset_directory(&target)?;
 
-    // `cmd /c` 包装：Windows 无法直接执行 `.cmd`。
-    let mut command = Command::new("cmd");
-    command.arg("/c").arg(&npm);
+    let mut command = Command::new(node);
+    command.arg(&npm_cli);
     command.args(["install", "pm2", "--prefix"]).arg(&target);
     // 不生成锁文件、关闭进度条/审计/funding，让日志更干净。
     command.args([
@@ -705,6 +716,9 @@ fn install_pm2(context: &InstallContext) -> InstallResult {
             .arg("--registry")
             .arg(context.options.npm_registry.trim());
     }
+    // npm 会二次拉起 node 执行依赖的生命周期脚本，前置注入内置环境，
+    // 保证这些子进程命中内置 node / git，而不是用户系统里那份。
+    apply_builtin_path_to_command(&mut command);
     let mut command = prepare_install_command(command);
 
     let child = command

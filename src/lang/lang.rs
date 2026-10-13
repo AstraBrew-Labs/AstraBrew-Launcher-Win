@@ -12,18 +12,30 @@
 //! 键命名规范：`<域>.<语义>`，全小写下划线分隔，例如 `settings.title`、
 //! `extensions.error.clone_failed`、`tavern.field.port.hint`。
 
-use std::cell::Cell;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::core::settings::DisplayLanguage;
 
 /// 渲染时实际使用的语言。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum Language {
     /// 简体中文。
-    Chinese,
+    Chinese = 0,
     /// 英文。
-    English,
+    English = 1,
+}
+
+impl Language {
+    /// 由原子存储值还原语言，未知取值一律按英文处理。
+    const fn from_raw(raw: u8) -> Self {
+        if raw == Self::Chinese as u8 {
+            Self::Chinese
+        } else {
+            Self::English
+        }
+    }
 }
 
 impl Language {
@@ -49,10 +61,13 @@ impl Language {
 
 static SYSTEM_LANGUAGE: OnceLock<Language> = OnceLock::new();
 
-thread_local! {
-    /// iced 在同一 UI 线程构建并绘制元素；这里保存当前视图的只读渲染语言。
-    static RENDER_LANGUAGE: Cell<Language> = const { Cell::new(Language::English) };
-}
+/// 当前界面语言（进程级）。
+///
+/// **必须用全局原子而不是 `thread_local`**：安装、下载、GitHub 连通性测试等工作线程
+/// 都要读同一份语言来产出文案。若语言只存在 UI 线程的线程本地存储里，工作线程读到的是
+/// 默认值（英文），表现为「后台任务一有输出，界面就冒出英文」。启动器只有一个窗口、
+/// 一份语言设置，进程级共享不存在歧义。
+static CURRENT_LANGUAGE: AtomicU8 = AtomicU8::new(Language::English as u8);
 
 /// 将用户选择解析为实际语言。
 pub fn effective_language(language: DisplayLanguage) -> Language {
@@ -63,14 +78,14 @@ pub fn effective_language(language: DisplayLanguage) -> Language {
     }
 }
 
-/// 在构建当前帧前设置渲染语言。
+/// 设置当前语言；UI 线程每次构建界面、切换语言时都会调用。
 pub fn set_language(language: Language) {
-    RENDER_LANGUAGE.set(language);
+    CURRENT_LANGUAGE.store(language as u8, Ordering::Relaxed);
 }
 
-/// 当前帧使用的语言，供需要实现 `Display` 的控件选项读取。
+/// 当前语言，供任意线程（含工作线程）读取。
 pub fn current_language() -> Language {
-    RENDER_LANGUAGE.get()
+    Language::from_raw(CURRENT_LANGUAGE.load(Ordering::Relaxed))
 }
 
 /// 按指定语言翻译键。

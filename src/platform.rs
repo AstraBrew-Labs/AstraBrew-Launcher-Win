@@ -22,12 +22,14 @@ use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
     MonitorFromPoint,
 };
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem,
     SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    CreateIcon, GetSystemMetrics, HICON, IMAGE_ICON, LoadImageW, SM_CXICON, SM_CXSMICON,
+    SM_CYICON, SM_CYSMICON, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
 };
 use windows_sys::core::BOOL;
 
@@ -317,8 +319,152 @@ pub fn centered_on_primary(size: Size) -> Point {
     )
 }
 
-/// 应用图标在 Windows 上由可执行文件的 PE 资源决定（见 `build.rs`），
-/// winit 的 `set_window_icon` 只在任务栏使用，启动阶段无需额外处理。
+/// 窗口图标（标题栏左上角 + 任务栏按钮）。
+///
+/// **必须显式给窗口设图标**：winit 注册窗口类时若 `hIcon` 为空，Windows 会退回内置的
+/// 通用应用图标（那张白底的「窗口」图），看起来就像「软件图标缺失」。
+/// `build.rs` 嵌进 exe 的 PE 资源图标只作用于资源管理器与快捷方式，
+/// **不会**自动变成窗口图标 —— 那一步只能靠 winit 收到 `window::Settings.icon` 后
+/// 写 `WM_SETICON` 完成。
+///
+/// 图形取自 `assets/icon/icon_window.png`（256×256、透明底，与 `icon.ico` 同一母版）：
+/// 256 是 Windows 期望的窗口图标基准尺寸；直接把 1024 的母版塞进去会生成 4 MB 的 HICON，
+/// 且小尺寸下由系统缩放的观感并不更好。
+///
+/// 解码失败时返回 `None`（退回系统默认图标），不阻断启动。
+pub fn window_icon() -> Option<window::Icon> {
+    const ICON_BYTES: &[u8] = include_bytes!("../assets/icon/icon_window.png");
+    window::icon::from_file_data(ICON_BYTES, None).ok()
+}
+
+/// exe 内嵌图标资源的 ID。
+///
+/// `build.rs` 通过 `winresource::set_icon` 写入，该函数固定使用 ID 1
+/// （即 `IDI_APPLICATION` 所在的槽位），所以这里也按 1 读取。
+const ICON_RESOURCE_ID: *const u16 = 1usize as *const u16;
+
+/// 已加载的原生窗口图标句柄缓存，顺序为 `[大图标, 小图标]`。
+///
+/// `HICON` 是裸指针、不满足 `Sync`，无法直接放进 `static`，因此以 `usize` 存放。
+/// 句柄在本进程的整个生命周期内有效，由本模块持有，**不释放**。
+static NATIVE_WINDOW_ICONS: OnceLock<[usize; 2]> = OnceLock::new();
+
+/// 自建原生窗口需要的图标尺寸档位。
+#[derive(Clone, Copy)]
+pub enum WindowIconSize {
+    /// 标题栏与任务栏按钮：`SM_CXSMICON`（通常 16×16）。
+    Small,
+    /// Alt+Tab 与任务栏缩略图：`SM_CXICON`（通常 32×32）。
+    Big,
+}
+
+/// 取启动器图标对应的 Windows `HICON`，供**自建**的原生窗口使用。
+///
+/// iced 主窗口的图标走 winit 的 `window::Settings.icon`（见 [`window_icon`]）；
+/// 而桌面模式的 WebView 窗口是本项目手写 `CreateWindowExW` 创建的，拿不到那条通道，
+/// 必须自己把图标挂上去 —— 否则它会退回 Windows 的通用应用图标，
+/// 与主窗口并排出现在任务栏时一眼就能看出不是同一个程序。
+///
+/// 加载顺序：
+/// 1. exe 自带的 PE 图标资源（`assets/icon/icon.ico`，含 16/24/32/48/64/128/256 七档）。
+///    `LoadImageW` 会挑最贴近目标尺寸的那一档，标题栏要 16×16、Alt+Tab 要 32×32
+///    时都能命中专门优化的位图；
+/// 2. 资源不可用（构建时缺 `icon.ico`）时退回内嵌的 `icon_window.png`，
+///    现场走一遍 RGBA → `CreateIcon`，保证至少与 iced 主窗口完全一致。
+///
+/// 返回的句柄归进程所有并持有至退出，调用方**不得** `DestroyIcon`。
+pub fn native_window_icon(size: WindowIconSize) -> Option<HICON> {
+    let [big, small] = *NATIVE_WINDOW_ICONS.get_or_init(|| {
+        [
+            load_native_window_icon(WindowIconSize::Big),
+            load_native_window_icon(WindowIconSize::Small),
+        ]
+    });
+    let raw = match size {
+        WindowIconSize::Big => big,
+        WindowIconSize::Small => small,
+    };
+    (raw != 0).then_some(raw as HICON)
+}
+
+/// 按目标尺寸加载一枚原生窗口图标，失败时返回 0。
+fn load_native_window_icon(size: WindowIconSize) -> usize {
+    let (metric_width, metric_height) = match size {
+        WindowIconSize::Big => (SM_CXICON, SM_CYICON),
+        WindowIconSize::Small => (SM_CXSMICON, SM_CYSMICON),
+    };
+    // SAFETY: 只读取系统度量值，无副作用。
+    let (width, height) = unsafe {
+        (
+            GetSystemMetrics(metric_width),
+            GetSystemMetrics(metric_height),
+        )
+    };
+
+    // SAFETY: 返回本进程的模块句柄；失败时为空指针，已在下文判空。
+    let module = unsafe { GetModuleHandleW(std::ptr::null()) };
+    if !module.is_null() {
+        // SAFETY: `ICON_RESOURCE_ID` 是整数形式的资源名，指向本 exe 已加载的图标资源；
+        // 模块句柄来自当前进程，生命周期覆盖整个调用。
+        let handle = unsafe { LoadImageW(module, ICON_RESOURCE_ID, IMAGE_ICON, width, height, 0) };
+        if !handle.is_null() {
+            return handle as usize;
+        }
+    }
+
+    // 资源不可用：退回与 iced 主窗口同源的 PNG。
+    let Some(icon) = window_icon() else {
+        return 0;
+    };
+    let (mut rgba, size) = icon.into_raw();
+    create_icon_from_rgba(&mut rgba, size.width as i32, size.height as i32)
+        .map(|handle| handle as usize)
+        .unwrap_or(0)
+}
+
+/// 用 RGBA 位图现场生成 `HICON`。
+///
+/// `CreateIcon` 需要两份位图：彩色位图（32 bpp、BGRA 顺序）+ 单色 AND 掩码（1 bpp）。
+/// 对带 alpha 通道的 32 bpp 图标，Windows 以 alpha 为准、不看掩码；
+/// 但这里仍按「完全透明的处置位」写一份语义正确的掩码（每行按 4 字节对齐），
+/// 以免系统真的回退到掩码判定时给出一整块黑底。
+fn create_icon_from_rgba(rgba: &mut [u8], width: i32, height: i32) -> Option<HICON> {
+    if width <= 0 || height <= 0 {
+        return None;
+    }
+    let row_bytes = (width as usize).div_ceil(8).next_multiple_of(4);
+    let mut and_mask = vec![0u8; row_bytes * height as usize];
+    for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+        let column = index % width as usize;
+        let row = index / width as usize;
+        // AND 掩码：1 表示保留目标像素（即透明），0 表示绘制彩色位图。
+        if pixel[3] == 0 {
+            and_mask[row * row_bytes + column / 8] |= 0x80u8 >> (column % 8);
+        }
+        // `CreateIcon` 的彩色位图要求 BGRA 顺序：互换 R / B 两个通道。
+        pixel.swap(0, 2);
+    }
+    // SAFETY: 两个缓冲区分别按 1 bpp 掩码与 32 bpp 彩色位图的约定填好，
+    // 长度足以让 `CreateIcon` 读取 `width × height` 个像素。
+    let handle = unsafe {
+        CreateIcon(
+            std::ptr::null_mut(),
+            width,
+            height,
+            1,
+            32,
+            and_mask.as_ptr(),
+            rgba.as_ptr(),
+        )
+    };
+    (!handle.is_null()).then_some(handle)
+}
+
+/// 窗口创建后再补写图标的兜底钩子。
+///
+/// 图标已在窗口创建时通过 `window::Settings.icon` 交给 winit（见 [`window_icon`]），
+/// 窗口类一旦注册就带上了正确的 `hIcon`，这里无需重复设置。
+/// 保留空实现是为了让 cross-platform 的调用点保持一致。
 pub fn apply_application_icon() {}
 
 /// Windows 侧无需额外禁用缩放按钮。

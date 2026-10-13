@@ -4,7 +4,7 @@
 
 use crate::lang::{t, tf};
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::LazyLock;
@@ -500,18 +500,14 @@ fn start_direct(
     Ok(())
 }
 
+/// 把子进程输出逐行转发到日志通道。
+///
+/// 走 `core::env::forward_lines`：它按字节切行并对非 UTF-8 输出做 OEM（GBK）解码。
+/// 若改用 `BufReader::lines()`，酒馆/Tauri 桥输出里只要出现一个非 UTF-8 字节，
+/// 整条日志流就会在那里断掉。
 fn spawn_log_reader(reader: impl std::io::Read + Send + 'static, sender: Sender<String>) {
     thread::spawn(move || {
-        for line in BufReader::new(reader).lines() {
-            match line {
-                Ok(line) => {
-                    if sender.send(line).is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
+        crate::core::env::forward_lines(BufReader::new(reader), sender);
     });
 }
 

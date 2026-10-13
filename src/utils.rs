@@ -1230,6 +1230,22 @@ pub fn expand_user_path(path: &str) -> PathBuf {
     PathBuf::from(result)
 }
 
+/// 把配置里的路径写法解析成**绝对路径**，解析不出绝对路径时返回 `None`。
+///
+/// 比 [`expand_user_path`] 多一道保险：要求结果必须是绝对路径。
+///
+/// 为什么必须区分：`%APPDATA%/AstraBrew Launcher/data/...` 这类写法一旦有变量没展开成功
+/// （变量名写错、环境变量缺失、调用方忘了展开），剩下的就是一个**相对路径**。
+/// Windows 会把相对路径拼到进程的当前工作目录后面 —— 表现就是「软件目录下凭空多出一个
+/// 名为 `%APPDATA%` 的文件夹」，而且数据会写进去。这种结果绝不能当成真实数据目录使用。
+///
+/// 调用方拿到 `None` 应按「路径未配置」处理（提示用户或退回默认目录），
+/// **不要**退回 [`expand_user_path`] 的原始结果。
+pub fn resolve_absolute_user_path(path: &str) -> Option<PathBuf> {
+    let expanded = expand_user_path(path);
+    expanded.is_absolute().then_some(expanded)
+}
+
 /// 用户「下载」文件夹的路径。
 ///
 /// 优先读注册表里的已知文件夹 —— 用户可能把「下载」重定向到了其他盘，
@@ -1466,5 +1482,44 @@ pub(crate) fn try_symlink_file(target: &std::path::Path, link: &std::path::Path)
     #[cfg(not(windows))]
     {
         std::os::unix::fs::symlink(target, link).is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{expand_user_path, resolve_absolute_user_path};
+    use std::path::Path;
+
+    #[test]
+    fn expand_user_path_resolves_windows_environment_variables() {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let expanded = expand_user_path("%APPDATA%/AstraBrew Launcher/data");
+            assert_eq!(
+                expanded,
+                Path::new(&appdata)
+                    .join("AstraBrew Launcher")
+                    .join("data")
+            );
+        }
+        // 变量名拼错时保持原样，交由调用方判断可用性。
+        assert_eq!(
+            expand_user_path("%ASTRA_NO_SUCH_VAR%/x"),
+            Path::new("%ASTRA_NO_SUCH_VAR%/x")
+        );
+    }
+
+    /// 回归护栏：展开不出绝对路径时必须返回 `None`。
+    ///
+    /// 这类配置值一旦被当成真实路径用，Windows 会把它拼到进程当前工作目录后面，
+    /// 于是在软件目录里建出一个名为 `%APPDATA%` 的文件夹。
+    #[test]
+    fn resolve_absolute_user_path_rejects_relative_results() {
+        assert!(resolve_absolute_user_path("%ASTRA_NO_SUCH_VAR%/data").is_none());
+        assert!(resolve_absolute_user_path("relative\\dir").is_none());
+        assert!(resolve_absolute_user_path("").is_none());
+        if std::env::var_os("APPDATA").is_some() {
+            let resolved = resolve_absolute_user_path("%APPDATA%/AstraBrew Launcher").expect("应能解析出绝对路径");
+            assert!(resolved.is_absolute());
+        }
     }
 }

@@ -19,6 +19,36 @@ use serde_json::{Map, Value};
 pub(crate) const DEFAULT_GLOBAL_DATA_PATH: &str =
     "%APPDATA%/AstraBrew Launcher/data/sillytavern/data";
 
+/// 把配置里的「全局数据存放位置」解析成可安全使用的**绝对路径**。
+///
+/// `global_data_path` 在磁盘上保存的是**可移植写法**（默认即
+/// [`DEFAULT_GLOBAL_DATA_PATH`]），所以凡是往文件系统写东西的地方都必须先经过这里展开，
+/// 不能直接把配置值当路径用：一旦 `%APPDATA%` 没被展开，剩下的就是一个**相对路径**，
+/// Windows 会把它拼到进程的当前工作目录后面，于是软件目录里会凭空出现一个名为
+/// `%APPDATA%` 的文件夹，并且酒馆数据真的会写进去。
+///
+/// 空值、或展开后仍不是绝对路径时，退回内置默认目录
+/// （`<root>/data/sillytavern/data`），保证调用方拿到的永远是绝对路径。
+pub(crate) fn resolve_global_data_path(spec: &str) -> PathBuf {
+    if spec.trim().is_empty() {
+        return default_global_data_dir();
+    }
+    let expanded = crate::utils::expand_user_path(spec);
+    if expanded.is_absolute() {
+        expanded
+    } else {
+        default_global_data_dir()
+    }
+}
+
+/// 内置默认全局数据目录的真实位置。
+fn default_global_data_dir() -> PathBuf {
+    crate::utils::app_paths()
+        .data
+        .join("sillytavern")
+        .join("data")
+}
+
 /// 历史版本使用过的错误默认目录；只迁移这些精确值，不覆盖用户自定义路径。
 ///
 /// 前两条是 macOS 版本的旧值，保留在此是为了让从 macOS 版本迁移过来的用户
@@ -745,8 +775,10 @@ fn temporary_path(path: &Path) -> PathBuf {
 mod tests {
     use super::{
         DEFAULT_GLOBAL_DATA_PATH, DisplayLanguage, PersistentPreferences, SettingsStore, ThemeMode,
+        resolve_global_data_path,
     };
     use std::fs;
+    use std::path::Path;
 
     fn test_path(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -886,6 +918,51 @@ mod tests {
         let (_, preferences) = SettingsStore::load(&custom);
         assert_eq!(preferences.global_data_path, "~/Custom/Tavern");
         let _ = fs::remove_file(custom);
+    }
+
+    /// 回归：配置里的目录写法必须解析成绝对路径。
+    ///
+    /// 曾经 `资源管理` 页自带的 `~/` 展开函数不认 `%APPDATA%`，于是默认值
+    /// `%APPDATA%/AstraBrew Launcher/data/sillytavern/data` 被当成相对路径，
+    /// `create_dir_all` 在**进程当前工作目录**（软件目录）下建出了一个名为
+    /// `%APPDATA%` 的文件夹。
+    #[test]
+    fn global_data_path_resolves_to_an_absolute_directory() {
+        let resolved = resolve_global_data_path(DEFAULT_GLOBAL_DATA_PATH);
+        assert!(
+            resolved.is_absolute(),
+            "默认全局数据目录必须解析为绝对路径：{}",
+            resolved.display()
+        );
+        assert!(
+            resolved.ends_with(Path::new("AstraBrew Launcher").join("data").join("sillytavern").join("data")),
+            "默认全局数据目录末尾应保持 data/sillytavern/data：{}",
+            resolved.display()
+        );
+        assert!(
+            !resolved.to_string_lossy().contains('%'),
+            "解析结果不得残留 `%VAR%` 占位符：{}",
+            resolved.display()
+        );
+
+        let custom = resolve_global_data_path(r"%APPDATA%/Custom/Tavern");
+        assert!(custom.is_absolute());
+        assert!(custom.ends_with(Path::new("Custom").join("Tavern")));
+    }
+
+    /// 空值、以及展开不出绝对路径的写法，都必须退回内置默认目录 —— 绝不返回相对路径。
+    #[test]
+    fn global_data_path_never_falls_back_to_a_relative_path() {
+        let fallback = resolve_global_data_path("");
+        assert!(fallback.is_absolute(), "空值应退回绝对路径：{}", fallback.display());
+
+        // 变量名不存在时 `expand_user_path` 会原样保留 `%...%`，结果是相对路径。
+        let broken = resolve_global_data_path(r"%ASTRA_NO_SUCH_VAR%/data");
+        assert!(
+            broken.is_absolute() && broken == fallback,
+            "无法展开的写法应退回默认目录：{}",
+            broken.display()
+        );
     }
 
     #[test]

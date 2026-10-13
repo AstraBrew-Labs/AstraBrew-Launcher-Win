@@ -15,9 +15,11 @@
 //! └── webview2/ msedgewebview2.exe
 //! ```
 
+use std::io::BufRead;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::mpsc::Sender;
 
 /// 创建子进程时隐藏控制台窗口的标志（`CREATE_NO_WINDOW`）。
 ///
@@ -65,6 +67,25 @@ pub fn get_builtin_node_path() -> Option<PathBuf> {
 /// 内置 npm 路径：`lib/nodejs/npm.cmd`。
 pub fn get_builtin_npm_path() -> Option<PathBuf> {
     existing_file(get_lib_dir().join("nodejs").join("npm.cmd"))
+}
+
+/// 内置 npm 的 JS 入口：`lib/nodejs/node_modules/npm/bin/npm-cli.js`。
+///
+/// 用 `node.exe npm-cli.js ...` 调用可以**完全绕开 `cmd /c`**。`npm.cmd` 是批处理脚本，
+/// 必须由 `cmd.exe` 解释；而 `cmd /c "脚本路径" 参数...` 在「脚本路径含空格」且命令行里
+/// 还有**第二个**含空格的参数时（例如 `--prefix "<AppData>/AstraBrew Launcher/lib/pm2"`），
+/// cmd 会命中「首尾引号一起剥离」的旧解析规则，把脚本路径截断成
+/// `...\npm.cmd"`，直接报「不是内部或外部命令」并返回退出码 1。
+/// 直接走 node 执行 JS 入口既没有这层引号歧义，也顺带消灭了批处理窗口闪烁。
+pub fn get_builtin_npm_cli_path() -> Option<PathBuf> {
+    existing_file(
+        get_lib_dir()
+            .join("nodejs")
+            .join("node_modules")
+            .join("npm")
+            .join("bin")
+            .join("npm-cli.js"),
+    )
 }
 
 /// 内置 Caddy 路径：`lib/caddy/caddy.exe`。
@@ -181,10 +202,119 @@ pub fn apply_builtin_path_to_command(cmd: &mut Command) {
     cmd.env("PATH", parts.join(";"));
 }
 
+// ─── 子进程输出转发 ──────────────────────────────────────────────────────────
+
+/// 逐行读取子进程输出并转发给界面线程。
+///
+/// **必须按字节切行再解码，不能用 `BufReader::lines()`**：`lines()` 遇到非 UTF-8
+/// 字节会返回 `Err(InvalidData)`，调用端一旦据此结束循环，后面所有输出（包括真正的
+/// 报错）就全被丢掉了。Windows 上 `cmd` / `git` / `npm` 的**本地化报错**走 OEM
+/// 代码页（中文系统为 GBK/CP936），必然不是合法 UTF-8 —— 这正是「安装/克隆失败，
+/// 但日志详情一片空白」的成因。这里改为 `read_until(b'\n')` 逐行取原始字节，
+/// 再交给 [`decode_console_line`] 解码。
+///
+/// 空行会被丢弃；真正的 IO 错误会让循环结束，但已经转发出去的行不会丢。
+pub(crate) fn forward_lines<R: BufRead>(mut reader: R, sender: Sender<String>) {
+    let mut buffer = Vec::new();
+    loop {
+        buffer.clear();
+        match reader.read_until(b'\n', &mut buffer) {
+            // 0 表示读到 EOF。
+            Ok(0) => break,
+            Ok(_) => {
+                let text = decode_console_line(&buffer);
+                let cleaned = strip_ansi(text.trim_end_matches(['\r', '\n'])).trim().to_string();
+                if !cleaned.is_empty() && sender.send(cleaned).is_err() {
+                    // 接收端已关闭（界面已离开），继续读没有意义。
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+/// 把子进程输出的一行字节解码成可读文本。
+///
+/// 优先 UTF-8；失败时按系统 OEM 代码页解码（中文 Windows 即 GBK/CP936）；
+/// 都失败才退回有损 UTF-8。这样 cmd / git 的中文报错能原样显示，
+/// 而不是变成一串 `�` 让用户看不出问题。
+fn decode_console_line(bytes: &[u8]) -> String {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_owned();
+    }
+    decode_oem(bytes).unwrap_or_else(|| String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// 用 `MultiByteToWideChar` 按系统 OEM 代码页解码字节串。
+///
+/// 失败（代码页不可用、字节无法映射等）时返回 `None`，由调用方回退。
+#[cfg(windows)]
+fn decode_oem(bytes: &[u8]) -> Option<String> {
+    use windows_sys::Win32::Globalization::MultiByteToWideChar;
+
+    /// `CP_OEMCP`：当前系统的 OEM 代码页。
+    const CP_OEMCP: u32 = 1;
+    if bytes.is_empty() {
+        return Some(String::new());
+    }
+    let length = i32::try_from(bytes.len()).ok()?;
+    // SAFETY: 两次调用都只在 `bytes` 存活期间读取它；第二次调用的输出缓冲长度
+    // 取自第一次调用返回的所需宽度，指针与长度一致。
+    // `dwflags` 必须传 0：`MB_ERR_INVALID_CHARS` 只对 UTF-8 / GB18030 代码页有效，
+    // 用在 CP_OEMCP 上会直接返回失败。
+    let needed = unsafe {
+        MultiByteToWideChar(CP_OEMCP, 0, bytes.as_ptr(), length, std::ptr::null_mut(), 0)
+    };
+    if needed <= 0 {
+        return None;
+    }
+    let mut wide = vec![0_u16; needed as usize];
+    let written = unsafe {
+        MultiByteToWideChar(CP_OEMCP, 0, bytes.as_ptr(), length, wide.as_mut_ptr(), needed)
+    };
+    if written <= 0 {
+        return None;
+    }
+    wide.truncate(written as usize);
+    String::from_utf16(&wide).ok()
+}
+
+/// 非 Windows 平台没有 OEM 代码页概念，直接放弃。
+#[cfg(not(windows))]
+fn decode_oem(_bytes: &[u8]) -> Option<String> {
+    None
+}
+
+/// 简易 ANSI 转义序列清理（SGR 颜色码 + 光标控制）。
+///
+/// npm / git / pm2 在部分终端下会输出颜色码，直接进入日志会让界面出现乱码方块。
+fn strip_ansi(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next(); // 跳过 '['
+            // 跳过参数部分（数字与分号）
+            while let Some(&next) = chars.peek() {
+                if next.is_ascii_digit() || next == ';' {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            // 跳过终止字符（通常是 'm'，也可能是其他）
+            chars.next();
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn builtin_path_entries_are_absolute_and_dedup_safe() {
         // 目录不存在时返回空列表是允许的；只断言元素个数上限与顺序约束。
@@ -200,6 +330,49 @@ mod tests {
         // 该常量来自 `winbase.h` 的 `CREATE_NO_WINDOW`；写成十进制便于和文档核对。
         assert_eq!(CREATE_NO_WINDOW, 0x0800_0000);
         assert_eq!(CREATE_NO_WINDOW, 134_217_728);
+    }
+
+    #[test]
+    fn strip_ansi_removes_color_codes() {
+        assert_eq!(strip_ansi("hello"), "hello");
+        assert_eq!(strip_ansi("\x1b[32mhello\x1b[0m"), "hello");
+        assert_eq!(strip_ansi("\x1b[1;32mworld\x1b[0m"), "world");
+        assert_eq!(strip_ansi("no ansi here"), "no ansi here");
+    }
+
+    /// 回归：非 UTF-8（中文 Windows 的 GBK 输出）不能让转发循环提前中断。
+    ///
+    /// 旧实现用 `BufReader::lines()`，遇到非法 UTF-8 直接 `break`，
+    /// 于是「命令失败」后面的真实报错全被吞掉，日志里只剩启动器自己的一句失败提示。
+    ///
+    /// 断言刻意不依赖具体的 OEM 代码页：机器区域设置不同，同一串字节解出的字符也不同，
+    /// 这里只要求「三行都在」且「中间那行不是有损解码出来的 `�`」。
+    #[test]
+    fn forward_lines_survives_non_utf8_output() {
+        // "\xca\xa7\xb0\xdc" 是 GBK 编码的「失败」，不是合法 UTF-8。
+        let raw: &[u8] = b"first line\n\xca\xa7\xb0\xdc failed\nthird line\n";
+        let (sender, receiver) = std::sync::mpsc::channel();
+        forward_lines(std::io::BufReader::new(raw), sender);
+
+        let lines = receiver.into_iter().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 3, "非 UTF-8 行之后的内容不得丢失：{lines:?}");
+        assert_eq!(lines[0], "first line");
+        assert!(
+            !lines[1].contains('\u{fffd}'),
+            "应按 OEM 代码页解码而非有损 UTF-8：{lines:?}"
+        );
+        assert_eq!(lines[2], "third line");
+    }
+
+    /// 末尾没有换行符的最后一行同样要转发（很多工具的最后一行正是错误摘要）。
+    #[test]
+    fn forward_lines_keeps_final_line_without_newline() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        forward_lines(std::io::BufReader::new(&b"tail without newline"[..]), sender);
+        assert_eq!(
+            receiver.into_iter().collect::<Vec<_>>(),
+            vec!["tail without newline".to_owned()]
+        );
     }
 
     /// 回归测试：任何从 GUI 拉起的控制台程序都必须带上隐藏窗口标志。

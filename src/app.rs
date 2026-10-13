@@ -2237,7 +2237,12 @@ impl Launcher {
                 instance_path,
                 instance_version: self.versions.current_version.clone().unwrap_or_default(),
                 data_mode,
-                global_data_path: crate::core::tavern_config::expand_home(&self.settings.global_data_path),
+                // 必须走 `resolve_global_data_path` 展开：这个值会作为 `--dataRoot`
+                // 交给酒馆进程，而酒馆的工作目录是实例目录 —— 万一传进去的是相对路径，
+                // 酒馆会在实例目录下建出 `%APPDATA%` 文件夹。
+                global_data_path: crate::core::settings::resolve_global_data_path(
+                    &self.settings.global_data_path,
+                ),
                 proxy,
                 github_proxy_url,
                 launch_mode,
@@ -3434,7 +3439,15 @@ impl Launcher {
     }
 
     fn pick_directory(initial: &str) -> Option<String> {
-        let dialog = rfd::FileDialog::new().set_directory(expand_home_path(initial));
+        // 初始目录统一走 `utils` 的展开逻辑：`%APPDATA%` / `%USERPROFILE%` / `~/` 都认。
+        // 展开后仍不是绝对路径（配置为空或写错）时退回用户主目录，
+        // 绝不把相对路径交给系统对话框 —— 系统会按当前工作目录解析它。
+        let start = crate::utils::resolve_absolute_user_path(initial)
+            .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from));
+        let mut dialog = rfd::FileDialog::new();
+        if let Some(start) = start {
+            dialog = dialog.set_directory(start);
+        }
         dialog.pick_folder().map(|path| {
             // 系统目录选择器在部分场景返回扩展长度路径（`\\?\D:\...`）：
             // 该前缀只对 Win32 API 有意义，写进设置或实例列表后会被用户当成
@@ -3887,16 +3900,6 @@ fn format_version_sync_time(timestamp: u64) -> String {
         return t("resources.unknown").to_owned();
     }
     crate::core::time::readable_stamp(timestamp)
-}
-
-fn expand_home_path(path: &str) -> PathBuf {
-    let trimmed = path.trim();
-    if let Some(rest) = trimmed.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("USERPROFILE") {
-            return PathBuf::from(home).join(rest);
-        }
-    }
-    PathBuf::from(trimmed)
 }
 
 #[cfg(test)]

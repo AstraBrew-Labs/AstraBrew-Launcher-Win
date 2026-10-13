@@ -9,7 +9,7 @@
 
 use crate::lang::t;
 use crate::lang::tf;
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -280,18 +280,7 @@ pub fn run_logged_command(
     if let Some(out) = stdout {
         let done = done_tx.clone();
         std::thread::spawn(move || {
-            let reader = BufReader::new(out);
-            for line_result in reader.lines() {
-                match line_result {
-                    Ok(line) => {
-                        let cleaned = strip_ansi(&line).trim().to_string();
-                        if !cleaned.is_empty() {
-                            let _ = tx_stdout.send(cleaned);
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
+            crate::core::env::forward_lines(BufReader::new(out), tx_stdout);
             let _ = done.send(());
         });
     } else {
@@ -301,18 +290,7 @@ pub fn run_logged_command(
     if let Some(err) = stderr {
         let done = done_tx;
         std::thread::spawn(move || {
-            let reader = BufReader::new(err);
-            for line_result in reader.lines() {
-                match line_result {
-                    Ok(line) => {
-                        let cleaned = strip_ansi(&line).trim().to_string();
-                        if !cleaned.is_empty() {
-                            let _ = tx_stderr.send(cleaned);
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
+            crate::core::env::forward_lines(BufReader::new(err), tx_stderr);
             let _ = done.send(());
         });
     } else {
@@ -424,32 +402,6 @@ fn send_failure(sender: std::sync::mpsc::Sender<String>, message: String) {
     let _ = sender.send(MARKER_FAILED.to_owned());
 }
 
-/// 简易 ANSI 转义序列清理（SGR 颜色码 + 光标控制）。
-///
-/// npm / git 在部分终端下会输出颜色码，直接进入日志会让界面出现乱码方块。
-fn strip_ansi(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' && chars.peek() == Some(&'[') {
-            chars.next(); // skip '['
-            // 跳过参数部分 (数字和分号)
-            while let Some(&next) = chars.peek() {
-                if next.is_ascii_digit() || next == ';' {
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
-            // 跳过终止字符 (通常是 m，但也可能是其他)
-            chars.next();
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,14 +430,6 @@ mod tests {
         assert_eq!(parse_major("22.14.0"), Some(22));
         assert_eq!(parse_major("v22.1.0"), Some(22));
         assert_eq!(parse_major("v7.0.1"), Some(7));
-    }
-
-    #[test]
-    fn test_strip_ansi() {
-        assert_eq!(strip_ansi("hello"), "hello");
-        assert_eq!(strip_ansi("\x1b[32mhello\x1b[0m"), "hello");
-        assert_eq!(strip_ansi("\x1b[1;32mworld\x1b[0m"), "world");
-        assert_eq!(strip_ansi("no ansi here"), "no ansi here");
     }
 
     #[test]

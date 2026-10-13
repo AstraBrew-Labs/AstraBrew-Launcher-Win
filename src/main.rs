@@ -88,6 +88,8 @@ fn main() -> iced::Result {
             min_size: Some(placement.size),
             max_size: Some(placement.size),
             position: placement.position,
+            // 标题栏与任务栏图标：不显式设置时 Windows 会退回通用应用图标。
+            icon: platform::window_icon(),
             // 窗口尺寸固定，不以最大化 / 全屏方式启动。
             // resizable(false) 在 Windows 上会同时禁用最大化按钮，满足「不可最大化」要求。
             resizable: false,

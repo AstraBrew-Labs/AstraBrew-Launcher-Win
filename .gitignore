@@ -8,3 +8,4 @@
 /latest.json
 # 更新签名私钥：绝不入库，仅保留配对的 update_key.pem.pub
 keys/update_key.pem
+assets/icon/gen_icons.py

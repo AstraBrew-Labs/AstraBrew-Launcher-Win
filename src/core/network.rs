@@ -3889,22 +3889,16 @@ pub(crate) fn run_logged_command(
     }
 }
 
+/// 把 git 等子进程的输出逐行转发给界面通道。
+///
+/// 走 `core::env::forward_lines`：按字节切行 + 非 UTF-8 时按 OEM 代码页（GBK）解码。
+/// git 的报错是**本地化**的，中文系统下必然不是 UTF-8；旧实现用 `lines()` 会在
+/// 第一个非法字节处中断循环，导致克隆失败后日志里只剩半截输出。
 fn forward_process_stream<R>(stream: R, sender: Sender<String>)
 where
     R: Read + Send + 'static,
 {
     std::thread::spawn(move || {
-        use std::io::BufRead;
-        for line in io::BufReader::new(stream).lines() {
-            match line {
-                Ok(line) => {
-                    let _ = sender.send(line);
-                }
-                Err(error) => {
-                    let _ = sender.send(tf("network.command.read_log_failed", &[("error", &error)]));
-                    break;
-                }
-            }
-        }
+        crate::core::env::forward_lines(io::BufReader::new(stream), sender);
     });
 }

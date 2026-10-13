@@ -158,10 +158,13 @@ impl Context {
     ) -> Option<Self> {
         let instance = instance.filter(|path| !path.is_empty()).map(expand_home)?;
         let path = if global {
-            if global_path.trim().is_empty() {
-                app_root().join("data/config.yaml")
-            } else {
-                expand_home(global_path).join("config.yaml")
+            // 配置里存的是**可移植写法**（默认 `%APPDATA%/AstraBrew Launcher/data/...`），
+            // 必须展开为绝对路径再拼文件名。展开不出绝对路径（变量名写错等）说明配置不可用，
+            // 退回 `app_root()/data/config.yaml`：相对路径会被后面的 `create_dir_all`
+            // 建到进程当前工作目录下，表现为软件目录里凭空出现一个 `%APPDATA%` 文件夹。
+            match crate::utils::resolve_absolute_user_path(global_path) {
+                Some(directory) => directory.join("config.yaml"),
+                None => app_root().join("data/config.yaml"),
             }
         } else {
             instance.join("config.yaml")

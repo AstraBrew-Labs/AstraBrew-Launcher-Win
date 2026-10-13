@@ -45,9 +45,13 @@
 //! - **可缩放／可最大化**：承载酒馆页面的窗口按浏览器语义开放
 //!   `WS_SIZEBOX | WS_MAXIMIZEBOX`，`WM_SIZE` 负责把新客户区同步给 WebView
 //!   （`AGENTS.md` 的「不能最大化」约束的是启动器主界面，非本窗口）。
+//! - **窗口图标**：本窗口是手写 `CreateWindowExW` 创建的，拿不到 iced 的
+//!   `window::Settings.icon`，必须显式挂上启动器图标（见 `apply_window_icons`），
+//!   否则任务栏上会退回 Windows 的通用应用图标，与主窗口对不上。
 
 use crate::lang::t;
 use crate::lang::tf;
+use crate::platform::WindowIconSize;
 use std::ffi::c_void;
 use std::num::NonZeroIsize;
 use std::path::{Path, PathBuf};
@@ -69,11 +73,12 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
-    DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, IDC_ARROW,
-    LoadCursorW, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SW_SHOW, SetForegroundWindow,
-    SetWindowLongPtrW, ShowWindow, TranslateMessage, WM_APP, WM_CLOSE, WM_DESTROY, WM_NCCREATE,
-    WM_NCDESTROY, WM_SIZE, WNDCLASSW, WS_CAPTION, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
-    WS_EX_APPWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SIZEBOX, WS_SYSMENU,
+    DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, HICON,
+    ICON_BIG, ICON_SMALL, IDC_ARROW, LoadCursorW, MSG, PostMessageW, PostQuitMessage,
+    RegisterClassW, SW_SHOW, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, ShowWindow,
+    TranslateMessage, WM_APP, WM_CLOSE, WM_DESTROY, WM_NCCREATE, WM_NCDESTROY, WM_SETICON,
+    WM_SIZE, WNDCLASSW, WS_CAPTION, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_APPWINDOW,
+    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SIZEBOX, WS_SYSMENU,
 };
 
 /// 桌面窗口初始尺寸：与主界面 16:9 默认尺寸保持一致。
@@ -165,7 +170,8 @@ fn user_profile_dir() -> PathBuf {
 ///
 /// 支持的写法：
 /// - 空值或 `~` → 系统「下载」目录
-/// - `~/xxx` 或 `~\xxx` → 用户主目录下的相对路径
+/// - `%APPDATA%` / `%USERPROFILE%` 等环境变量前缀（走 [`crate::utils::expand_user_path`]）
+/// - `~/xxx` / `~\xxx` → 用户主目录下的相对路径
 /// - 绝对路径 → 原样使用
 /// - 其他相对路径 → 相对用户主目录
 fn resolve_download_directory(path: &str) -> PathBuf {
@@ -173,18 +179,15 @@ fn resolve_download_directory(path: &str) -> PathBuf {
     if path.is_empty() || path == "~" {
         return default_download_directory();
     }
-    if let Some(rest) = path
-        .strip_prefix("~/")
-        .or_else(|| path.strip_prefix("~\\"))
-    {
-        return user_profile_dir().join(rest);
+    // 统一走 `utils` 的展开逻辑：它同时处理 `%VAR%` 与 `~/`。
+    // 只认 `~/` 是不够的 —— 导出目录一旦写成 `%USERPROFILE%\Exports`，
+    // 相对路径会被拼到进程当前工作目录后面，文件就落到软件目录里去了。
+    let expanded = crate::utils::expand_user_path(path);
+    if expanded.is_absolute() {
+        return expanded;
     }
-    let candidate = PathBuf::from(path);
-    if candidate.is_absolute() {
-        candidate
-    } else {
-        user_profile_dir().join(candidate)
-    }
+    // 仍不是绝对路径（例如用户只写了 `Exports`）时，按用户主目录下的相对路径处理。
+    user_profile_dir().join(expanded)
 }
 
 /// 在目标目录中为下载文件挑选一个不冲突的路径（`name.ext` → `name_1.ext`）。
@@ -606,6 +609,9 @@ fn run_webview_thread(
             return Err(t("webview.window_create_failed_raw").to_owned());
         }
 
+        // 挂上启动器图标：窗口类只带了 `hIcon`，标题栏的小图标需要在这里补设。
+        apply_window_icons(hwnd);
+
         // 客户区尺寸可能因非客户区（标题栏/边框）而与请求值不同。
         let (client_width, client_height) = client_size(hwnd, width, height);
 
@@ -791,6 +797,11 @@ fn desktop_window_class() -> Result<u16, String> {
 }
 
 /// 注册桌面模式原生窗口类。
+///
+/// 窗口类里填上 `hIcon`（启动器图标）是必须的：`WNDCLASSW` 的 `hIcon` 为空时，
+/// Windows 会给窗口装回内置的通用应用图标，任务栏上就会和启动器主窗口「长得不一样」。
+/// 注意 `WNDCLASSW` 没有 `hIconSm` 字段，标题栏要用的 16×16 小图标由
+/// [`apply_window_icons`] 在窗口创建后补发 `WM_SETICON` 指定。
 fn register_desktop_window_class() -> Result<u16, String> {
     let module = unsafe { GetModuleHandleW(std::ptr::null()) };
     if module.is_null() {
@@ -801,6 +812,7 @@ fn register_desktop_window_class() -> Result<u16, String> {
         style: CS_HREDRAW | CS_VREDRAW,
         lpfnWndProc: Some(desktop_window_proc),
         hInstance: module,
+        hIcon: window_icon_or_null(WindowIconSize::Big),
         hCursor: unsafe { LoadCursorW(std::ptr::null_mut(), IDC_ARROW) },
         lpszClassName: class_name.as_ptr(),
         hbrBackground: std::ptr::null_mut::<c_void>() as HBRUSH,
@@ -811,6 +823,32 @@ fn register_desktop_window_class() -> Result<u16, String> {
         Err(t("webview.register_class_failed").to_owned())
     } else {
         Ok(atom)
+    }
+}
+
+/// 取启动器图标；不可用时返回空句柄（窗口退回系统默认图标，不阻断流程）。
+fn window_icon_or_null(size: WindowIconSize) -> HICON {
+    crate::platform::native_window_icon(size).unwrap_or(std::ptr::null_mut())
+}
+
+/// 把启动器图标挂到桌面窗口上：标题栏、任务栏按钮、Alt+Tab 三处共用同一套图标。
+///
+/// 窗口类已经带了 `hIcon`（大图标），但 `WNDCLASSW` 没有 `hIconSm` 字段，
+/// 标题栏要用的 16×16 小图标只能创建后补发 `WM_SETICON` 指定；
+/// 否则系统会把 32×32 的位图缩下去用，边缘发糊。这里大图标一并再设一次，
+/// 与 winit 给主窗口设置图标的方式（`SendMessageW` + `WM_SETICON`）保持一致。
+fn apply_window_icons(hwnd: HWND) {
+    for (icon_type, size) in [
+        (ICON_BIG, WindowIconSize::Big),
+        (ICON_SMALL, WindowIconSize::Small),
+    ] {
+        let handle = window_icon_or_null(size);
+        if handle.is_null() {
+            continue;
+        }
+        unsafe {
+            SendMessageW(hwnd, WM_SETICON, icon_type as usize, handle as isize);
+        }
     }
 }
 

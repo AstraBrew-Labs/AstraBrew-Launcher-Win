@@ -1,4 +1,4 @@
-<img src="https://raw.githubusercontent.com/al01cn/sillyTavern-launcher/GUI/src/assets/images/banner.png" style="width: 100%; height: 100%;" />
+<img src="assets\icon\launcher-lockup-white.png" style="width: 100%; height: 100%;" />
 
 # 星酿启动器 (AstraBrew Launcher) · Windows版本
 
