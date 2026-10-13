@@ -2363,6 +2363,11 @@ pub enum SillyTavernInstallEvent {
     DownloadComplete,
     InstallStarted,
     Cancelled,
+    /// 目标目录已存在且不是 Git 仓库、就地修复也失败，需要用户确认是否强制覆盖。
+    ///
+    /// 安装线程发出该事件后会阻塞等待，直到界面通过确认通道回传用户决定；
+    /// 用户选择覆盖时目录会被删除后重新克隆。
+    OverwriteRequired(PathBuf),
     Completed(Result<(), String>),
 }
 
@@ -3365,9 +3370,15 @@ pub fn run_sillytavern_install(
         env_source,
         sender,
         Arc::new(AtomicBool::new(false)),
+        None,
     );
 }
 
+/// 与 [`run_sillytavern_install`] 相同，但支持取消与交互确认。
+///
+/// `confirm` 是界面回传「是否允许覆盖异常目录」的双向通道：安装线程在其中
+/// 需要用户拍板时阻塞等待，界面通过对应的发送端回传决定；传 `None` 表示
+/// 没有交互能力（程序化调用），此时按「拒绝覆盖」处理，绝不擅自删除目录。
 #[allow(dead_code)]
 pub fn run_sillytavern_install_with_cancel(
     target_ref: SillyTavernInstallTarget,
@@ -3379,6 +3390,7 @@ pub fn run_sillytavern_install_with_cancel(
     env_source: EnvSource,
     sender: Sender<SillyTavernInstallEvent>,
     cancel: Arc<AtomicBool>,
+    confirm: Option<Receiver<bool>>,
 ) {
     let result = (|| -> Result<(), String> {
         let (ref_name, is_branch) = match &target_ref {
@@ -3436,12 +3448,18 @@ pub fn run_sillytavern_install_with_cancel(
                 env_source,
                 &sender,
                 &cancel,
+                confirm.as_ref(),
             ) {
                 Ok(()) => {
                     sync_error = None;
                     break;
                 }
                 Err(error) => {
+                    // 用户拒绝覆盖是终止性决定：换下载源不会改变目录状态，
+                    // 再试一遍只会重复弹窗，因此直接结束整个安装。
+                    if error == INSTALL_OVERWRITE_DECLINED {
+                        return Err(t("network.install.overwrite_declined").to_owned());
+                    }
                     send_install_log(&sender, tf("network.install.channel_failed", &[("channel", &t(channel.label_key())), ("error", &error)]));
                     sync_error = Some(error);
                     if !target_existed && target.exists() {
@@ -3479,7 +3497,42 @@ pub fn run_sillytavern_install_with_cancel(
     let _ = sender.send(SillyTavernInstallEvent::Completed(result));
 }
 
+/// 在线安装目标目录在安装开始时的状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstallTargetState {
+    /// 目录不存在，直接克隆。
+    Absent,
+    /// 目录存在但为空，可安全地当作全新安装处理。
+    Empty,
+    /// 目录已是 Git 仓库，走增量更新。
+    Repository,
+    /// 目录存在且有内容，但不是 Git 仓库；先修复，修复不了再征求用户同意。
+    Foreign,
+}
+
+/// 判断在线安装目标目录当前处于哪种状态。
+fn classify_install_target(target: &Path) -> InstallTargetState {
+    if !target.is_dir() {
+        return InstallTargetState::Absent;
+    }
+    if target.join(".git").is_dir() {
+        return InstallTargetState::Repository;
+    }
+    match fs::read_dir(target) {
+        // 没有任何条目即为空目录。
+        Ok(mut entries) => match entries.next() {
+            None => InstallTargetState::Empty,
+            Some(_) => InstallTargetState::Foreign,
+        },
+        // 读不到目录内容（权限受限等）时按「有内容」处理，避免误删用户数据。
+        Err(_) => InstallTargetState::Foreign,
+    }
+}
+
 /// 使用指定 Git 源同步一个 tag 或分支。调用方负责在失败后切换备用源。
+///
+/// 目标目录按状态分流：不存在或为空 → 全新克隆；已是仓库 → 增量更新；
+/// 有内容但不是仓库 → 先就地修复，修复失败再请求用户确认是否覆盖。
 fn install_git_ref(
     ref_name: &str,
     is_branch: bool,
@@ -3491,72 +3544,256 @@ fn install_git_ref(
     env_source: EnvSource,
     sender: &Sender<SillyTavernInstallEvent>,
     cancel: &AtomicBool,
+    confirm: Option<&Receiver<bool>>,
 ) -> Result<(), String> {
     let source_url = channel.clone_url();
     let target_text = target.to_string_lossy().to_string();
-    if target_existed {
-        send_install_log(sender, tf("network.install.reuse_directory", &[("path", &target.display())]));
-        if !target.join(".git").is_dir() {
-            return Err(t("network.install.unsafe_existing_dir").to_owned());
-        }
-        let mut set_remote = git_command(env_source);
-        configure_git_proxy(&mut set_remote, proxy_mode, proxy_host);
-        set_remote.args([
-            "-C",
-            &target_text,
-            "remote",
-            "set-url",
-            "origin",
-            source_url,
-        ]);
-        run_install_command(set_remote, sender, cancel)?;
-
-        let mut fetch = git_command(env_source);
-        configure_git_proxy(&mut fetch, proxy_mode, proxy_host);
-        if is_branch {
-            // 显式写入远程跟踪分支；仅执行 `fetch origin staging` 只会更新 FETCH_HEAD，
-            // 后续 checkout origin/staging 会因此找不到提交。
-            let remote_ref = format!("+{ref_name}:refs/remotes/origin/{ref_name}");
-            fetch.args(["-C", &target_text, "fetch", "origin", &remote_ref]);
-        } else {
-            fetch.args(["-C", &target_text, "fetch", "--tags", "--force", "origin"]);
-        }
-        run_install_command(fetch, sender, cancel)?;
-
-        let mut checkout = git_command(env_source);
-        configure_git_proxy(&mut checkout, proxy_mode, proxy_host);
-        if is_branch {
-            let remote_ref = format!("origin/{ref_name}");
-            checkout.args(["-C", &target_text, "checkout", "-B", ref_name, &remote_ref]);
-        } else {
-            checkout.args([
-                "-C",
-                &target_text,
-                "checkout",
-                "--detach",
-                "--force",
-                ref_name,
-            ]);
-        }
-        run_install_command(checkout, sender, cancel)
+    let state = if target_existed {
+        classify_install_target(target)
     } else {
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| tf("network.install.create_dir_failed", &[("error", &error)]))?;
-        }
-        let mut clone = git_command(env_source);
-        configure_git_proxy(&mut clone, proxy_mode, proxy_host);
-        clone
-            .args([
-                "clone",
-                "--progress",
-                "--branch",
-                ref_name,
-                "--depth",
-                "1",
+        InstallTargetState::Absent
+    };
+
+    match state {
+        InstallTargetState::Repository => {
+            send_install_log(sender, tf("network.install.reuse_directory", &[("path", &target.display())]));
+            sync_existing_repository(
+                &target_text,
                 source_url,
-            ])
-            .arg(target);
-        run_install_command(clone, sender, cancel)
+                ref_name,
+                is_branch,
+                proxy_mode,
+                proxy_host,
+                env_source,
+                sender,
+                cancel,
+            )
+        }
+        InstallTargetState::Empty => {
+            // 空目录没有用户数据，直接清掉再全新克隆，省去 git 对残留状态的挑剔。
+            send_install_log(sender, tf("network.install.empty_dir_reset", &[("path", &target.display())]));
+            remove_target_dir(target)?;
+            clone_fresh_target(
+                target,
+                source_url,
+                ref_name,
+                proxy_mode,
+                proxy_host,
+                env_source,
+                sender,
+                cancel,
+            )
+        }
+        InstallTargetState::Absent => clone_fresh_target(
+            target,
+            source_url,
+            ref_name,
+            proxy_mode,
+            proxy_host,
+            env_source,
+            sender,
+            cancel,
+        ),
+        InstallTargetState::Foreign => {
+            send_install_log(sender, tf("network.install.repairing_dir", &[("path", &target.display())]));
+            match repair_existing_target(
+                &target_text,
+                source_url,
+                ref_name,
+                is_branch,
+                proxy_mode,
+                proxy_host,
+                env_source,
+                sender,
+                cancel,
+            ) {
+                Ok(()) => {
+                    send_install_log(sender, t("network.install.repaired_dir").to_owned());
+                    Ok(())
+                }
+                Err(error) => {
+                    send_install_log(sender, tf("network.install.repair_failed", &[("error", &error)]));
+                    if !request_overwrite_confirmation(sender, confirm, cancel, target)? {
+                        return Err(INSTALL_OVERWRITE_DECLINED.to_owned());
+                    }
+                    send_install_log(sender, tf("network.install.overwrite_approved", &[("path", &target.display())]));
+                    remove_target_dir(target)?;
+                    clone_fresh_target(
+                        target,
+                        source_url,
+                        ref_name,
+                        proxy_mode,
+                        proxy_host,
+                        env_source,
+                        sender,
+                        cancel,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// 删除安装目标目录，失败时给出统一的错误文案。
+fn remove_target_dir(target: &Path) -> Result<(), String> {
+    fs::remove_dir_all(target)
+        .map_err(|error| tf("network.install.remove_dir_failed", &[("error", &error)]))
+}
+
+/// 全新克隆目标目录。
+fn clone_fresh_target(
+    target: &Path,
+    source_url: &str,
+    ref_name: &str,
+    proxy_mode: &str,
+    proxy_host: &str,
+    env_source: EnvSource,
+    sender: &Sender<SillyTavernInstallEvent>,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| tf("network.install.create_dir_failed", &[("error", &error)]))?;
+    }
+    let mut clone = git_command(env_source);
+    configure_git_proxy(&mut clone, proxy_mode, proxy_host);
+    clone
+        .args([
+            "clone",
+            "--progress",
+            "--branch",
+            ref_name,
+            "--depth",
+            "1",
+            source_url,
+        ])
+        .arg(target);
+    run_install_command(clone, sender, cancel)
+}
+
+/// 在已有 Git 仓库里把工作区同步到目标 ref。
+fn sync_existing_repository(
+    target_text: &str,
+    source_url: &str,
+    ref_name: &str,
+    is_branch: bool,
+    proxy_mode: &str,
+    proxy_host: &str,
+    env_source: EnvSource,
+    sender: &Sender<SillyTavernInstallEvent>,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let mut set_remote = git_command(env_source);
+    configure_git_proxy(&mut set_remote, proxy_mode, proxy_host);
+    set_remote.args([
+        "-C",
+        target_text,
+        "remote",
+        "set-url",
+        "origin",
+        source_url,
+    ]);
+    run_install_command(set_remote, sender, cancel)?;
+
+    let mut fetch = git_command(env_source);
+    configure_git_proxy(&mut fetch, proxy_mode, proxy_host);
+    if is_branch {
+        // 显式写入远程跟踪分支；仅执行 `fetch origin staging` 只会更新 FETCH_HEAD，
+        // 后续 checkout origin/staging 会因此找不到提交。
+        let remote_ref = format!("+{ref_name}:refs/remotes/origin/{ref_name}");
+        fetch.args(["-C", target_text, "fetch", "origin", &remote_ref]);
+    } else {
+        fetch.args(["-C", target_text, "fetch", "--tags", "--force", "origin"]);
+    }
+    run_install_command(fetch, sender, cancel)?;
+
+    let mut checkout = git_command(env_source);
+    configure_git_proxy(&mut checkout, proxy_mode, proxy_host);
+    if is_branch {
+        let remote_ref = format!("origin/{ref_name}");
+        checkout.args(["-C", target_text, "checkout", "-B", ref_name, &remote_ref]);
+    } else {
+        checkout.args(["-C", target_text, "checkout", "--detach", "--force", ref_name]);
+    }
+    run_install_command(checkout, sender, cancel)
+}
+
+/// 把「有内容但不是 Git 仓库」的目录就地修复成可用仓库。
+///
+/// 保留目录里已存在的文件（例如用户手动放进去的内容），只补齐 `.git`、
+/// 远端地址并把工作区同步到目标 ref。同步失败会原样上抛，由调用方决定是否
+/// 征得用户同意后整体覆盖。
+fn repair_existing_target(
+    target_text: &str,
+    source_url: &str,
+    ref_name: &str,
+    is_branch: bool,
+    proxy_mode: &str,
+    proxy_host: &str,
+    env_source: EnvSource,
+    sender: &Sender<SillyTavernInstallEvent>,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let mut init = git_command(env_source);
+    configure_git_proxy(&mut init, proxy_mode, proxy_host);
+    init.args(["-C", target_text, "init"]);
+    run_install_command(init, sender, cancel)?;
+
+    // 目录里可能残留半成品 `.git`，先移除 origin 再添加，避免 `remote add` 因重名失败。
+    let mut remove_remote = git_command(env_source);
+    configure_git_proxy(&mut remove_remote, proxy_mode, proxy_host);
+    remove_remote.args(["-C", target_text, "remote", "remove", "origin"]);
+    if let Err(error) = run_install_command(remove_remote, sender, cancel) {
+        // 取消信号必须继续上抛；「没有 origin」这类失败可以忽略。
+        if error == INSTALL_CANCELLED {
+            return Err(error);
+        }
+    }
+
+    let mut add_remote = git_command(env_source);
+    configure_git_proxy(&mut add_remote, proxy_mode, proxy_host);
+    add_remote.args(["-C", target_text, "remote", "add", "origin", source_url]);
+    run_install_command(add_remote, sender, cancel)?;
+
+    sync_existing_repository(
+        target_text,
+        source_url,
+        ref_name,
+        is_branch,
+        proxy_mode,
+        proxy_host,
+        env_source,
+        sender,
+        cancel,
+    )
+}
+
+/// 目标目录异常时请求用户确认是否强制覆盖。
+///
+/// 先向界面发送 [`SillyTavernInstallEvent::OverwriteRequired`]，然后阻塞等待
+/// 界面回传决定；等待期间轮询取消标志，用户取消或关闭弹窗时按「拒绝」处理。
+/// 没有交互通道（程序化调用）时同样按「拒绝」处理，绝不擅自删除用户目录。
+fn request_overwrite_confirmation(
+    sender: &Sender<SillyTavernInstallEvent>,
+    confirm: Option<&Receiver<bool>>,
+    cancel: &AtomicBool,
+    target: &Path,
+) -> Result<bool, String> {
+    let Some(confirm) = confirm else {
+        return Ok(false);
+    };
+    send_install_log(sender, tf("network.install.overwrite_required", &[("path", &target.display())]));
+    let _ = sender.send(SillyTavernInstallEvent::OverwriteRequired(target.to_path_buf()));
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
+        match confirm.recv_timeout(Duration::from_millis(200)) {
+            Ok(allowed) => return Ok(allowed),
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            // 界面侧发送端被丢弃（弹窗关闭）时按拒绝处理。
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(false),
+        }
     }
 }
 
@@ -3587,6 +3824,12 @@ fn wait_before_npm_install(cancel: &AtomicBool) -> Result<(), String> {
 /// 它是**键**而不是展示文案：创建处与判定处引用同一个常量，
 /// 展示时再按当前语言取值，避免「用翻译结果做比较」在切换语言后失效。
 pub(crate) const INSTALL_CANCELLED: &str = "network.install.cancelled";
+
+/// 用户拒绝覆盖异常目录时使用的内部哨兵错误。
+///
+/// 它是**键**而不是展示文案：在目录分流逻辑里产生、在下载源重试循环里判定。
+/// 一旦命中就终止整个安装，避免切换到备用下载源后重复弹出覆盖确认框。
+const INSTALL_OVERWRITE_DECLINED: &str = "network.install.overwrite_declined";
 
 fn send_install_log(sender: &Sender<SillyTavernInstallEvent>, line: String) {
     // 安装日志同样可能是文案键或运行时文本，入队前解析一次。

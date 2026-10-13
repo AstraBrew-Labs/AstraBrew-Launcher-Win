@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
-"""把思源黑体的原始字重文件裁剪成可打包的子集。
+"""把 HarmonyOS Sans SC 的原始字重文件裁剪成可打包的子集。
 
 为什么需要这个脚本
 ------------------
-思源黑体每个字重都是完整字库（65535 个字形、约 16 MB），七个字重加起来超过
-110 MB。启动器只需要界面里可能出现的字符，因此必须裁剪后再打包，否则安装包
-会被字体撑大一个数量级。
+HarmonyOS Sans SC 每个字重都是完整字库（约 3 万个字形、8 MB 左右），六个字重
+加起来超过 49 MB。启动器只需要界面里可能出现的字符，因此必须裁剪后再打包，
+否则安装包会被字体撑大一个数量级。
 
 保留范围
 --------
 * GB2312 全字集 —— 保证简体中文界面、用户输入、日志输出都不会缺字。
 * 拉丁基本区与拉丁补充区 —— 覆盖英文界面、数字、`AstraBrew` 这类专名。
 * 常用标点、箭头、数学符号、几何图形、圈号、CJK 标点、假名、全角形式 ——
-  覆盖版本号（`v1.18.0`）、分隔符（`·`）、状态标记（`✓`）等界面元素。
+  覆盖版本号（`v1.18.0`）、分隔符（`·`）、状态标记（`→`）等界面元素。
 
 只处理界面真正用到的三档字重
 ----------------------------
 界面代码只调用 `regular()`(400)、`medium()`(500)、`bold()`(700) 三档，
-其余字重（ExtraLight 250 / Light 300 / Normal 350 / Heavy 900）没有调用点，
-一并裁剪只会白占体积。
+其余字重（Thin 250 / Light 300 / Black 900）没有调用点，一并裁剪只会白占体积。
 
 用法
 ----
@@ -28,8 +27,8 @@
 
     pip install fonttools brotli
 
-输出文件名为 ``SourceHanSansSC-<字重>.otf``，字体族名统一为
-``Source Han Sans SC``，与 ``src/core/typography.rs`` 里的
+输出文件名为 ``HarmonyOSSansSC-<字重>.ttf``，字体族名统一为
+``HarmonyOS Sans SC``，与 ``src/core/typography.rs`` 里的
 ``DEFAULT_FAMILY_NAME`` 保持一致。任何一侧改名都必须同步另一侧。
 """
 
@@ -50,7 +49,12 @@ WANTED_WEIGHTS: dict[str, int] = {
 }
 
 # 统一的字体族名。必须与 typography.rs 的 DEFAULT_FAMILY_NAME 一致。
-FAMILY_NAME = "Source Han Sans SC"
+FAMILY_NAME = "HarmonyOS Sans SC"
+
+# 原始字体文件名模板（官方发布的命名风格：HarmonyOS_SansSC_<字重>.ttf）。
+SOURCE_TEMPLATE = "HarmonyOS_SansSC_{suffix}.ttf"
+# 输出文件名模板。放在 assets/fonts 下，被 typography.rs 直接 include_bytes。
+TARGET_TEMPLATE = "HarmonyOSSansSC-{suffix}.ttf"
 
 # 输出的字重名，下标与 WANTED_WEIGHTS 的数值对应，供 name 表使用。
 WEIGHT_SUBFAMILY: dict[int, str] = {
@@ -114,6 +118,11 @@ def subset_one(source: str, target: str, text: str, weight: int) -> int:
     options.drop_tables = ["VORG", "vhea", "vmtx", "BASE", "DSIG"]
 
     font = subset.load_font(source, options)
+    # HarmonyOS Sans SC 自带 SVG 彩色字形表（`SVG `）。它只服务于彩色 emoji
+    # 式的字形替换，界面文字用不到，且 fontTools 裁剪该表需要额外的 lxml 依赖。
+    # 直接剔除：cmap 仍指向 glyf 轮廓，删表后字符照常按黑白轮廓渲染。
+    if "SVG " in font:
+        del font["SVG "]
     subsetter = subset.Subsetter(options=options)
     subsetter.populate(text=text)
     subsetter.subset(font)
@@ -128,9 +137,9 @@ def subset_one(source: str, target: str, text: str, weight: int) -> int:
 def _rename(font: TTFont, weight: int) -> None:
     """把字体族名统一成 FAMILY_NAME，并写入正确的字重信息。
 
-    原始文件的名字表并不一致：只有 Regular 与 Bold 把纯族名放在 nid 1，
-    其余字重把「族名 + 字重」塞进 nid 1，真正的族名藏在 nid 16。fontdb 优先
-    取 nid 16、缺失时退回 nid 1，因此七份文件虽然碰巧能聚成一组，但依赖的是
+    原始文件的名字表并不一致：Regular 与 Bold 把纯族名放在 nid 1，Medium 等
+    中间字重把「族名 + 字重」塞进 nid 1，真正的族名藏在 nid 16。fontdb 优先
+    取 nid 16、缺失时退回 nid 1，因此几份文件虽然碰巧能聚成一组，但依赖的是
     偶然的命名巧合。这里显式规范化，让分组结果由我们决定而不是由偶然决定。
     """
     subfamily = WEIGHT_SUBFAMILY[weight]
@@ -155,7 +164,7 @@ def verify(source: str, target: str, text: str, weight: int) -> None:
     """裁剪后自检：确认源字体里**有的**字符一个都没丢，且字重写对了。
 
     自检基准必须取「源字体与目标字符集的交集」而不是目标字符集本身：请求的
-    区间里必然有一部分码位源字体本来就没有（不间断空格、方向控制符、思源黑体
+    区间里必然有一部分码位源字体本来就没有（不间断空格、方向控制符、HarmonyOS
     不收录的个别符号），拿它们当缺失会把正常结果误判成失败。真正的风险是
     「源字体有、裁剪后却没了」，那才是会渲染成缺字方框的情形。
     """
@@ -203,11 +212,11 @@ def main(argv: list[str]) -> int:
 
     total = 0
     for suffix, weight in WANTED_WEIGHTS.items():
-        source = os.path.join(source_dir, f"SourceHanSansSC-{suffix}.otf")
+        source = os.path.join(source_dir, SOURCE_TEMPLATE.format(suffix=suffix))
         if not os.path.isfile(source):
             print(f"缺少源文件：{source}")
             return 1
-        target = os.path.join(target_dir, f"SourceHanSansSC-{suffix}.otf")
+        target = os.path.join(target_dir, TARGET_TEMPLATE.format(suffix=suffix))
         size = subset_one(source, target, text, weight)
         total += size
         print(f"{suffix:10s} {os.path.getsize(source) / 1048576:6.2f} MB -> {size / 1048576:6.2f} MB")

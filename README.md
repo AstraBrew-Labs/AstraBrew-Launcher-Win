@@ -77,8 +77,9 @@
 
 ### 重新生成界面字体
 
-界面字体是思源黑体的裁剪子集，源文件很大（每个字重约 16 MB），不入库。
-需要调整保留字符或更换字重时，把官方 OTF 放到同一目录后重新生成：
+界面字体是 HarmonyOS Sans SC 的裁剪子集，官方源文件较大（每个字重约 8 MB），
+不入库。需要调整保留字符或更换字重时，把官方 `HarmonyOS_SansSC_<字重>.ttf`
+放到同一目录后重新生成：
 
 ```bash
 python assets/fonts/subset_fonts.py assets/fonts assets/fonts
@@ -94,7 +95,7 @@ python assets/fonts/subset_fonts.py assets/fonts assets/fonts
 ```text
 astrabrew-launcher-Win/
 ├── assets/                  # 静态资源文件
-│   └── fonts/               # 界面字体（思源黑体三档字重子集 + 裁剪脚本）
+│   └── fonts/               # 界面字体（HarmonyOS Sans SC 三档字重子集 + 裁剪脚本）
 ├── src/                     # 源代码目录
 │   ├── core/                # 核心逻辑模块（环境配置等）
 │   ├── lang/                # 国际化语言模块（en.rs, zh.rs, lang.rs）

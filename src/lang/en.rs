@@ -417,9 +417,17 @@ pub(super) const KEYS: &[&str] = &[
     "network.install.cancelled_log",
     "network.install.channel_failed",
     "network.install.create_dir_failed",
+    "network.install.empty_dir_reset",
     "network.install.failed",
     "network.install.mirror_staging_fallback",
     "network.install.mirror_staging_missing",
+    "network.install.overwrite_approved",
+    "network.install.overwrite_declined",
+    "network.install.overwrite_required",
+    "network.install.remove_dir_failed",
+    "network.install.repair_failed",
+    "network.install.repaired_dir",
+    "network.install.repairing_dir",
     "network.install.reuse_directory",
     "network.install.unsafe_existing_dir",
     "network.mirror.branch_failed",
@@ -1131,6 +1139,10 @@ pub(super) const KEYS: &[&str] = &[
     "versions.install.log_npm_done",
     "versions.install.log_prepare_install",
     "versions.install.log_prepare_switch",
+    "versions.install.overwrite.cancel",
+    "versions.install.overwrite.confirm",
+    "versions.install.overwrite.desc",
+    "versions.install.overwrite.title",
     "versions.install.processing",
     "versions.install.status_completed",
     "versions.install.status_downloading",
@@ -1808,11 +1820,23 @@ pub(super) fn lookup(key: &'static str) -> Option<&'static str> {
         "network.install.cancelled_log" => "Installation cancelled.",
         "network.install.channel_failed" => "Download from {channel} failed: {error}",
         "network.install.create_dir_failed" => "Failed to create the installation directory: {error}",
+        "network.install.empty_dir_reset" => "The target directory exists but is empty; reinstalling into it: {path}",
         "network.install.failed" => "Installation failed: {error}",
         "network.install.mirror_staging_fallback" => {
             "The mirror failed to download the development build; falling back to the official GitHub source."
         },
         "network.install.mirror_staging_missing" => "The mirror has no staging branch; using the official GitHub source.",
+        "network.install.overwrite_approved" => "Overwrite confirmed; re-downloading into: {path}",
+        "network.install.overwrite_declined" => "Overwrite cancelled; the target directory was left untouched.",
+        "network.install.overwrite_required" => {
+            "The target directory is not a Git repository; waiting for overwrite confirmation: {path}"
+        },
+        "network.install.remove_dir_failed" => "Failed to clear the target directory: {error}",
+        "network.install.repair_failed" => "In-place repair failed: {error}",
+        "network.install.repaired_dir" => "Repaired the target directory in place and synced it.",
+        "network.install.repairing_dir" => {
+            "The target directory is not a Git repository; attempting an in-place repair: {path}"
+        },
         "network.install.reuse_directory" => "Reusing the existing Tavern directory: {path}",
         "network.install.unsafe_existing_dir" => {
             "The target directory exists but is not a Git repository; a safe update is not possible."
@@ -2170,7 +2194,7 @@ pub(super) fn lookup(key: &'static str) -> Option<&'static str> {
         "settings.github_test.testing" => "Testing…",
         "settings.github_test.timeout" => "The test timed out. Check your network or proxy settings and try again.",
         "settings.github_test.title" => "GitHub Connectivity Test",
-        "settings.interface.font.default" => "Default (Source Han Sans SC)",
+        "settings.interface.font.default" => "Default (HarmonyOS Sans SC)",
         "settings.interface.font.description" => "Choose an interface font from the visible fonts installed on this PC.",
         "settings.interface.font.error_title" => "Could Not Change Font",
         "settings.interface.font.loading" => "Applying font…",
@@ -2560,6 +2584,12 @@ pub(super) fn lookup(key: &'static str) -> Option<&'static str> {
         "versions.install.log_npm_done" => "npm dependencies installed.",
         "versions.install.log_prepare_install" => "Preparing to install SillyTavern v{version}",
         "versions.install.log_prepare_switch" => "Preparing to switch SillyTavern {branch} branch",
+        "versions.install.overwrite.cancel" => "Cancel",
+        "versions.install.overwrite.confirm" => "Overwrite",
+        "versions.install.overwrite.desc" => {
+            "The target directory already exists but is not a Git repository, and the automatic repair failed. Continuing deletes everything inside it and downloads again: {path}"
+        },
+        "versions.install.overwrite.title" => "Target directory problem",
         "versions.install.processing" => "Processing SillyTavern v{version}",
         "versions.install.status_completed" => "Installation complete. This window will close in 3 seconds.",
         "versions.install.status_downloading" => "Downloading Tavern source…",

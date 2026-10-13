@@ -21,14 +21,15 @@
 - 修复桌面 WebView 窗口无法最大化：窗口样式原先只有 `WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX`（最小/关闭按钮可用，最大化按钮灰掉）。现补充 `WS_MAXIMIZEBOX | WS_SIZEBOX`，并把客户区尺寸变化通过 `WM_SIZE` 同步给 WebView。
 - 修复桌面模式无法打开酒馆窗口（报「EventLoop can't be recreated」）：winit 用进程级全局静态量限制事件循环在进程内只能创建一次，而 iced 启动时已占用该配额，且该标志在 Windows 上没有复位路径（复位函数被 `#[cfg(web_platform)]` 门控，仅 WASM 可用），因此工作线程里的第二次 `EventLoop::new()` 必然失败。现改为原生 Win32 自建窗口 + 手写 `GetMessageW` 消息循环承载 WebView2（`wry` 在 Windows 上只要求 `HasWindowHandle`，与 winit 无依赖关系），彻底移除桌面模式的 winit 依赖。
 - 修复环境模式选「内置」却仍使用系统环境：两处独立缺陷。其一，`command_for` 无条件把内置 `lib/` 目录前置注入子进程 PATH，导致选「系统」时子进程仍优先命中内置的 node/git；现改为仅 `EnvSource::Builtin` 才注入。其二，网络层的 `resolve_command` 硬编码系统路径，9 处 Git 调用全部无视环境模式；现统一收敛为 `git_command(source)`，全链路按 `EnvSource` 解析。
-- 修复界面中英文粗细不一致：astra_ui 内置的 HarmonyOS Sans 不含中文字形，中文回退到系统雅黑后笔画偏粗；且该系统字体族缺少 500 档，`medium()`（界面 187 处调用）会被 fontdb 吸附到 400。现改为内置思源黑体三档静态字重（Regular / Medium / Bold），中英文出自同一套设计，字重轴完整覆盖界面所需档位。
+- 修复界面中英文粗细不一致：astra_ui 内置的 HarmonyOS Sans 不含中文字形，中文回退到系统雅黑后笔画偏粗；且该系统字体族缺少 500 档，`medium()`（界面 187 处调用）会被 fontdb 吸附到 400。现改为内置 HarmonyOS Sans SC 三档静态字重（Regular / Medium / Bold），它自带完整 CJK 字形，中英文出自同一套设计，字重轴完整覆盖界面所需档位。
 - 修复本地实例列表等界面显示的路径带 `\\?\` 前缀：`fs::canonicalize` 在 Windows 上返回扩展长度路径，该前缀是 Win32 API 的转义标记，对用户没有意义。新增 `display_path` 剥掉前缀（含 `\\?\UNC\` 还原为标准 UNC），并应用到实例列表、扫描进度、目录选择器、控制台下载提示与扩展路径校验错误。旧数据无需迁移：载入时会自动规范化并在下次保存时更新。
 - 字体选择器新增「该字体不含中文字形」提示，避免用户改选西文字体后重新引入中英文粗细差。
+- 修复在线安装酒馆时「目标目录已存在但不是 Git 仓库」直接失败的问题：安装前按目录状态分流——目录不存在或为空时直接重新克隆；目录有内容但不是 Git 仓库时先就地修复（`git init` + 重设 `origin` + 同步目标 ref，保留目录里已有的其它文件）；修复失败才弹出确认框询问用户是否覆盖，用户确认后清空目录再重新克隆，拒绝则中止安装且不触碰原目录。安装线程在等待用户决定期间会响应取消，用户关闭弹窗按「拒绝」处理。
 
 ### Changed
 - 本地实例扫描的旧实现（仅主目录的 `find_scan`）整体移除，事件模型由「单条进度 + 逐条路径」改为「磁盘清单 + 逐盘进度快照」，扫描失败不再自动降级为另一种扫描方式。`windows-sys` 补充 `Win32_Storage_FileSystem`（枚举盘符与卷信息）。
 - 桌面模式窗口的窗口规范调整：不再套用主界面的「固定尺寸、不可最大化」，改为可缩放、可最大化、可最小化（同浏览器语义）。`AGENTS.md` 中「软件窗口界面，不能最大化」约束的是启动器主界面，桌面 WebView 窗口作为独立的内容浏览窗口不适用该条。
-- 内置字体改为 `assets/fonts/SourceHanSansSC-{Regular,Medium,Bold}.otf`，由 `assets/fonts/subset_fonts.py` 按 GB2312 全字集 + 拉丁 + 常用符号裁剪生成，三档合计约 10 MB。
+- 内置字体改为 `assets/fonts/HarmonyOSSansSC-{Regular,Medium,Bold}.ttf`，由 `assets/fonts/subset_fonts.py` 按 GB2312 全字集 + 拉丁 + 常用符号裁剪生成，三档合计约 5 MB（裁剪时剔除字体自带的 SVG 彩色字形表，界面文字用不到且会使打包依赖 lxml）。
 - `.gitignore` 移除 macOS 平台残留项（`.DS_Store`、`*.app.tar.gz`）。
 - Windows 依赖调整：移除 `winit`，新增 `raw-window-handle`；`windows-sys` 补充 `Win32_System_Com` 与 `Win32_System_LibraryLoader`（自建窗口与 COM 初始化需要）。
 

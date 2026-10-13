@@ -9,24 +9,26 @@
 //! 界面文字必须来自**同一套字体设计**，否则中英文的笔画粗细无法对齐。这条
 //! 约束带来了下面三个看起来有点绕、但都不能省略的设计：
 //!
-//! 1. **默认字体选用内置思源黑体，而不是 astra_ui 的 HarmonyOS Sans**。
-//!    HarmonyOS Sans 只有拉丁字形、**不含任何 CJK 字形**，中文只能靠
-//!    cosmic-text 的字符级回退去系统里找，最终落到 `Microsoft YaHei UI`。
-//!    雅黑的笔画设计天生比 HarmonyOS Sans 粗，于是同一行里「中文比英文数字
-//!    更重」—— 这不是字重写错，而是两套字体设计的基线不同。
+//! 1. **默认字体选用内置的 HarmonyOS Sans SC（简体中文版）**。注意与 astra_ui
+//!    默认的 `HarmonyOS Sans` 区分：后者只有拉丁字形、**不含任何 CJK 字形**，
+//!    中文只能靠 cosmic-text 的字符级回退去系统里找，最终落到
+//!    `Microsoft YaHei UI`。雅黑的笔画设计天生比它粗，于是同一行里「中文比
+//!    英文数字更重」—— 这不是字重写错，而是两套字体设计的基线不同。
+//!    `HarmonyOS Sans SC` 自带完整 CJK 字形，中英文出自同一套设计，不存在
+//!    这种回退割裂。
 //!
-//! 2. **内置三个独立字重，而不是一个可变字体**。思源黑体官方发布的静态字重
-//!    文件每个字重都是一份独立设计，字形轮廓由设计师逐档调校；同一族里放着
-//!    400 / 500 / 700 三份文件，fontdb 对界面用到的每一档都能精确命中。
+//! 2. **内置三个独立字重，而不是一个可变字体**。HarmonyOS Sans SC 官方发布的
+//!    静态字重文件每个字重都是一份独立设计，字形轮廓由设计师逐档调校；同一族
+//!    里放着 400 / 500 / 700 三份文件，fontdb 对界面用到的每一档都能精确命中。
 //!    这解决的是「字重吸附」问题：雅黑在 `Microsoft YaHei UI` 这个族名下只有
 //!    290 / 400 / 700，遇到 [`medium()`] 请求的 500 会被吸附到 400，而那 187
 //!    处调用点里中文会比拉丁矮一档字重。内置字体有真正的 500，不会被吸附。
 //!
 //! 3. **三档字重都必须是同一个族的成员**。字体文件自带的名字表在发布时并不
-//!    统一（部分字重把「族名 + 字重」写进 nid 1，族名藏进 nid 16），光靠原始
-//!    命名是碰巧能聚成一组。因此打包前由 `assets/fonts/subset_fonts.py` 显式
-//!    把三个文件的族名统一成 [`DEFAULT_FAMILY_NAME`]，让分组由代码决定而不是
-//!    由偶然决定。
+//!    统一（Regular 把族名写在 nid 1；Medium 把「族名 + 字重」写进 nid 1、真正
+//!    的族名藏在 nid 16），光靠原始命名是碰巧能聚成一组。因此打包前由
+//!    `assets/fonts/subset_fonts.py` 显式把三个文件的族名统一成
+//!    [`DEFAULT_FAMILY_NAME`]，让分组由代码决定而不是由偶然决定。
 //!
 //! 因此 [`DEFAULT_FONT_KEY`] 指向的字形数据由 [`BUNDLED_FONT_FILES`] 提供，
 //! 它们同时覆盖中文、拉丁、数字与标点，中英文粗细天然一致。
@@ -48,19 +50,21 @@ pub(crate) const DEFAULT_FONT_KEY: &str = "default";
 ///
 /// 这个名字来自字体文件自身的 name 表，iced 按它做族匹配，因此不能随意改动，
 /// 必须与 `assets/fonts/subset_fonts.py` 写入的族名完全一致。
-const DEFAULT_FAMILY_NAME: &str = "Source Han Sans SC";
+const DEFAULT_FAMILY_NAME: &str = "HarmonyOS Sans SC";
 /// 内置默认字体的字形数据（三档字重）。
 ///
-/// 思源黑体按 GB2312 全字集 + 拉丁 + 常用符号裁剪后的子集，每档约 3.4 MB，
-/// 三档合计约 10 MB。生成方式见 `assets/fonts/subset_fonts.py`，不要手工替换
-/// 文件 —— 字体族名与 [`DEFAULT_FAMILY_NAME`] 必须对齐，否则 iced 匹配不到。
+/// HarmonyOS Sans SC 按 GB2312 全字集 + 拉丁 + 常用符号裁剪后的子集，每档约
+/// 1.7 MB，三档合计约 5 MB。生成方式见 `assets/fonts/subset_fonts.py`，不要
+/// 手工替换文件 —— 字体族名与 [`DEFAULT_FAMILY_NAME`] 必须对齐，否则 iced
+/// 匹配不到。
 ///
-/// 选用思源黑体而非系统雅黑，是因为它同时覆盖中英文，中文字形在三个字重下
-/// 与拉丁字形出自同一套设计，界面里不会出现「中文比英文粗」的割裂感。
+/// 选用 HarmonyOS Sans SC 而非系统雅黑，是因为它同时覆盖中英文，中文字形在
+/// 三个字重下与拉丁字形出自同一套设计，界面里不会出现「中文比英文粗」的
+/// 割裂感。
 pub(crate) const BUNDLED_FONT_FILES: &[&[u8]] = &[
-    include_bytes!("../../assets/fonts/SourceHanSansSC-Regular.otf"),
-    include_bytes!("../../assets/fonts/SourceHanSansSC-Medium.otf"),
-    include_bytes!("../../assets/fonts/SourceHanSansSC-Bold.otf"),
+    include_bytes!("../../assets/fonts/HarmonyOSSansSC-Regular.ttf"),
+    include_bytes!("../../assets/fonts/HarmonyOSSansSC-Medium.ttf"),
+    include_bytes!("../../assets/fonts/HarmonyOSSansSC-Bold.ttf"),
 ];
 /// Windows 自带的 CJK 字体族名。
 ///
@@ -90,7 +94,7 @@ pub(crate) struct FontChoice {
 }
 
 impl FontChoice {
-    /// 内置思源黑体选项（同时覆盖中英文）。
+    /// 内置 HarmonyOS Sans SC 选项（同时覆盖中英文）。
     pub(crate) const fn default_choice() -> Self {
         Self {
             key: DEFAULT_FONT_KEY,
@@ -235,7 +239,7 @@ impl SystemFontCatalog {
     pub(crate) fn load_family_bytes(&self, choice: FontChoice) -> Result<Vec<Vec<u8>>, String> {
         let Some(family) = choice.family else {
             // 三档字重的字节都在二进制里，这里按 iced 的注册接口逐份交出；
-            // 用 to_vec 复制是接口要求（iced 需要取得所有权），单份 3.4 MB，
+            // 用 to_vec 复制是接口要求（iced 需要取得所有权），单份约 1.7 MB，
             // 仅在切换字体时发生一次。
             return Ok(BUNDLED_FONT_FILES.iter().map(|bytes| bytes.to_vec()).collect());
         };
@@ -285,7 +289,7 @@ fn face_covers_cjk(database: &fontdb::Database, id: fontdb::ID) -> bool {
 
 /// 一个覆盖中文的系统字体族，用作最后兜底。
 ///
-/// 正常情况下界面用的是内置思源黑体，不会走到这里；只有内置字体加载失败、
+/// 正常情况下界面用的是内置 HarmonyOS Sans SC，不会走到这里；只有内置字体加载失败、
 /// 或用户显式改选系统字体时才会用到，用于保证中文绝不落到缺字方框。
 ///
 /// 结果在进程内缓存：字体数据库查询要遍历全部已装字体，而该结果在一帧内会
@@ -345,7 +349,7 @@ fn with_weight(weight: Weight) -> Font {
     })
 }
 
-/// 普通字重（思源黑体 Regular，400）。
+/// 普通字重（HarmonyOS Sans SC Regular，400）。
 ///
 /// 对应 [`BUNDLED_FONT_FILES`] 里的 Regular 那一份；用户改选系统字体后，
 /// 由 fontdb 在该族的全部 face 中挑最接近 400 的一个。
@@ -353,16 +357,16 @@ pub(crate) fn regular() -> Font {
     with_weight(Weight::Normal)
 }
 
-/// 中等字重（思源黑体 Medium，500）。
+/// 中等字重（HarmonyOS Sans SC Medium，500）。
 ///
-/// 界面里 187 处用它：标题、标签、数值都属于这一档。思源黑体有独立的
-/// Medium 字面，中英文都是真正的 500，不会被吸附到 400。这一点是选它
+/// 界面里 187 处用它：标题、标签、数值都属于这一档。HarmonyOS Sans SC 有独立
+/// 的 Medium 字面，中英文都是真正的 500，不会被吸附到 400。这一点是选它
 /// 而不是系统雅黑的关键原因 —— 雅黑在这个字重上会被 fontdb 吸附。
 pub(crate) fn medium() -> Font {
     with_weight(Weight::Medium)
 }
 
-/// 粗体字重（思源黑体 Bold，700）。
+/// 粗体字重（HarmonyOS Sans SC Bold，700）。
 pub(crate) fn bold() -> Font {
     with_weight(Weight::Bold)
 }
@@ -390,7 +394,7 @@ mod tests {
     /// 而 ttf-parser 的 name API 足够直接。
     ///
     /// 刻意先扫一遍英文记录再退回任意 Unicode 记录，而不是直接取第一条：
-    /// 字体里同一个 nid 会有多语言版本（简体中文记录里族名写作「思源黑体」），
+    /// 字体里同一个 nid 会有多语言版本（族名同时存在英文与本地化写法），
     /// 取第一条的结果取决于记录顺序。fontdb 自己也做了同样的「优先英文」处理，
     /// 这里对齐它才能真实反映运行时行为。
     fn name_record(face: &ttf_parser::Face<'_>, name_id: u16) -> Option<String> {
@@ -555,8 +559,8 @@ mod tests {
     /// 界面用到的汉字必须真的有可绘制轮廓，而不是只有码位映射。
     ///
     /// 两者会脱节：字体可以声明某码位存在，却提供一个空字形，渲染出来是空白。
-    /// 思源黑体是 CFF 轮廓，与 TrueType 的 `glyf` 走不同的解析路径，因此这条
-    /// 测试同时也在验证 CFF 轮廓确实能被解析出来。
+    /// HarmonyOS Sans SC 是 TrueType `glyf` 轮廓，这里验证裁剪后轮廓仍能被
+    /// 正常解析出来。
     #[test]
     fn bundled_cjk_glyph_has_drawable_outline() {
         for (index, face) in bundled_faces().iter().enumerate() {

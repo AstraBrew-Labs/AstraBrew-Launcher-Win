@@ -134,6 +134,11 @@ pub struct InstallTaskState {
     pub auto_close_ticks: u8,
     /// 用户是否明确点击了“切换版本”，安装完成后应立即切换当前实例。
     pub switch_requested: bool,
+    /// 目标目录异常、等待用户确认是否覆盖时保存的目录路径。
+    ///
+    /// 为 `Some` 表示安装线程正阻塞等待用户拍板；此时日志区上方展示覆盖确认
+    /// 面板，用户点击后由应用层把决定回传给后台线程。
+    pub overwrite_pending: Option<String>,
 }
 
 impl Default for InstallTaskState {
@@ -148,6 +153,7 @@ impl Default for InstallTaskState {
             can_close: false,
             auto_close_ticks: 0,
             switch_requested: false,
+            overwrite_pending: None,
         }
     }
 }
@@ -364,6 +370,12 @@ pub enum VersionMessage {
     InstallDownloadStarted(String),
     /// 上层将下载日志追加到弹窗。
     InstallLog(String),
+    /// 目标目录不是 Git 仓库且就地修复失败，需要用户确认是否覆盖安装。
+    InstallOverwriteRequired(String),
+    /// 用户确认覆盖安装：应用层通知后台线程清空目录后重新克隆。
+    ConfirmInstallOverwrite,
+    /// 用户拒绝覆盖安装：应用层通知后台线程中止本次安装。
+    CancelInstallOverwrite,
     /// 下载成功后，等待三秒再进入 npm 安装阶段。
     InstallDownloadCompleted,
     /// 安装阶段开始，registry 等设置由上层进程使用。
@@ -631,6 +643,15 @@ impl VersionState {
             VersionMessage::InstallLog(log) => {
                 append_log(&mut self.install_task.logs, &log);
             }
+            VersionMessage::InstallOverwriteRequired(path) => {
+                // 后台线程已阻塞等待，这里只负责把确认面板展示出来。
+                self.install_task.overwrite_pending = Some(path);
+                self.install_task.running = true;
+            }
+            VersionMessage::ConfirmInstallOverwrite | VersionMessage::CancelInstallOverwrite => {
+                // 界面侧只需收起确认面板；真正的决定由应用层回传给后台安装线程。
+                self.install_task.overwrite_pending = None;
+            }
             VersionMessage::InstallDownloadCompleted => {
                 self.install_task.phase = InstallPhase::WaitingInstall;
                 self.install_task.running = true;
@@ -707,6 +728,7 @@ impl VersionState {
             can_close: false,
             auto_close_ticks: 0,
             switch_requested: self.online_instance_exists,
+            overwrite_pending: None,
         };
         self.notice = Some(TransientNotice::info(
             "notice.operation_started",
@@ -748,6 +770,7 @@ impl VersionState {
             can_close: false,
             auto_close_ticks: 0,
             switch_requested: self.online_instance_exists,
+            overwrite_pending: None,
         };
         self.notice = Some(TransientNotice::info(
             "notice.operation_started",
@@ -1949,7 +1972,25 @@ fn install_modal(task: &InstallTaskState) -> Element<'_, VersionMessage> {
     .spacing(12)
     .align_y(Alignment::Center)
     .width(Fill);
-    if task.can_close {
+    if task.overwrite_pending.is_some() {
+        // 覆盖确认期间只提供「取消 / 覆盖安装」两个动作，不额外给关闭按钮，
+        // 避免用户既不选择又关掉窗口，让后台安装线程一直阻塞等待。
+        footer = footer
+            .push(
+                button(text("versions.install.overwrite.cancel").size(12).font(crate::core::typography::medium()))
+                    .on_press(VersionMessage::CancelInstallOverwrite)
+                    .height(34)
+                    .padding([7, 14])
+                    .style(button_style(ButtonVariant::Secondary)),
+            )
+            .push(
+                button(text("versions.install.overwrite.confirm").size(12).font(crate::core::typography::medium()))
+                    .on_press(VersionMessage::ConfirmInstallOverwrite)
+                    .height(34)
+                    .padding([7, 14])
+                    .style(button_style(ButtonVariant::DangerSoft)),
+            );
+    } else if task.can_close {
         footer = footer.push(
             button(text("resources.import.close").size(12).font(crate::core::typography::medium()))
                 .on_press(VersionMessage::CloseInstallModal)
@@ -1968,40 +2009,71 @@ fn install_modal(task: &InstallTaskState) -> Element<'_, VersionMessage> {
         None => text("").size(1).into(),
     };
 
-    let panel = mouse_area(
-        container(
-            column![
+    // 覆盖确认块：目标目录异常且自动修复失败时，明确告诉用户继续会发生什么。
+    let overwrite_block: Option<Element<'_, VersionMessage>> =
+        task.overwrite_pending.as_deref().map(|path| {
+            container(
                 column![
-                    text("versions.install.title").size(18).font(crate::core::typography::medium()),
-                    textf("versions.install.processing", &[("version", &version)])
-                        .size(12)
+                    row![
+                        icons::icon(Icon::TriangleAlert, 16, DANGER),
+                        text("versions.install.overwrite.title")
+                            .size(13)
+                            .font(crate::core::typography::medium())
+                            .color(DANGER),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                    textf("versions.install.overwrite.desc", &[("path", &path)])
+                        .size(11)
                         .font(crate::core::typography::regular())
                         .style(crate::theme::muted_text_style),
                 ]
-                .spacing(4),
-                steps,
-                rule::horizontal(1.0).style(crate::theme::separator_style),
-                scrollable(
-                    container(
-                        raw(&task.logs)
-                            .size(11)
-                            .font(crate::core::typography::regular())
-                            .style(crate::theme::text_style),
-                    )
-                    .width(Fill)
-                    .padding(14)
-                    .style(install_log_style),
-                )
-                .height(250),
-                error_detail,
-                rule::horizontal(1.0).style(crate::theme::separator_style),
-                footer,
-            ]
-            .spacing(16),
+                .spacing(8),
+            )
+            .width(Fill)
+            .padding(12)
+            .style(overwrite_warning_style)
+            .into()
+        });
+
+    let mut content = column![
+        column![
+            text("versions.install.title").size(18).font(crate::core::typography::medium()),
+            textf("versions.install.processing", &[("version", &version)])
+                .size(12)
+                .font(crate::core::typography::regular())
+                .style(crate::theme::muted_text_style),
+        ]
+        .spacing(4),
+        steps,
+        rule::horizontal(1.0).style(crate::theme::separator_style),
+        scrollable(
+            container(
+                raw(&task.logs)
+                    .size(11)
+                    .font(crate::core::typography::regular())
+                    .style(crate::theme::text_style),
+            )
+            .width(Fill)
+            .padding(14)
+            .style(install_log_style),
         )
-        .width(Fill).max_width(620)
-        .padding(20)
-        .style(install_modal_style),
+        .height(250),
+        error_detail,
+    ]
+    .spacing(16);
+    if let Some(block) = overwrite_block {
+        content = content.push(block);
+    }
+    content = content.push(rule::horizontal(1.0).style(crate::theme::separator_style));
+    content = content.push(footer);
+
+    let panel = mouse_area(
+        container(content)
+            .width(Fill)
+            .max_width(620)
+            .padding(20)
+            .style(install_modal_style),
     )
     .on_press(VersionMessage::InstallModalInteract);
 
@@ -2284,6 +2356,24 @@ fn install_log_style(theme: &Theme) -> container::Style {
         background: Some(Background::Color(crate::theme::surface_alt(theme))),
         border: Border {
             color: crate::theme::line(theme),
+            width: 1.0,
+            radius: 10.0.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// 覆盖确认提示块的背景：淡红警示底色，与「会删除目录内容」的危险语义一致。
+fn overwrite_warning_style(theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgba(
+            DANGER.r,
+            DANGER.g,
+            DANGER.b,
+            if crate::theme::is_dark(theme) { 0.14 } else { 0.08 },
+        ))),
+        border: Border {
+            color: Color::from_rgba(DANGER.r, DANGER.g, DANGER.b, 0.32),
             width: 1.0,
             radius: 10.0.into(),
         },

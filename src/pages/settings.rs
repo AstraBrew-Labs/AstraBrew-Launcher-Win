@@ -2738,7 +2738,7 @@ fn ui_scale_control(value: f32) -> Element<'static, Message> {
             percent,
             |value| Message::SettingsUiScaleChanged(value / 100.0),
         )
-        .step(5.0)
+        .step(5.0_f32)
         .width(210)
         .style(slider_style),
         container(
@@ -2825,9 +2825,14 @@ fn readonly_text(label: &'static str) -> Element<'static, Message> {
 }
 
 fn path_control(path: &str, action: SettingsAction) -> Element<'_, Message> {
+    // 展示时把 `%APPDATA%`、`~/` 等前缀展开成完整绝对路径，
+    // 让用户直接看到真实的存放位置；仅影响显示，不改动实际存储值。
+    let display = crate::utils::expand_user_path(path)
+        .to_string_lossy()
+        .into_owned();
     row![
         container(
-            raw(path)
+            raw(display.as_str())
                 .size(10)
                 .font(crate::core::typography::regular())
                 .style(crate::theme::muted_text_style)

@@ -67,7 +67,7 @@ fn main() -> iced::Result {
     for (_, bytes) in astra_ui::fonts::FONT_MAPPINGS {
         application = application.font(bytes);
     }
-    // 内置默认字体（思源黑体三档字重）：同时覆盖中英文，三档都是独立设计。
+    // 内置默认字体（HarmonyOS Sans SC 三档字重）：同时覆盖中英文，三档都是独立设计。
     // 必须在渲染器创建前逐份注册：漏注册某一档，该字重就会退回系统字体，
     // 于是同一行里中文和英文的粗细又会对不上（见 core::typography 模块文档）。
     for bytes in core::typography::BUNDLED_FONT_FILES {
@@ -79,7 +79,7 @@ fn main() -> iced::Result {
     }
 
     application
-        // 默认字体同样指向内置思源黑体：未显式指定字体的组件（含 astra_ui 内部
+        // 默认字体同样指向内置 HarmonyOS Sans SC：未显式指定字体的组件（含 astra_ui 内部
         // 未调用 .font() 的文本）也走中英文同源的字体，避免零星文本出现粗细割裂。
         .default_font(core::typography::regular())
         .window(window::Settings {

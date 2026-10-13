@@ -8,7 +8,7 @@ use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 
 use iced::time::{self, Duration, Instant};
 use iced::widget::{button, column, container, row, space};
@@ -397,6 +397,11 @@ pub struct Launcher {
     version_install_receiver: Option<Receiver<SillyTavernInstallEvent>>,
     /// 在线酒馆安装取消信号。
     version_install_cancel: Option<Arc<AtomicBool>>,
+    /// 安装线程请求用户确认「覆盖异常目录」时的回传通道。
+    ///
+    /// 后台线程在目标目录非 Git 仓库且修复失败时阻塞等待；界面把用户的选择
+    /// 通过这里发送过去（`true` 允许覆盖，`false` 中止安装）。
+    version_install_confirm: Option<Sender<bool>>,
     /// 启动器更新检查与下载的后台事件通道。
     update_receiver: Option<Receiver<UpdateStatus>>,
     /// 扩展管理后台事件通道。
@@ -586,6 +591,7 @@ impl Launcher {
             version_catalog_notify: false,
             version_install_receiver: None,
             version_install_cancel: None,
+            version_install_confirm: None,
             update_receiver: None,
             extension_task_receiver: None,
             extension_task_cancel: None,
@@ -1306,6 +1312,7 @@ impl Launcher {
                 }
                 self.version_install_receiver = None;
                 self.version_install_cancel = None;
+                self.version_install_confirm = None;
                 if let Some(cancel) = &self.extension_task_cancel {
                     cancel.store(true, Ordering::Relaxed);
                 }
@@ -1756,8 +1763,32 @@ impl Launcher {
                 }
                 return;
             }
+            VersionMessage::ConfirmInstallOverwrite => {
+                self.resolve_install_overwrite(true);
+                return;
+            }
+            VersionMessage::CancelInstallOverwrite => {
+                self.resolve_install_overwrite(false);
+                return;
+            }
             _ => {}
         }
+        self.versions.update(message);
+    }
+
+    /// 把用户对「覆盖异常目录」的决定回传给正在等待的安装线程。
+    ///
+    /// 确认通道只能发送一次，因此发送后立即释放；后台线程据此继续覆盖或中止安装。
+    fn resolve_install_overwrite(&mut self, allow: bool) {
+        if let Some(confirm) = self.version_install_confirm.take() {
+            let _ = confirm.send(allow);
+        }
+        // 界面侧同步收起确认面板，随后的安装结果仍由后台事件驱动。
+        let message = if allow {
+            VersionMessage::ConfirmInstallOverwrite
+        } else {
+            VersionMessage::CancelInstallOverwrite
+        };
         self.versions.update(message);
     }
 
@@ -1829,8 +1860,12 @@ impl Launcher {
         let env_source = self.settings.env_mode;
         let cancel = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = mpsc::channel();
+        // 覆盖确认通道：安装线程遇到「非空且非 Git 仓库」目录时会阻塞等待，
+        // 这里保留发送端，供界面把用户的选择回传过去。
+        let (confirm_sender, confirm_receiver) = mpsc::channel::<bool>();
         self.version_install_cancel = Some(cancel.clone());
         self.version_install_receiver = Some(receiver);
+        self.version_install_confirm = Some(confirm_sender);
         if self.versions.install_task.version.as_deref() != Some(display_version.as_str()) {
             self.versions
                 .update(VersionMessage::InstallDownloadStarted(display_version));
@@ -1846,6 +1881,7 @@ impl Launcher {
                 env_source,
                 sender,
                 cancel,
+                Some(confirm_receiver),
             );
         });
     }
@@ -1896,9 +1932,16 @@ impl Launcher {
                     self.versions
                         .update(VersionMessage::InstallDependenciesStarted);
                 }
+                SillyTavernInstallEvent::OverwriteRequired(path) => {
+                    // 后台线程已阻塞等待用户决定，这里只负责把确认面板推到界面。
+                    self.versions.update(VersionMessage::InstallOverwriteRequired(
+                        path.to_string_lossy().into_owned(),
+                    ));
+                }
                 SillyTavernInstallEvent::Cancelled => {
                     self.versions
                         .update(VersionMessage::InstallFailed(t("network.install.cancelled").to_owned()));
+                    self.version_install_confirm = None;
                     keep = false;
                 }
                 SillyTavernInstallEvent::Completed(result) => {
@@ -1914,6 +1957,7 @@ impl Launcher {
                         Err(error) => self.versions.update(VersionMessage::InstallFailed(error)),
                     }
                     self.version_install_cancel = None;
+                    self.version_install_confirm = None;
                     completed_this_tick = true;
                     keep = false;
                 }
@@ -1928,6 +1972,7 @@ impl Launcher {
         if !self.versions.install_task.visible {
             self.version_install_receiver = None;
             self.version_install_cancel = None;
+            self.version_install_confirm = None;
         }
     }
 
