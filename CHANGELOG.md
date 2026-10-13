@@ -25,6 +25,7 @@
 - 修复本地实例列表等界面显示的路径带 `\\?\` 前缀：`fs::canonicalize` 在 Windows 上返回扩展长度路径，该前缀是 Win32 API 的转义标记，对用户没有意义。新增 `display_path` 剥掉前缀（含 `\\?\UNC\` 还原为标准 UNC），并应用到实例列表、扫描进度、目录选择器、控制台下载提示与扩展路径校验错误。旧数据无需迁移：载入时会自动规范化并在下次保存时更新。
 - 字体选择器新增「该字体不含中文字形」提示，避免用户改选西文字体后重新引入中英文粗细差。
 - 修复在线安装酒馆时「目标目录已存在但不是 Git 仓库」直接失败的问题：安装前按目录状态分流——目录不存在或为空时直接重新克隆；目录有内容但不是 Git 仓库时先就地修复（`git init` + 重设 `origin` + 同步目标 ref，保留目录里已有的其它文件）；修复失败才弹出确认框询问用户是否覆盖，用户确认后清空目录再重新克隆，拒绝则中止安装且不触碰原目录。安装线程在等待用户决定期间会响应取消，用户关闭弹窗按「拒绝」处理。
+- 修复发布流水线（`build.ps1` / GitHub Actions）两处致命缺陷，打包不再中断：其一，`[package.metadata.packager.nsis]` 里写的 `install_mode` 并不在 cargo-packager 的允许键列表内（其 `installMode` 字段只登记了 `installer-mode` / `installer_mode` 两个别名，`deny_unknown_fields` 会直接拒绝，报 `unknown field install_mode`），现改用 `installer_mode`；其二，cargo-packager 只按 `--release` 去 `binaries_dir` 里找现成 exe、**不会**自己编译应用，而 `build.ps1` 从未先执行 `cargo build --release`，导致「生成 NSIS 安装包（含 cargo build --release）」这句步骤名名不副实、`-Clean` 后必然失败。现改由 `[package.metadata.packager] before-packaging-command = "cargo build --release"` 统一承担编译，本地与 CI 复用同一条路径。另注：cargo-packager 不使用系统安装的 NSIS，而是把自带工具链（含 tauri 专用插件）缓存到 `%LOCALAPPDATA%\.cargo-packager\NSIS`，首次打包需联网下载。
 
 ### Changed
 - 本地实例扫描的旧实现（仅主目录的 `find_scan`）整体移除，事件模型由「单条进度 + 逐条路径」改为「磁盘清单 + 逐盘进度快照」，扫描失败不再自动降级为另一种扫描方式。`windows-sys` 补充 `Win32_Storage_FileSystem`（枚举盘符与卷信息）。

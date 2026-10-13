@@ -15,8 +15,9 @@
       2. 产物文件名中的版本号后缀。
 
     产物（dist/）：
-      AstraBrew Launcher_<版本>_x64-setup.exe      NSIS 安装包
-      AstraBrew Launcher_<版本>_x64_portable.zip   免安装压缩包
+      astrabrew-launcher-win_<版本>_x64-setup.exe  NSIS 安装包（名字取自 [package].name，
+                                                    不是 product_name，cargo-packager 的规则如此）
+      AstraBrew Launcher_<版本>[-beta]_x64_portable.zip  免安装压缩包
 
 .EXAMPLE
     .\build.ps1                     按 Cargo.toml 渠道构建打包
@@ -119,9 +120,16 @@ if (-not $SkipBuild) {
     }
     Write-Ok "cargo-packager: $((Get-Command cargo-packager).Source)"
 
-    # NSIS 是 cargo-packager 生成 .exe 安装包的前提。
+    # 注意：cargo-packager **不使用**系统安装的 NSIS（Program Files 下的 makensis 它看都不看），
+    # 而是把自带的 NSIS 工具链（含 tauri 专用插件 ApplicationID.dll / nsis_tauri_utils.dll）
+    # 下到 `%LOCALAPPDATA%\.cargo-packager\NSIS`，首次打包需要联网下载。
+    # 国内直连 GitHub 会失败（Proxy failed to connect / connection reset），可先用镜像手工铺好该目录：
+    #   nsis-3.09.zip             https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.9/nsis-3.09.zip
+    #   NSIS-ApplicationID.zip    https://github.com/tauri-apps/binary-releases/releases/download/nsis-plugins-v0/NSIS-ApplicationID.zip
+    #   nsis_tauri_utils.dll      https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.2.1/nsis_tauri_utils.dll
+    # 前置 `https://ghfast.top/` 或 `https://gh-proxy.org/` 即可直下；铺好后本步骤不会再联网。
     if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
-        Write-Warn '未找到 makensis（NSIS）。请先安装：choco install nsis -y'
+        Write-Warn '未在 PATH 中找到 makensis（不影响打包，cargo-packager 会用自带的 NSIS 工具链）'
     }
 }
 
@@ -141,7 +149,7 @@ if (-not (Test-Path $DistDir)) {
 # 5. 生成 NSIS 安装包（exe）
 # ============================================================================
 if (-not $SkipBuild) {
-    Write-Step '调用 cargo packager 生成 NSIS 安装包（含 cargo build --release）'
+    Write-Step '调用 cargo packager 生成 NSIS 安装包（Cargo.toml 的 before-packaging-command 会先跑 cargo build --release）'
     & cargo packager --release
     if ($LASTEXITCODE -ne 0) { Die 'cargo packager 执行失败' }
     Write-Ok 'NSIS 安装包生成完毕'

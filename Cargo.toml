@@ -87,7 +87,7 @@ strip = true
 # 用 `[package.metadata.packager]` 而不是独立的 `Packager.toml`：只有走 Cargo.toml 这条路
 # 时 `version` 才会自动取自 `[package].version`；独立的配置文件必须把版本号再写一遍，
 # 两处一旦不同步，打出来的包版本就会和更新清单对不上。
-# 另外 cargo-packager 只负责打包、不会编译，二进制必须先由 `build.ps1` 放到 binaries_dir。
+# 另外 cargo-packager 只负责打包、不会编译，编译由下面的 before_packaging_command 兜住。
 [package.metadata.packager]
 product_name = "AstraBrew Launcher"
 identifier = "cn.astrabrew.launcher"
@@ -95,10 +95,22 @@ icons = ["assets/icon/icon.ico"]
 out_dir = "dist"
 binaries_dir = "target/release"
 formats = ["nsis"]
+# cargo-packager **不会**自己编译你的程序（官方文档原话："By default, the packager doesn't
+# build your application"）。它只按 `--release` 去 `binaries_dir` 里找现成的 exe，找不到直接报错。
+# 所以这里挂上打包前置钩子，本地 build.ps1 与 CI 都复用同一条路径，避免「生成 NSIS 安装包
+# （含 cargo build --release）」这种名不副实的步骤名把人带沟里。
+# 注意：键名只能是 `beforePackagingCommand` / `before-packaging-command` / `before_packaging_command`，
+# 其他写法会被 `deny_unknown_fields` 拒掉（与 nsis 段同理）。
+before_packaging_command = "cargo build --release"
 
 [package.metadata.packager.nsis]
 # both：同时支持当前用户安装（无需管理员）与全机器安装。
-install_mode = "both"
+# 注意：键名必须是 `installer_mode`（三个被接受的写法：installMode / installer-mode / installer_mode）。
+# cargo-packager 0.11.x 的结构体字段叫 `install_mode`，但 `#[serde(rename_all = "camelCase")]`
+# 让它序列化成 `installMode`，而手写的别名只有 `installer-mode` / `installer_mode`——
+# 于是最"顺口"的 `install_mode` 反而不在允许列表里，会被 `deny_unknown_fields` 直接拒掉：
+# `unknown field \`install_mode\`, expected one of ... `installMode`, `installer-mode`, `installer_mode` ...`
+installer_mode = "both"
 languages = ["SimpChinese", "English"]
 display_language_selector = true
 compression = "lzma"
