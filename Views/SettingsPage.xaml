@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="AstraBrew_Launcher.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Style="{StaticResource PageRootStyle}">
+
+            <StackPanel Spacing="4">
+                <TextBlock Style="{StaticResource PageTitleTextStyle}" Text="设置" />
+                <TextBlock Style="{StaticResource PageSubtitleTextStyle}" Text="启动器自身的通用行为、外观与更新选项。" />
+            </StackPanel>
+
+            <!--  通用  -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="4">
+                    <TextBlock Style="{StaticResource CardTitleTextStyle}" Text="通用" />
+
+                    <Grid Style="{StaticResource SettingRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="2">
+                            <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="开机自动启动" />
+                            <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="登录 Windows 后自动运行启动器" />
+                        </StackPanel>
+                        <ToggleSwitch
+                            Grid.Column="1"
+                            HorizontalAlignment="Left"
+                            IsOn="False" OffContent="" OnContent="" />
+                    </Grid>
+
+                    <Grid Style="{StaticResource SettingRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="2">
+                            <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="关闭主窗口时最小化到托盘" />
+                            <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="保持酒馆服务在后台继续运行" />
+                        </StackPanel>
+                        <ToggleSwitch
+                            Grid.Column="1"
+                            HorizontalAlignment="Left"
+                            IsOn="True" OffContent="" OnContent="" />
+                    </Grid>
+
+                    <Grid Style="{StaticResource SettingRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="2">
+                            <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="退出时停止酒馆服务" />
+                            <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="关闭启动器同时结束后台进程" />
+                        </StackPanel>
+                        <ToggleSwitch
+                            Grid.Column="1"
+                            HorizontalAlignment="Left"
+                            IsOn="True" OffContent="" OnContent="" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!--  外观  -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="4">
+                    <TextBlock Style="{StaticResource CardTitleTextStyle}" Text="外观" />
+
+                    <Grid Style="{StaticResource SettingRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="应用主题" />
+                        <ComboBox
+                            Grid.Column="1"
+                            Width="200"
+                            HorizontalAlignment="Left"
+                            SelectedIndex="0">
+                            <ComboBoxItem Content="跟随系统" />
+                            <ComboBoxItem Content="浅色" />
+                            <ComboBoxItem Content="深色" />
+                        </ComboBox>
+                    </Grid>
+
+                    <Grid Style="{StaticResource SettingRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="窗口材质" />
+                        <ComboBox
+                            Grid.Column="1"
+                            Width="200"
+                            HorizontalAlignment="Left"
+                            SelectedIndex="0">
+                            <ComboBoxItem Content="Mica Alt" />
+                            <ComboBoxItem Content="Mica" />
+                            <ComboBoxItem Content="亚克力" />
+                            <ComboBoxItem Content="纯色" />
+                        </ComboBox>
+                    </Grid>
+
+                    <Grid Style="{StaticResource SettingRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="界面语言" />
+                        <ComboBox
+                            Grid.Column="1"
+                            Width="200"
+                            HorizontalAlignment="Left"
+                            SelectedIndex="0">
+                            <ComboBoxItem Content="简体中文" />
+                            <ComboBoxItem Content="English" />
+                        </ComboBox>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!--  更新  -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="4">
+                    <TextBlock Style="{StaticResource CardTitleTextStyle}" Text="更新" />
+
+                    <Grid Style="{StaticResource SettingRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="更新通道" />
+                        <ComboBox
+                            Grid.Column="1"
+                            Width="200"
+                            HorizontalAlignment="Left"
+                            SelectedIndex="0">
+                            <ComboBoxItem Content="stable（稳定版）" />
+                            <ComboBoxItem Content="beta（测试版）" />
+                            <ComboBoxItem Content="canary（每日构建）" />
+                        </ComboBox>
+                    </Grid>
+
+                    <Grid Style="{StaticResource SettingRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="2">
+                            <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="启动时检查更新" />
+                            <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="发现新版本时在导航栏提示" />
+                        </StackPanel>
+                        <ToggleSwitch
+                            Grid.Column="1"
+                            HorizontalAlignment="Left"
+                            IsOn="True" OffContent="" OnContent="" />
+                    </Grid>
+
+                    <Grid Style="{StaticResource SettingRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="镜像源" />
+                        <ComboBox
+                            Grid.Column="1"
+                            Width="260"
+                            HorizontalAlignment="Left"
+                            SelectedIndex="0">
+                            <ComboBoxItem Content="自动选择（推荐）" />
+                            <ComboBoxItem Content="GitHub 直连" />
+                            <ComboBoxItem Content="华为云镜像" />
+                            <ComboBoxItem Content="清华大学 TUNA" />
+                        </ComboBox>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="保存设置" Style="{StaticResource AccentButtonStyle}" />
+                <Button Content="恢复默认设置" />
+                <Button Content="打开配置目录" />
+            </StackPanel>
+
+        </StackPanel>
+    </ScrollViewer>
+</Page>

@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="AstraBrew_Launcher.Views.AboutPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Style="{StaticResource PageRootStyle}">
+
+            <StackPanel Spacing="4">
+                <TextBlock Style="{StaticResource PageTitleTextStyle}" Text="关于" />
+                <TextBlock Style="{StaticResource PageSubtitleTextStyle}" Text="版本信息、项目链接与开源许可。" />
+            </StackPanel>
+
+            <!--  应用信息  -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="14">
+                    <StackPanel Orientation="Horizontal" Spacing="16">
+                        <Border
+                            Width="56"
+                            Height="56"
+                            VerticalAlignment="Top"
+                            CornerRadius="14">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                    <GradientStop Color="#FFF0B23E" Offset="0" />
+                                    <GradientStop Color="#FFC2703A" Offset="1" />
+                                </LinearGradientBrush>
+                            </Border.Background>
+                            <TextBlock
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                FontSize="26"
+                                FontWeight="Bold"
+                                Foreground="#FF1A1208"
+                                Text="A" />
+                        </Border>
+                        <StackPanel VerticalAlignment="Center" Spacing="2">
+                            <TextBlock
+                                FontSize="18"
+                                FontWeight="SemiBold"
+                                Text="AstraBrew Launcher" />
+                            <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="版本 1.0.0 (build 20261021) · x64" />
+                            <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="星酿酒馆 SiliconTavern 桌面启动器" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="检查更新" Style="{StaticResource AccentButtonStyle}" />
+                        <Button Content="项目主页" />
+                        <Button Content="反馈问题" />
+                        <Button Content="打开日志目录" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!--  运行环境  -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="0">
+                    <TextBlock
+                        Margin="0,0,0,8"
+                        Style="{StaticResource CardTitleTextStyle}"
+                        Text="运行环境" />
+
+                    <Grid Padding="0,8" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="180" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="框架" />
+                        <TextBlock
+                            Grid.Column="1"
+                            Style="{StaticResource MonoTextStyle}"
+                            Text="WinUI 3 · .NET 8" />
+                    </Grid>
+                    <Grid Padding="0,8" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="180" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="酒馆内核" />
+                        <TextBlock
+                            Grid.Column="1"
+                            Style="{StaticResource MonoTextStyle}"
+                            Text="SiliconTavern v1.4.2" />
+                    </Grid>
+                    <Grid Padding="0,8" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="180" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="安装位置" />
+                        <TextBlock
+                            Grid.Column="1"
+                            Style="{StaticResource MonoTextStyle}"
+                            Text="%AppData%\AstraBrew Launcher" />
+                    </Grid>
+                    <Grid Padding="0,8" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="180" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="配置文件" />
+                        <TextBlock
+                            Grid.Column="1"
+                            Style="{StaticResource MonoTextStyle}"
+                            Text="%AppData%\AstraBrew Launcher\settings.json" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!--  许可  -->
+            <Expander HorizontalAlignment="Stretch" Header="开源许可与第三方组件">
+                <StackPanel Padding="0,8,0,0" Spacing="6">
+                    <TextBlock Style="{StaticResource MonoTextStyle}" Text="Windows App SDK — MIT License" />
+                    <TextBlock Style="{StaticResource MonoTextStyle}" Text=".NET Runtime — MIT License" />
+                    <TextBlock Style="{StaticResource MonoTextStyle}" Text="SiliconTavern — AGPL-3.0 License" />
+                    <TextBlock Style="{StaticResource MonoTextStyle}" Text="Segoe Fluent Icons — Microsoft 资产许可" />
+                </StackPanel>
+            </Expander>
+
+            <TextBlock
+                HorizontalAlignment="Center"
+                Margin="0,8,0,0"
+                Style="{StaticResource CardBodyTextStyle}"
+                Text="© 2026 AstraBrew Labs. 保留所有权利。" />
+
+        </StackPanel>
+    </ScrollViewer>
+</Page>

@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "AstraBrew Launcher (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "AstraBrew Launcher (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

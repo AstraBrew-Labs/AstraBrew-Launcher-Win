@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="AstraBrew_Launcher.Views.ConsolePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Margin="28,20,28,24" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Spacing="4">
+            <TextBlock Style="{StaticResource PageTitleTextStyle}" Text="控制台" />
+            <TextBlock Style="{StaticResource PageSubtitleTextStyle}" Text="实时查看酒馆服务日志，并直接下发运行时指令。" />
+        </StackPanel>
+
+        <!--  工具栏  -->
+        <Grid Grid.Row="1" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <ToggleSwitch
+                    MinWidth="0"
+                    IsOn="True"
+                    OffContent="暂停滚动"
+                    OnContent="自动滚动" />
+                <ComboBox
+                    MinWidth="120"
+                    VerticalAlignment="Center"
+                    SelectedIndex="0">
+                    <ComboBoxItem Content="全部级别" />
+                    <ComboBoxItem Content="仅警告以上" />
+                    <ComboBoxItem Content="仅错误" />
+                </ComboBox>
+            </StackPanel>
+
+            <StackPanel
+                Grid.Column="2"
+                Orientation="Horizontal"
+                Spacing="8">
+                <Button Content="复制全部" />
+                <Button Content="导出日志" />
+                <Button Content="清空" />
+            </StackPanel>
+        </Grid>
+
+        <!--  日志面板  -->
+        <Border
+            Grid.Row="2"
+            Padding="0"
+            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="8">
+            <ScrollViewer
+                Padding="16,12"
+                HorizontalScrollBarVisibility="Auto"
+                VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="2">
+                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
+                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:38 " />
+                        <Run Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="[BOOT]   " />
+                        <Run Text="正在启动 SiliconTavern v1.4.2 …" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
+                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:39 " />
+                        <Run Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="[BOOT]   " />
+                        <Run Text="工作目录：%AppData%\AstraBrew Launcher\lib\tavern" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
+                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:41 " />
+                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
+                        <Run Text="加载配置文件 config.yaml 成功" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
+                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:41 " />
+                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
+                        <Run Text="已加载 12 个扩展，其中 9 个启用" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
+                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:42 " />
+                        <Run Foreground="{ThemeResource SystemFillColorCautionBrush}" Text="[WARN]   " />
+                        <Run Text="扩展「变量脚本」未通过完整性校验，已跳过加载" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
+                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:42 " />
+                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
+                        <Run Text="角色卡索引完成：48 张 / 26.4 MB" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
+                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:43 " />
+                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
+                        <Run Text="HTTP 服务已监听 http://127.0.0.1:8000" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
+                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:43 " />
+                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
+                        <Run Text="启动完成，耗时 4.82s（PID 14208）" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
+                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:14:07 " />
+                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
+                        <Run Text="POST /api/chat 200 · 1.42s · 642 tokens" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
+                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:15:22 " />
+                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
+                        <Run Text="POST /api/chat 200 · 0.98s · 418 tokens" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
+                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:18:35 " />
+                        <Run Foreground="{ThemeResource SystemFillColorCriticalBrush}" Text="[ERROR]  " />
+                        <Run Text="上游模型接口超时（30000ms），已触发重试" />
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
+                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:18:41 " />
+                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
+                        <Run Text="重试成功，切换至备用节点" />
+                    </TextBlock>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <!--  命令输入  -->
+        <Grid Grid.Row="3" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox
+                FontFamily="Consolas"
+                PlaceholderText="输入指令，例如 /reload · /stop · /status" />
+            <Button
+                Grid.Column="1"
+                Content="发送"
+                Style="{StaticResource AccentButtonStyle}" />
+        </Grid>
+    </Grid>
+</Page>
