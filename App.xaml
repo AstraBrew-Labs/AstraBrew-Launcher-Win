@@ -10,7 +10,27 @@
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
                 <ResourceDictionary Source="ms-appx:///Styles/Controls.xaml" />
             </ResourceDictionary.MergedDictionaries>
-            <!-- Other app resources here -->
+
+            <!--
+                品牌资产按主题切换：浅色用深色描线版本，深色用白色版本。
+                图片本身就是单色透明底，换成对应色才不会在同一背景上看不见。
+            -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <BitmapImage x:Key="BrandIconSource" UriSource="ms-appx:///Assets/brand-icon-light.png" />
+                    <BitmapImage x:Key="BrandLockupSource" UriSource="ms-appx:///Assets/brand-lockup-light.png" />
+                </ResourceDictionary>
+
+                <ResourceDictionary x:Key="Dark">
+                    <BitmapImage x:Key="BrandIconSource" UriSource="ms-appx:///Assets/brand-icon-dark.png" />
+                    <BitmapImage x:Key="BrandLockupSource" UriSource="ms-appx:///Assets/brand-lockup-dark.png" />
+                </ResourceDictionary>
+
+                <ResourceDictionary x:Key="HighContrast">
+                    <BitmapImage x:Key="BrandIconSource" UriSource="ms-appx:///Assets/brand-icon-dark.png" />
+                    <BitmapImage x:Key="BrandLockupSource" UriSource="ms-appx:///Assets/brand-lockup-dark.png" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

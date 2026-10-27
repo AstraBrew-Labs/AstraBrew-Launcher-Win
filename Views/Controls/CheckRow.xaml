@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="AstraBrew_Launcher.Views.Controls.CheckRow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!--
+        单条环境检测项：图标 + 名称/版本 + 状态。
+        四种状态用「预先摆好、切 Visibility」的方式切换，避免在代码里取主题画刷。
+    -->
+    <Grid
+        Padding="6,9"
+        ColumnSpacing="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <Border
+            Width="28"
+            Height="28"
+            VerticalAlignment="Center"
+            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+            CornerRadius="6">
+            <FontIcon
+                x:Name="IconGlyph"
+                FontSize="13"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        </Border>
+
+        <StackPanel
+            Grid.Column="1"
+            VerticalAlignment="Center"
+            Spacing="1">
+            <TextBlock
+                x:Name="TitleText"
+                FontSize="13"
+                FontWeight="SemiBold"
+                Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                TextTrimming="CharacterEllipsis" />
+            <TextBlock
+                x:Name="DetailText"
+                FontFamily="Consolas"
+                FontSize="11.5"
+                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                TextTrimming="CharacterEllipsis" />
+        </StackPanel>
+
+        <Grid Grid.Column="2" VerticalAlignment="Center">
+            <!--  检测中  -->
+            <StackPanel
+                x:Name="PendingPanel"
+                Orientation="Horizontal"
+                Spacing="6"
+                Visibility="Collapsed">
+                <ProgressRing
+                    Width="14"
+                    Height="14"
+                    VerticalAlignment="Center"
+                    IsActive="True" />
+                <TextBlock
+                    x:Name="PendingText"
+                    VerticalAlignment="Center"
+                    FontSize="11"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                    Text="检测中" />
+            </StackPanel>
+
+            <!--  已就绪  -->
+            <Border
+                x:Name="ReadyPill"
+                Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                Style="{StaticResource StatusPillStyle}"
+                Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Ellipse
+                        Width="5"
+                        Height="5"
+                        VerticalAlignment="Center"
+                        Fill="{ThemeResource SystemFillColorSuccessBrush}" />
+                    <TextBlock
+                        x:Name="ReadyText"
+                        VerticalAlignment="Center"
+                        FontSize="11"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                        Text="已就绪" />
+                </StackPanel>
+            </Border>
+
+            <!--  可更新  -->
+            <Border
+                x:Name="UpdatePill"
+                Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                Style="{StaticResource StatusPillStyle}"
+                Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Ellipse
+                        Width="5"
+                        Height="5"
+                        VerticalAlignment="Center"
+                        Fill="{ThemeResource SystemFillColorCautionBrush}" />
+                    <TextBlock
+                        x:Name="UpdateText"
+                        VerticalAlignment="Center"
+                        FontSize="11"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                        Text="可更新" />
+                </StackPanel>
+            </Border>
+
+            <!--  未安装  -->
+            <Border
+                x:Name="MissingPill"
+                Background="{ThemeResource SystemFillColorCriticalBackgroundBrush}"
+                Style="{StaticResource StatusPillStyle}"
+                Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Ellipse
+                        Width="5"
+                        Height="5"
+                        VerticalAlignment="Center"
+                        Fill="{ThemeResource SystemFillColorCriticalBrush}" />
+                    <TextBlock
+                        x:Name="MissingText"
+                        VerticalAlignment="Center"
+                        FontSize="11"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                        Text="未安装" />
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

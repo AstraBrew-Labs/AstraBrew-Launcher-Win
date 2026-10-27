@@ -5,6 +5,7 @@
 
 ## AI
 .workbuddy/
+.aidocs/
 
 # User-specific files
 *.rsuser

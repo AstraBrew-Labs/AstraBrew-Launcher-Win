@@ -182,6 +182,42 @@
                 </StackPanel>
             </Border>
 
+            <!--  首次使用引导  -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="4">
+                    <TextBlock Style="{StaticResource CardTitleTextStyle}" Text="首次使用引导" />
+
+                    <Grid Style="{StaticResource SettingRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="2">
+                            <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="重新播放引导" />
+                            <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="清除「已完成引导」标记并立刻重新展示。仅在原型阶段用于反复演示。" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Button
+                            Grid.Column="1"
+                            HorizontalAlignment="Left"
+                            Click="ReplayOnboarding_Click"
+                            Content="重新演示" />
+                    </Grid>
+
+                    <Grid Style="{StaticResource SettingRowStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="标记文件" />
+                        <TextBlock
+                            x:Name="OnboardingStatePath"
+                            Grid.Column="1"
+                            Style="{StaticResource MonoTextStyle}"
+                            TextTrimming="CharacterEllipsis" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
             <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Content="保存设置" Style="{StaticResource AccentButtonStyle}" />
                 <Button Content="恢复默认设置" />

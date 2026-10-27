@@ -11,6 +11,8 @@
     <UseWinUI>true</UseWinUI>
     <EnableMsixTooling>true</EnableMsixTooling>
     <Nullable>enable</Nullable>
+    <!--  exe / 任务栏 / 窗口图标统一使用 Assets 里的彩色版本  -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,6 +23,11 @@
     <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
     <Content Include="Assets\StoreLogo.png" />
     <Content Include="Assets\Wide310x150Logo.scale-200.png" />
+    <Content Include="Assets\app.ico" />
+    <Content Include="Assets\brand-icon-light.png" />
+    <Content Include="Assets\brand-icon-dark.png" />
+    <Content Include="Assets\brand-lockup-light.png" />
+    <Content Include="Assets\brand-lockup-dark.png" />
   </ItemGroup>
 
   <ItemGroup>

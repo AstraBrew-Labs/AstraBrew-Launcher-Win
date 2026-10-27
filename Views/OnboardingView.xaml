@@ -1,0 +1,835 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="AstraBrew_Launcher.Views.OnboardingView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="OnboardingScrimBrush" Color="#66000000" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="OnboardingScrimBrush" Color="#B3000000" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Default">
+                    <SolidColorBrush x:Key="OnboardingScrimBrush" Color="#B3000000" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+
+            <!--  选项卡：RadioButton 自绘模板，选中态用强调色描边 + 角标  -->
+            <Style x:Key="OptionCardStyle" TargetType="RadioButton">
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Padding" Value="14,12" />
+                <Setter Property="HorizontalAlignment" Value="Stretch" />
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="UseSystemFocusVisuals" Value="True" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="RadioButton">
+                            <Grid>
+                                <Border
+                                    x:Name="RootBorder"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="{TemplateBinding CornerRadius}">
+                                    <ContentPresenter
+                                        Padding="{TemplateBinding Padding}"
+                                        HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                        VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                        Content="{TemplateBinding Content}"
+                                        ContentTemplate="{TemplateBinding ContentTemplate}" />
+                                </Border>
+
+                                <Border
+                                    x:Name="CheckBadge"
+                                    Width="20"
+                                    Height="20"
+                                    Margin="0,7,7,0"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Top"
+                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                    CornerRadius="10"
+                                    Visibility="Collapsed">
+                                    <FontIcon
+                                        FontSize="10"
+                                        Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                        Glyph="&#xE73E;" />
+                                </Border>
+
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="PointerOver">
+                                            <VisualState.Setters>
+                                                <Setter Target="RootBorder.Background" Value="{ThemeResource CardBackgroundFillColorSecondaryBrush}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <VisualState.Setters>
+                                                <Setter Target="RootBorder.Background" Value="{ThemeResource SubtleFillColorTertiaryBrush}" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Disabled">
+                                            <VisualState.Setters>
+                                                <Setter Target="RootBorder.Opacity" Value="0.4" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                    <VisualStateGroup x:Name="CheckStates">
+                                        <VisualState x:Name="Checked">
+                                            <VisualState.Setters>
+                                                <Setter Target="RootBorder.BorderBrush" Value="{ThemeResource AccentFillColorDefaultBrush}" />
+                                                <Setter Target="RootBorder.BorderThickness" Value="2" />
+                                                <Setter Target="CheckBadge.Visibility" Value="Visible" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Unchecked" />
+                                        <VisualState x:Name="Indeterminate" />
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!--  次要按钮：跳过 / 关闭  -->
+            <Style x:Key="GhostButtonStyle" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="10,5" />
+                <Setter Property="CornerRadius" Value="4" />
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Style>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <!--  遮罩：盖住内容区（含导航栏），标题栏保持可用  -->
+    <Grid x:Name="Root" Background="{ThemeResource OnboardingScrimBrush}">
+        <Border
+            Width="840"
+            Height="500"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="224" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!--  ==================== 左轨：步骤 ====================  -->
+                <Border
+                    Grid.Column="0"
+                    Background="{ThemeResource LayerFillColorDefaultBrush}"
+                    CornerRadius="8,0,0,8">
+                    <Grid Padding="20,22,20,18">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Image
+                                Height="26"
+                                VerticalAlignment="Center"
+                                AutomationProperties.Name="星酿启动器"
+                                Source="{ThemeResource BrandIconSource}"
+                                Stretch="Uniform" />
+                            <StackPanel VerticalAlignment="Center" Spacing="0">
+                                <TextBlock
+                                    FontSize="13"
+                                    FontWeight="SemiBold"
+                                    Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                    Text="AstraBrew" />
+                                <TextBlock
+                                    FontSize="11"
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                    Text="首次使用引导" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!--  步骤列表  -->
+                        <StackPanel
+                            Grid.Row="1"
+                            Margin="0,26,0,0"
+                            Spacing="18">
+
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid
+                                    Width="22"
+                                    Height="22"
+                                    VerticalAlignment="Top">
+                                    <Border
+                                        x:Name="Rail1Idle"
+                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                        CornerRadius="11">
+                                        <TextBlock
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            FontSize="11"
+                                            FontWeight="SemiBold"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Text="1" />
+                                    </Border>
+                                    <Border
+                                        x:Name="Rail1Active"
+                                        Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                        CornerRadius="11"
+                                        Visibility="Collapsed">
+                                        <TextBlock
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            FontSize="11"
+                                            FontWeight="SemiBold"
+                                            Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                            Text="1" />
+                                    </Border>
+                                    <Border
+                                        x:Name="Rail1Done"
+                                        Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                                        CornerRadius="11"
+                                        Visibility="Collapsed">
+                                        <FontIcon
+                                            FontSize="10"
+                                            Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                            Glyph="&#xE73E;" />
+                                    </Border>
+                                </Grid>
+                                <StackPanel Grid.Column="1" Spacing="1">
+                                    <TextBlock
+                                        x:Name="Rail1Title"
+                                        FontSize="13"
+                                        Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                        Text="使用经历" />
+                                    <TextBlock
+                                        FontSize="11"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Text="是否用过酒馆" />
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid
+                                    Width="22"
+                                    Height="22"
+                                    VerticalAlignment="Top">
+                                    <Border
+                                        x:Name="Rail2Idle"
+                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                        CornerRadius="11">
+                                        <TextBlock
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            FontSize="11"
+                                            FontWeight="SemiBold"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Text="2" />
+                                    </Border>
+                                    <Border
+                                        x:Name="Rail2Active"
+                                        Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                        CornerRadius="11"
+                                        Visibility="Collapsed">
+                                        <TextBlock
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            FontSize="11"
+                                            FontWeight="SemiBold"
+                                            Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                            Text="2" />
+                                    </Border>
+                                    <Border
+                                        x:Name="Rail2Done"
+                                        Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                                        CornerRadius="11"
+                                        Visibility="Collapsed">
+                                        <FontIcon
+                                            FontSize="10"
+                                            Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                            Glyph="&#xE73E;" />
+                                    </Border>
+                                </Grid>
+                                <StackPanel Grid.Column="1" Spacing="1">
+                                    <TextBlock
+                                        x:Name="Rail2Title"
+                                        FontSize="13"
+                                        Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                        Text="运行环境" />
+                                    <TextBlock
+                                        FontSize="11"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Text="NodeJS · Git · PM2" />
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid
+                                    Width="22"
+                                    Height="22"
+                                    VerticalAlignment="Top">
+                                    <Border
+                                        x:Name="Rail3Idle"
+                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                        CornerRadius="11">
+                                        <TextBlock
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            FontSize="11"
+                                            FontWeight="SemiBold"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Text="3" />
+                                    </Border>
+                                    <Border
+                                        x:Name="Rail3Active"
+                                        Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                        CornerRadius="11"
+                                        Visibility="Collapsed">
+                                        <TextBlock
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            FontSize="11"
+                                            FontWeight="SemiBold"
+                                            Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                            Text="3" />
+                                    </Border>
+                                    <Border
+                                        x:Name="Rail3Done"
+                                        Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                                        CornerRadius="11"
+                                        Visibility="Collapsed">
+                                        <FontIcon
+                                            FontSize="10"
+                                            Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                            Glyph="&#xE73E;" />
+                                    </Border>
+                                </Grid>
+                                <StackPanel Grid.Column="1" Spacing="1">
+                                    <TextBlock
+                                        x:Name="Rail3Title"
+                                        FontSize="13"
+                                        Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                        Text="使用环境" />
+                                    <TextBlock
+                                        FontSize="11"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Text="浏览器 · 内存" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+
+                        <TextBlock
+                            Grid.Row="2"
+                            FontSize="11"
+                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                            Text="原型演示 · 检测结果为模拟数据"
+                            TextWrapping="Wrap" />
+                    </Grid>
+                </Border>
+
+                <!--  ==================== 右侧内容 ====================  -->
+                <Grid
+                    Grid.Column="1"
+                    Padding="26,22,26,18"
+                    RowSpacing="14">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!--  标题  -->
+                    <StackPanel Spacing="3">
+                        <TextBlock
+                            x:Name="StepEyebrow"
+                            Style="{StaticResource MetricLabelTextStyle}"
+                            Text="第 1 步 · 共 3 步" />
+                        <TextBlock
+                            x:Name="StepTitle"
+                            FontSize="22"
+                            FontWeight="SemiBold"
+                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                            Text="你之前用过酒馆吗？" />
+                        <TextBlock
+                            x:Name="StepDescription"
+                            Style="{StaticResource CardBodyTextStyle}"
+                            Text="有经验的话可以直接进入主界面，我们不再占用你的时间。" />
+                    </StackPanel>
+
+                    <!--  步骤内容  -->
+                    <ScrollViewer
+                        Grid.Row="1"
+                        Margin="0,2,0,0"
+                        HorizontalScrollBarVisibility="Disabled"
+                        VerticalScrollBarVisibility="Auto">
+                        <Grid>
+                            <!--  ========== 第 1 步：使用经历 ==========  -->
+                            <StackPanel x:Name="StepPanel1" Spacing="10">
+                                <RadioButton
+                                    x:Name="OptionUsed"
+                                    AutomationProperties.Name="用过酒馆"
+                                    Checked="Experience_Checked"
+                                    GroupName="Experience"
+                                    Style="{StaticResource OptionCardStyle}">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border
+                                            Width="34"
+                                            Height="34"
+                                            VerticalAlignment="Center"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            CornerRadius="8">
+                                            <FontIcon
+                                                FontSize="15"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                Glyph="&#xE81C;" />
+                                        </Border>
+                                        <StackPanel
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            Spacing="1">
+                                            <TextBlock
+                                                FontSize="14"
+                                                FontWeight="SemiBold"
+                                                Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                                Text="用过" />
+                                            <TextBlock
+                                                Style="{StaticResource FootnoteTextStyle}"
+                                                Text="我知道怎么玩，直接进主界面"
+                                                TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Grid>
+                                </RadioButton>
+
+                                <RadioButton
+                                    x:Name="OptionNew"
+                                    AutomationProperties.Name="没用过酒馆"
+                                    Checked="Experience_Checked"
+                                    GroupName="Experience"
+                                    Style="{StaticResource OptionCardStyle}">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border
+                                            Width="34"
+                                            Height="34"
+                                            VerticalAlignment="Center"
+                                            Background="{ThemeResource SystemFillColorAttentionBackgroundBrush}"
+                                            CornerRadius="8">
+                                            <FontIcon
+                                                FontSize="15"
+                                                Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                                Glyph="&#xE710;" />
+                                        </Border>
+                                        <StackPanel
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            Spacing="1">
+                                            <TextBlock
+                                                FontSize="14"
+                                                FontWeight="SemiBold"
+                                                Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                                Text="没有用过" />
+                                            <TextBlock
+                                                Style="{StaticResource FootnoteTextStyle}"
+                                                Text="先帮我检查一下电脑环境"
+                                                TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Grid>
+                                </RadioButton>
+
+                                <TextBlock
+                                    Margin="2,2,0,0"
+                                    Style="{StaticResource FootnoteTextStyle}"
+                                    Text="选择「用过」后点「下一步」会直接结束引导，不再展示后续检测。"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <!--  ========== 第 2 步：运行环境 ==========  -->
+                            <StackPanel
+                                x:Name="StepPanel2"
+                                Spacing="10"
+                                Visibility="Collapsed">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel
+                                        Orientation="Horizontal"
+                                        Spacing="8"
+                                        VerticalAlignment="Center">
+                                        <ProgressRing
+                                            x:Name="CheckSpinner"
+                                            Width="14"
+                                            Height="14"
+                                            VerticalAlignment="Center"
+                                            IsActive="True" />
+                                        <TextBlock
+                                            x:Name="CheckSummary"
+                                            VerticalAlignment="Center"
+                                            Style="{StaticResource FootnoteTextStyle}"
+                                            Text="正在检测运行环境…" />
+                                    </StackPanel>
+                                    <Button
+                                        Grid.Column="1"
+                                        Click="Recheck_Click"
+                                        Content="重新检测" />
+                                </Grid>
+
+                                <Border
+                                    Padding="8,4"
+                                    Style="{StaticResource CardStyle}">
+                                    <StackPanel>
+                                        <controls:CheckRow
+                                            x:Name="RowNode"
+                                            Detail="运行时 · v24.14.0"
+                                            Glyph="&#xE756;"
+                                            Title="NodeJS" />
+                                        <Rectangle
+                                            Height="1"
+                                            Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                        <controls:CheckRow
+                                            x:Name="RowGit"
+                                            Detail="版本控制 · v2.55.0.windows.2"
+                                            Glyph="&#xE81C;"
+                                            Title="Git / MinGit" />
+                                        <Rectangle
+                                            Height="1"
+                                            Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                        <controls:CheckRow
+                                            x:Name="RowPm2"
+                                            Detail="进程守护 · v5.4.1"
+                                            Glyph="&#xE713;"
+                                            Title="PM2" />
+                                        <Rectangle
+                                            Height="1"
+                                            Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                        <controls:CheckRow
+                                            x:Name="RowTavern"
+                                            Detail="未检测到已安装的版本"
+                                            Glyph="&#xE80F;"
+                                            Title="酒馆本体" />
+                                    </StackPanel>
+                                </Border>
+
+                                <TextBlock
+                                    Style="{StaticResource FootnoteTextStyle}"
+                                    Text="缺失或可更新的组件，会在首次启动酒馆时自动下载安装，不影响引导流程。"
+                                    TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <!--  ========== 第 3 步：使用环境 ==========  -->
+                            <StackPanel
+                                x:Name="StepPanel3"
+                                Spacing="14"
+                                Visibility="Collapsed">
+                                <!--  浏览器  -->
+                                <StackPanel Spacing="7">
+                                    <TextBlock
+                                        Style="{StaticResource CardTitleTextStyle}"
+                                        Text="浏览器" />
+                                    <TextBlock
+                                        Style="{StaticResource FootnoteTextStyle}"
+                                        Text="酒馆的对话页在浏览器中打开，至少需要一个可用浏览器。"
+                                        TextWrapping="Wrap" />
+
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Border
+                                            Padding="9,6"
+                                            Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                                            CornerRadius="6">
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Ellipse
+                                                    Width="5"
+                                                    Height="5"
+                                                    VerticalAlignment="Center"
+                                                    Fill="{ThemeResource SystemFillColorSuccessBrush}" />
+                                                <TextBlock
+                                                    VerticalAlignment="Center"
+                                                    FontSize="12"
+                                                    Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                                    Text="Chrome 已安装" />
+                                            </StackPanel>
+                                        </Border>
+
+                                        <Border
+                                            Padding="9,6"
+                                            Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                                            CornerRadius="6">
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Ellipse
+                                                    Width="5"
+                                                    Height="5"
+                                                    VerticalAlignment="Center"
+                                                    Fill="{ThemeResource SystemFillColorSuccessBrush}" />
+                                                <TextBlock
+                                                    VerticalAlignment="Center"
+                                                    FontSize="12"
+                                                    Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                                    Text="Edge 已安装" />
+                                            </StackPanel>
+                                        </Border>
+
+                                        <Border
+                                            Padding="9,6"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            CornerRadius="6">
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Ellipse
+                                                    Width="5"
+                                                    Height="5"
+                                                    VerticalAlignment="Center"
+                                                    Fill="{ThemeResource TextFillColorTertiaryBrush}" />
+                                                <TextBlock
+                                                    VerticalAlignment="Center"
+                                                    FontSize="12"
+                                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                    Text="Firefox 未安装" />
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+
+                                    <Border
+                                        Padding="12,9"
+                                        Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                                        CornerRadius="6">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <FontIcon
+                                                VerticalAlignment="Center"
+                                                FontSize="14"
+                                                Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                                Glyph="&#xE73E;" />
+                                            <TextBlock
+                                                Grid.Column="1"
+                                                FontSize="12.5"
+                                                Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                                Text="已找到 2 个可用浏览器，默认使用 Edge 打开对话页。"
+                                                TextWrapping="Wrap" />
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+
+                                <Rectangle
+                                    Height="1"
+                                    Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                                <!--  内存  -->
+                                <StackPanel Spacing="7">
+                                    <Grid>
+                                        <TextBlock
+                                            VerticalAlignment="Center"
+                                            Style="{StaticResource CardTitleTextStyle}"
+                                            Text="内存" />
+                                        <StackPanel
+                                            HorizontalAlignment="Right"
+                                            Orientation="Horizontal"
+                                            Spacing="8">
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                Style="{StaticResource MetricLabelTextStyle}"
+                                                Text="演示" />
+                                            <ComboBox
+                                                x:Name="MemoryDemo"
+                                                Width="104"
+                                                SelectedIndex="2"
+                                                SelectionChanged="MemoryDemo_SelectionChanged">
+                                                <ComboBoxItem Content="2 GB" />
+                                                <ComboBoxItem Content="6 GB" />
+                                                <ComboBoxItem Content="16 GB" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <TextBlock
+                                            x:Name="MemoryValue"
+                                            FontSize="24"
+                                            FontWeight="SemiBold"
+                                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                            Text="16.0 GB" />
+                                        <TextBlock
+                                            VerticalAlignment="Bottom"
+                                            Margin="0,0,0,4"
+                                            Style="{StaticResource FootnoteTextStyle}"
+                                            Text="可用物理内存" />
+                                    </StackPanel>
+
+                                    <!--  < 4 GB  -->
+                                    <Border
+                                        x:Name="MemoryLowBanner"
+                                        Padding="12,9"
+                                        Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                                        CornerRadius="6"
+                                        Visibility="Collapsed">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <FontIcon
+                                                VerticalAlignment="Top"
+                                                FontSize="14"
+                                                Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                                Glyph="&#xE7BA;" />
+                                            <StackPanel Grid.Column="1" Spacing="1">
+                                                <TextBlock
+                                                    FontSize="12.5"
+                                                    FontWeight="SemiBold"
+                                                    Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                                    Text="内存过小，可能卡顿" />
+                                                <TextBlock
+                                                    FontSize="12"
+                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                    Text="低于 4 GB，长对话或加载本地扩展时容易卡死，建议先关掉其他程序。"
+                                                    TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+
+                                    <!--  4–8 GB  -->
+                                    <Border
+                                        x:Name="MemoryMidBanner"
+                                        Padding="12,9"
+                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                        CornerRadius="6"
+                                        Visibility="Collapsed">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <FontIcon
+                                                VerticalAlignment="Top"
+                                                FontSize="14"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                Glyph="&#xE946;" />
+                                            <StackPanel Grid.Column="1" Spacing="1">
+                                                <TextBlock
+                                                    FontSize="12.5"
+                                                    FontWeight="SemiBold"
+                                                    Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                                    Text="可以运行，注意后台占用" />
+                                                <TextBlock
+                                                    FontSize="12"
+                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                    Text="4–8 GB 属于基础可用区间，同时开太多程序或标签页时可能变慢。"
+                                                    TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+
+                                    <!--  > 8 GB  -->
+                                    <Border
+                                        x:Name="MemoryHighBanner"
+                                        Padding="12,9"
+                                        Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                                        CornerRadius="6">
+                                        <Grid ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <FontIcon
+                                                VerticalAlignment="Top"
+                                                FontSize="14"
+                                                Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                                Glyph="&#xE73E;" />
+                                            <StackPanel Grid.Column="1" Spacing="1">
+                                                <TextBlock
+                                                    FontSize="12.5"
+                                                    FontWeight="SemiBold"
+                                                    Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                                    Text="可以流畅使用" />
+                                                <TextBlock
+                                                    FontSize="12"
+                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                    Text="8 GB 以上，足够支撑长时间对话与多个扩展同时运行。"
+                                                    TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+                    </ScrollViewer>
+
+                    <!--  底部操作  -->
+                    <Grid Grid.Row="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Rectangle
+                            Height="1"
+                            Margin="0,0,0,12"
+                            Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                        <Grid Grid.Row="1">
+                            <Button
+                                x:Name="SkipButton"
+                                HorizontalAlignment="Left"
+                                Click="Skip_Click"
+                                Content="跳过引导"
+                                Style="{StaticResource GhostButtonStyle}" />
+
+                            <StackPanel
+                                HorizontalAlignment="Right"
+                                Orientation="Horizontal"
+                                Spacing="8">
+                                <Button
+                                    x:Name="BackButton"
+                                    Click="Back_Click"
+                                    Content="上一步"
+                                    Visibility="Collapsed" />
+                                <Button
+                                    x:Name="NextButton"
+                                    Click="Next_Click"
+                                    Content="下一步"
+                                    IsEnabled="False"
+                                    Style="{StaticResource AccentButtonStyle}" />
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

@@ -17,36 +17,39 @@
 
             <!--  应用信息  -->
             <Border Style="{StaticResource CardStyle}">
-                <StackPanel Spacing="14">
-                    <StackPanel Orientation="Horizontal" Spacing="16">
-                        <Border
-                            Width="56"
-                            Height="56"
-                            VerticalAlignment="Top"
-                            CornerRadius="14">
-                            <Border.Background>
-                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                    <GradientStop Color="#FFF0B23E" Offset="0" />
-                                    <GradientStop Color="#FFC2703A" Offset="1" />
-                                </LinearGradientBrush>
-                            </Border.Background>
-                            <TextBlock
-                                HorizontalAlignment="Center"
-                                VerticalAlignment="Center"
-                                FontSize="26"
-                                FontWeight="Bold"
-                                Foreground="#FF1A1208"
-                                Text="A" />
-                        </Border>
-                        <StackPanel VerticalAlignment="Center" Spacing="2">
-                            <TextBlock
-                                FontSize="18"
-                                FontWeight="SemiBold"
-                                Text="AstraBrew Launcher" />
-                            <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="版本 1.0.0 (build 20261021) · x64" />
+                <StackPanel Spacing="16">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel VerticalAlignment="Center" Spacing="10">
+                            <!--  横版标识：随主题切换深色/浅色两版  -->
+                            <Image
+                                Height="44"
+                                HorizontalAlignment="Left"
+                                AutomationProperties.Name="星酿启动器 AstraBrew Launcher"
+                                Source="{ThemeResource BrandLockupSource}"
+                                Stretch="Uniform" />
                             <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="星酿酒馆 SiliconTavern 桌面启动器" />
                         </StackPanel>
-                    </StackPanel>
+
+                        <Border
+                            Grid.Column="1"
+                            Padding="9,3,9,4"
+                            VerticalAlignment="Top"
+                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="4">
+                            <TextBlock
+                                FontSize="11"
+                                FontWeight="SemiBold"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="v1.0.0 · x64" />
+                        </Border>
+                    </Grid>
 
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Button Content="检查更新" Style="{StaticResource AccentButtonStyle}" />

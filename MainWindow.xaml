@@ -4,6 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:AstraBrew_Launcher"
+    xmlns:views="using:AstraBrew_Launcher.Views"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
@@ -19,41 +20,40 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!--  自定义标题栏  -->
+        <!--  自定义标题栏：品牌标识 + 哑文字层，右侧留给系统窗口按钮  -->
         <Grid
             x:Name="AppTitleBar"
             Grid.Row="0"
-            Padding="16,0,160,0"
-            Background="Transparent">
+            Padding="16,0,160,0">
             <StackPanel
                 Orientation="Horizontal"
                 Spacing="10"
                 VerticalAlignment="Center">
-                <Border
-                    Width="18"
-                    Height="18"
+                <!--  品牌标记：随主题在深色/浅色两版之间切换  -->
+                <Image
+                    x:Name="TitleBarBrand"
+                    Height="17"
+                    Margin="0,0,0,0"
                     VerticalAlignment="Center"
-                    CornerRadius="5">
-                    <Border.Background>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                            <GradientStop Color="#FFF0B23E" Offset="0" />
-                            <GradientStop Color="#FFC2703A" Offset="1" />
-                        </LinearGradientBrush>
-                    </Border.Background>
-                    <TextBlock
-                        HorizontalAlignment="Center"
-                        VerticalAlignment="Center"
-                        FontSize="11"
-                        FontWeight="Bold"
-                        Foreground="#FF1A1208"
-                        Text="A" />
-                </Border>
+                    AutomationProperties.Name="星酿启动器"
+                    Source="{ThemeResource BrandIconSource}"
+                    Stretch="Uniform" />
                 <TextBlock
                     VerticalAlignment="Center"
-                    FontSize="12"
+                    FontSize="12.5"
                     FontWeight="SemiBold"
                     Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                     Text="AstraBrew Launcher" />
+                <Rectangle
+                    Width="1"
+                    Height="12"
+                    VerticalAlignment="Center"
+                    Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                <TextBlock
+                    VerticalAlignment="Center"
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                    Text="酒馆启动器" />
             </StackPanel>
         </Grid>
 
@@ -61,12 +61,12 @@
         <NavigationView
             x:Name="NavView"
             Grid.Row="1"
-            CompactModeThresholdWidth="720"
+            CompactModeThresholdWidth="760"
             CompactPaneLength="48"
-            ExpandedModeThresholdWidth="1000"
+            ExpandedModeThresholdWidth="1020"
             IsBackButtonVisible="Collapsed"
             IsSettingsVisible="False"
-            OpenPaneLength="216"
+            OpenPaneLength="220"
             PaneDisplayMode="Left"
             SelectionChanged="NavView_SelectionChanged">
 
@@ -90,6 +90,9 @@
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE74C;" />
                     </NavigationViewItem.Icon>
+                    <NavigationViewItem.InfoBadge>
+                        <InfoBadge Value="3" />
+                    </NavigationViewItem.InfoBadge>
                 </NavigationViewItem>
                 <NavigationViewItem Content="资源管理" Tag="resources">
                     <NavigationViewItem.Icon>
@@ -118,5 +121,11 @@
 
             <Frame x:Name="ContentFrame" />
         </NavigationView>
+
+        <!--  首次启动引导：覆盖内容区（含导航栏），标题栏保持可用  -->
+        <views:OnboardingView
+            x:Name="Onboarding"
+            Grid.Row="1"
+            Visibility="Collapsed" />
     </Grid>
 </Window>
