@@ -1,4 +1,5 @@
 using System;
+using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Animation;
@@ -39,12 +40,16 @@ namespace AstraBrew_Launcher.Views
 
         private Storyboard? _pulseStoryboard;
 
+        /// <summary>程序回填共享状态时屏蔽回写，避免与配置页来回触发。</summary>
+        private bool _syncing;
+
         public DashboardPage()
         {
             InitializeComponent();
 
             // 初始化顺序：版本详情 → 模式面板 → 服务器地址，三者互相独立
             VersionCombo.SelectedIndex = 0;
+            SyncFromShared();
             ApplyModeVisibility();
             SyncServiceScope();
 
@@ -54,13 +59,51 @@ namespace AstraBrew_Launcher.Views
 
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
+            TavernSettings.Changed += Shared_Changed;
+            SyncFromShared();
             StartStatusPulse();
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
+            TavernSettings.Changed -= Shared_Changed;
             _pulseStoryboard?.Stop();
             _pulseStoryboard = null;
+        }
+
+        /// <summary>
+        /// 与酒馆配置页共用同一份设置：启动模式、默认浏览器、服务范围。
+        /// 任一页面改动都会回到这里刷新控件，因此两边永远一致。
+        /// </summary>
+        private void SyncFromShared()
+        {
+            if (NormalModeRadio is null || ChromeRadio is null || LanRadio is null)
+            {
+                return;
+            }
+
+            _syncing = true;
+
+            NormalModeRadio.IsChecked = TavernSettings.Mode == LaunchMode.Normal;
+            DesktopModeRadio.IsChecked = TavernSettings.Mode == LaunchMode.Desktop;
+            ServerModeRadio.IsChecked = TavernSettings.Mode == LaunchMode.Server;
+
+            ChromeRadio.IsChecked = TavernSettings.Browser == BrowserKind.Chrome;
+            EdgeRadio.IsChecked = TavernSettings.Browser == BrowserKind.Edge;
+            FirefoxRadio.IsChecked = TavernSettings.Browser == BrowserKind.Firefox;
+
+            LanRadio.IsChecked = TavernSettings.Scope == ServiceScope.Lan;
+            WanRadio.IsChecked = TavernSettings.Scope == ServiceScope.Wan;
+
+            _syncing = false;
+        }
+
+        private void Shared_Changed(object? sender, EventArgs e)
+        {
+            SyncFromShared();
+            ApplyModeVisibility();
+            SyncServiceScope();
+            SyncEndpoint();
         }
 
         /// <summary>运行状态呼吸光晕：进入 Decelerate、循环播放。</summary>
@@ -205,6 +248,15 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
+            if (!_syncing)
+            {
+                TavernSettings.Mode = ServerModeRadio.IsChecked == true
+                    ? LaunchMode.Server
+                    : DesktopModeRadio.IsChecked == true
+                        ? LaunchMode.Desktop
+                        : LaunchMode.Normal;
+            }
+
             ApplyModeVisibility();
             SyncEndpoint();
         }
@@ -243,6 +295,11 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
+            if (!_syncing)
+            {
+                TavernSettings.Scope = LanRadio.IsChecked == true ? ServiceScope.Lan : ServiceScope.Wan;
+            }
+
             SyncServiceScope();
             SyncEndpoint();
         }
@@ -268,6 +325,15 @@ namespace AstraBrew_Launcher.Views
             if (OpenTavernHint is null)
             {
                 return;
+            }
+
+            if (!_syncing)
+            {
+                TavernSettings.Browser = EdgeRadio.IsChecked == true
+                    ? BrowserKind.Edge
+                    : FirefoxRadio.IsChecked == true
+                        ? BrowserKind.Firefox
+                        : BrowserKind.Chrome;
             }
 
             OpenTavernHint.Text = $"用 {SelectedBrowserName} 打开";
