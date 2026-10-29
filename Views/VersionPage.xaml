@@ -565,11 +565,13 @@
                                         </Grid.ColumnDefinitions>
                                         <FontIcon
                                             FontSize="12"
+                                            VerticalAlignment="Center"
                                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                             Glyph="&#xE8B7;" />
                                         <TextBlock
                                             x:Name="BuiltinPathText"
                                             Grid.Column="1"
+                                            VerticalAlignment="Center"
                                             FontFamily="Consolas"
                                             FontSize="11"
                                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"

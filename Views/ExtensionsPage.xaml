@@ -3,205 +3,493 @@
     x:Class="AstraBrew_Launcher.Views.ExtensionsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:views="using:AstraBrew_Launcher.Views"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="LayoutStates">
+                <VisualState x:Name="WideLayout">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="1020" />
+                    </VisualState.StateTriggers>
+                </VisualState>
+                <VisualState x:Name="NarrowLayout">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="0" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <!--  页头：状态胶囊与主操作下移到标题下方  -->
+                        <Setter Target="HeaderActions.(Grid.Row)" Value="2" />
+                        <Setter Target="HeaderActions.(Grid.Column)" Value="0" />
+                        <Setter Target="HeaderActions.HorizontalAlignment" Value="Left" />
+                        <Setter Target="HeaderActions.Margin" Value="0,12,0,0" />
+
+                        <!--  目标实例条：按钮落到文字列下方，图标跨两行居中  -->
+                        <Setter Target="TargetActions.(Grid.Row)" Value="1" />
+                        <Setter Target="TargetActions.(Grid.Column)" Value="1" />
+                        <Setter Target="TargetActions.HorizontalAlignment" Value="Left" />
+                        <Setter Target="TargetActions.Margin" Value="0,10,0,0" />
+                        <Setter Target="TargetIcon.(Grid.RowSpan)" Value="2" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
+
         <StackPanel Style="{StaticResource PageRootStyle}">
 
-            <StackPanel Spacing="4">
-                <TextBlock Style="{StaticResource PageTitleTextStyle}" Text="扩展管理" />
-                <TextBlock Style="{StaticResource PageSubtitleTextStyle}" Text="管理已安装的酒馆扩展与正则、快捷回复等增强模块。" />
-            </StackPanel>
-
-            <!--  工具栏  -->
-            <Grid ColumnSpacing="8">
+            <!--  ==================== 页头 ====================  -->
+            <Grid RowSpacing="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <AutoSuggestBox
-                    MaxWidth="320"
-                    HorizontalAlignment="Left"
-                    PlaceholderText="搜索扩展…"
-                    QueryIcon="Find" />
+
+                <StackPanel Spacing="3">
+                    <TextBlock Style="{StaticResource PageTitleTextStyle}" Text="扩展管理" />
+                    <TextBlock Style="{StaticResource PageSubtitleTextStyle}" Text="扩展装在某个酒馆实例的 third-party 目录里；在这里启用、更新、删除，或从 Git 与离线包安装新的。" />
+                </StackPanel>
+
                 <StackPanel
+                    x:Name="HeaderActions"
                     Grid.Column="1"
                     Orientation="Horizontal"
-                    Spacing="8">
-                    <Button Content="安装扩展" Style="{StaticResource AccentButtonStyle}" />
-                    <Button Content="检查更新" />
-                    <Button Content="打开扩展目录" />
+                    Spacing="8"
+                    VerticalAlignment="Bottom">
+                    <Border Style="{StaticResource StatusPillStyle}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Ellipse
+                                Width="6"
+                                Height="6"
+                                VerticalAlignment="Center"
+                                Fill="{ThemeResource AccentFillColorDefaultBrush}" />
+                            <TextBlock
+                                x:Name="HeaderSummaryText"
+                                Style="{StaticResource StatusPillTextStyle}"
+                                Text="已启用 6 / 9" />
+                        </StackPanel>
+                    </Border>
+                    <Button Click="Install_Click" Style="{StaticResource AccentButtonStyle}">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <FontIcon FontSize="13" Glyph="&#xE710;" />
+                            <TextBlock Text="安装扩展" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
+
+                <!--  操作反馈：收起时行高归零，不占位  -->
+                <InfoBar
+                    x:Name="ActionInfoBar"
+                    Grid.Row="1"
+                    Grid.ColumnSpan="2"
+                    Margin="0,10,0,0"
+                    IsClosable="True"
+                    IsOpen="False"
+                    Severity="Informational" />
             </Grid>
 
-            <!--  扩展列表  -->
-            <Border Style="{StaticResource CardStyle}">
-                <StackPanel Spacing="0">
+            <!--  ==================== 目标实例 ====================  -->
+            <Border Padding="18,12" Style="{StaticResource CardStyle}">
+                <Grid ColumnSpacing="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
 
-                    <TextBlock
-                        Margin="0,0,0,10"
-                        Style="{StaticResource CardTitleTextStyle}"
-                        Text="已安装扩展 · 12 个" />
+                    <Border
+                        x:Name="TargetIcon"
+                        Width="38"
+                        Height="38"
+                        VerticalAlignment="Center"
+                        Background="#1F2B88D8"
+                        CornerRadius="8">
+                        <FontIcon
+                            FontSize="17"
+                            Foreground="#FF2B88D8"
+                            Glyph="&#xE8B7;" />
+                    </Border>
 
-                    <Grid Margin="0,0,0,8" ColumnSpacing="12">
+                    <StackPanel
+                        Grid.Column="1"
+                        VerticalAlignment="Center"
+                        Spacing="3">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="目标实例" />
+                            <Border Style="{StaticResource MetaChipStyle}">
+                                <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="内置 · v1.19.2" />
+                            </Border>
+                        </StackPanel>
+                        <TextBlock
+                            x:Name="TargetPathText"
+                            VerticalAlignment="Center"
+                            FontFamily="Consolas"
+                            FontSize="11"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Text="C:\Users\al01\AppData\Roaming\AstraBrew Launcher\sillytavern\public\scripts\extensions\third-party"
+                            TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+
+                    <StackPanel
+                        x:Name="TargetActions"
+                        Grid.Column="2"
+                        Orientation="Horizontal"
+                        Spacing="8"
+                        VerticalAlignment="Center">
+                        <Button Click="CopyTargetPath_Click" ToolTipService.ToolTip="复制完整路径">
+                            <StackPanel Orientation="Horizontal" Spacing="7">
+                                <FontIcon FontSize="12" Glyph="&#xE8C8;" />
+                                <TextBlock Text="复制路径" />
+                            </StackPanel>
+                        </Button>
+                        <Button Click="OpenRoot_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="7">
+                                <FontIcon FontSize="12" Glyph="&#xE8B7;" />
+                                <TextBlock Text="打开目录" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!--  ==================== 已安装扩展 ====================  -->
+            <Border Style="{StaticResource CardStyle}" Padding="0">
+                <StackPanel>
+
+                    <!--  卡头  -->
+                    <Grid Padding="18,14,18,14" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border
+                            Width="38"
+                            Height="38"
+                            VerticalAlignment="Center"
+                            Background="#1F8E44DC"
+                            CornerRadius="8">
+                            <FontIcon
+                                FontSize="17"
+                                Foreground="#FF8E44DC"
+                                Glyph="&#xE8F1;" />
+                        </Border>
+
+                        <StackPanel
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            Spacing="2">
+                            <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="已安装扩展" />
+                            <TextBlock
+                                x:Name="ListSummaryText"
+                                Style="{StaticResource FieldHintTextStyle}"
+                                Text="共 9 个 · 6 个已启用 · 1 个待更新" />
+                        </StackPanel>
+
+                        <StackPanel
+                            Grid.Column="2"
+                            Orientation="Horizontal"
+                            Spacing="10"
+                            VerticalAlignment="Center">
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                FontSize="13"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="显示系统扩展" />
+                            <ToggleSwitch
+                                x:Name="SystemToggle"
+                                MinWidth="0"
+                                VerticalAlignment="Center"
+                                IsOn="False"
+                                OffContent=""
+                                OnContent=""
+                                Toggled="SystemToggle_Toggled" />
+                            <Button
+                                AutomationProperties.Name="重新扫描扩展"
+                                Click="Refresh_Click"
+                                Style="{StaticResource SubtleIconButtonStyle}"
+                                ToolTipService.ToolTip="重新扫描扩展目录">
+                                <FontIcon FontSize="14" Glyph="&#xE72C;" />
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <!--  搜索：与列表同一侧 18 内容线  -->
+                    <Grid Padding="18,0,18,12" ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="90" />
-                            <ColumnDefinition Width="90" />
-                            <ColumnDefinition Width="64" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Style="{StaticResource ColumnHeaderTextStyle}" Text="扩展名称" />
+                        <AutoSuggestBox
+                            x:Name="SearchBox"
+                            MaxWidth="360"
+                            HorizontalAlignment="Left"
+                            PlaceholderText="搜索扩展名称、作者或目录…"
+                            QueryIcon="Find"
+                            TextChanged="SearchBox_TextChanged" />
                         <TextBlock
+                            x:Name="FilterHintText"
                             Grid.Column="1"
-                            Style="{StaticResource ColumnHeaderTextStyle}"
-                            Text="版本" />
-                        <TextBlock
-                            Grid.Column="2"
-                            Style="{StaticResource ColumnHeaderTextStyle}"
-                            Text="状态" />
-                        <TextBlock
-                            Grid.Column="3"
-                            Style="{StaticResource ColumnHeaderTextStyle}"
-                            Text="启用" />
+                            VerticalAlignment="Center"
+                            Style="{StaticResource MetaChipTextStyle}"
+                            Text="3 个已停用" />
                     </Grid>
 
                     <Rectangle
                         Height="1"
                         Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
-                    <Grid Padding="0,10" ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="90" />
-                            <ColumnDefinition Width="90" />
-                            <ColumnDefinition Width="64" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="2">
-                            <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="长期记忆" />
-                            <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="向量检索式长期记忆，支持自动摘要" />
-                        </StackPanel>
-                        <TextBlock
-                            Grid.Column="1"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource MonoTextStyle}"
-                            Text="2.1.0" />
-                        <TextBlock
-                            Grid.Column="2"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource CardBodyTextStyle}"
-                            Text="已启用" />
-                        <ToggleSwitch
-                            Grid.Column="3"
-                            MinWidth="0"
-                            HorizontalAlignment="Left"
-                            IsOn="True"
-                            OffContent=""
-                            OnContent="" />
-                    </Grid>
+                    <!--  列表：8 的卡片内缩 + 10 的行内边距 = 与卡头、卡底同为 18 的内容线  -->
+                    <ItemsControl
+                        x:Name="ExtensionList"
+                        Margin="8,10,8,10"
+                        ItemsSource="{x:Bind Rows}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Spacing="6" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="views:ExtensionRow">
+                                <Border Padding="10,10" Style="{StaticResource SubPanelStyle}">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
 
-                    <Rectangle
-                        Height="1"
-                        Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                        <!--  与卡头图标座同宽，标题列才能与「已安装扩展」落在同一条竖线上  -->
+                                        <Border
+                                            Width="38"
+                                            Height="38"
+                                            VerticalAlignment="Center"
+                                            Background="{x:Bind TileBackground}"
+                                            CornerRadius="8"
+                                            ToolTipService.ToolTip="{x:Bind FolderTip}">
+                                            <FontIcon
+                                                FontSize="16"
+                                                Foreground="{x:Bind TileForeground}"
+                                                Glyph="{x:Bind Glyph}" />
+                                        </Border>
 
-                    <Grid Padding="0,10" ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="90" />
-                            <ColumnDefinition Width="90" />
-                            <ColumnDefinition Width="64" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="2">
-                            <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="语音合成" />
-                            <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="接入本地 TTS 引擎，输出语音回复" />
-                        </StackPanel>
-                        <TextBlock
-                            Grid.Column="1"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource MonoTextStyle}"
-                            Text="1.0.4" />
-                        <TextBlock
-                            Grid.Column="2"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource CardBodyTextStyle}"
-                            Text="可更新" />
-                        <ToggleSwitch
-                            Grid.Column="3"
-                            MinWidth="0"
-                            HorizontalAlignment="Left"
-                            IsOn="True"
-                            OffContent=""
-                            OnContent="" />
-                    </Grid>
+                                        <StackPanel
+                                            Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            Spacing="3">
 
-                    <Rectangle
-                        Height="1"
-                        Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                            <!--  标题行：名称 + 版本 + 兼容性 + 状态胶囊  -->
+                                            <StackPanel Orientation="Horizontal" Spacing="7">
+                                                <Grid VerticalAlignment="Center">
+                                                    <TextBlock
+                                                        Style="{StaticResource CellTitleTextStyle}"
+                                                        Text="{x:Bind Name}"
+                                                        Visibility="{x:Bind TitleOnVisibility, Mode=OneWay}" />
+                                                    <TextBlock
+                                                        Style="{StaticResource CellTitleTextStyle}"
+                                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                        Text="{x:Bind Name}"
+                                                        Visibility="{x:Bind TitleOffVisibility, Mode=OneWay}" />
+                                                </Grid>
 
-                    <Grid Padding="0,10" ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="90" />
-                            <ColumnDefinition Width="90" />
-                            <ColumnDefinition Width="64" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="2">
-                            <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="变量脚本" />
-                            <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="在提示词中注入运行时变量" />
-                        </StackPanel>
-                        <TextBlock
-                            Grid.Column="1"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource MonoTextStyle}"
-                            Text="0.9.2" />
-                        <TextBlock
-                            Grid.Column="2"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource CardBodyTextStyle}"
-                            Text="已停止" />
-                        <ToggleSwitch
-                            Grid.Column="3"
-                            MinWidth="0"
-                            HorizontalAlignment="Left"
-                            IsOn="False"
-                            OffContent=""
-                            OnContent="" />
-                    </Grid>
+                                                <Border Style="{StaticResource MetaChipStyle}">
+                                                    <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="{x:Bind VersionLabel}" />
+                                                </Border>
 
-                    <Rectangle
-                        Height="1"
-                        Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                                <Border Style="{StaticResource MetaChipStyle}" Visibility="{x:Bind MinClientVisibility}">
+                                                    <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="{x:Bind MinClientLabel}" />
+                                                </Border>
 
-                    <Grid Padding="0,10" ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="90" />
-                            <ColumnDefinition Width="90" />
-                            <ColumnDefinition Width="64" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="2">
-                            <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="界面主题包" />
-                            <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="为酒馆前端替换配色与字体" />
-                        </StackPanel>
+                                                <Border
+                                                    Style="{StaticResource StatePillStyle}"
+                                                    Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                                                    Visibility="{x:Bind SystemVisibility}">
+                                                    <TextBlock
+                                                        Style="{StaticResource StatePillTextStyle}"
+                                                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                                        Text="系统" />
+                                                </Border>
+
+                                                <Border
+                                                    Style="{StaticResource StatePillStyle}"
+                                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                                    Visibility="{x:Bind UpdateVisibility}">
+                                                    <TextBlock
+                                                        Style="{StaticResource StatePillTextStyle}"
+                                                        Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                                        Text="有新版本" />
+                                                </Border>
+
+                                                <Border
+                                                    Style="{StaticResource StatePillStyle}"
+                                                    Background="{ThemeResource SystemFillColorCriticalBackgroundBrush}"
+                                                    Visibility="{x:Bind BrokenVisibility}">
+                                                    <TextBlock
+                                                        Style="{StaticResource StatePillTextStyle}"
+                                                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                                        Text="清单损坏" />
+                                                </Border>
+                                            </StackPanel>
+
+                                            <!--  元信息行：作者 / 目录 / 行内小动作全部左起，右侧只留给开关，避免两簇操作贴在一起  -->
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+
+                                                <TextBlock
+                                                    VerticalAlignment="Center"
+                                                    Style="{StaticResource MetaChipTextStyle}"
+                                                    Text="{x:Bind AuthorLabel}" />
+
+                                                <StackPanel Orientation="Horizontal" Spacing="0">
+                                                    <HyperlinkButton
+                                                        Padding="6,2"
+                                                        Click="RowHomepage_Click"
+                                                        Visibility="{x:Bind HomepageVisibility}">
+                                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                                            <FontIcon FontSize="11" Glyph="&#xE774;" />
+                                                            <TextBlock FontSize="11" Text="主页" />
+                                                        </StackPanel>
+                                                    </HyperlinkButton>
+                                                    <HyperlinkButton Padding="6,2" Click="RowOpenDir_Click">
+                                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                                            <FontIcon FontSize="11" Glyph="&#xE8B7;" />
+                                                            <TextBlock FontSize="11" Text="打开目录" />
+                                                        </StackPanel>
+                                                    </HyperlinkButton>
+                                                    <HyperlinkButton
+                                                        Padding="6,2"
+                                                        Click="RowRepairGit_Click"
+                                                        Visibility="{x:Bind RepairVisibility}">
+                                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                                            <FontIcon FontSize="11" Glyph="&#xE72C;" />
+                                                            <TextBlock FontSize="11" Text="修复 Git" />
+                                                        </StackPanel>
+                                                    </HyperlinkButton>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </StackPanel>
+
+                                        <!--  右侧：状态文字 + 开关 + 删除，三者共用一条右线  -->
+                                        <StackPanel
+                                            Grid.Column="2"
+                                            Orientation="Horizontal"
+                                            Spacing="8"
+                                            VerticalAlignment="Center">
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                Style="{StaticResource MetaChipTextStyle}"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                Text="已启用"
+                                                Visibility="{x:Bind EnabledLabelVisibility, Mode=OneWay}" />
+                                            <TextBlock
+                                                VerticalAlignment="Center"
+                                                Style="{StaticResource MetaChipTextStyle}"
+                                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                Text="已停用"
+                                                Visibility="{x:Bind DisabledLabelVisibility, Mode=OneWay}" />
+
+                                            <ToggleSwitch
+                                                MinWidth="0"
+                                                VerticalAlignment="Center"
+                                                IsOn="{x:Bind Enabled, Mode=OneWay}"
+                                                OffContent=""
+                                                OnContent=""
+                                                Toggled="RowToggle_Toggled"
+                                                Visibility="{x:Bind SwitchVisibility}" />
+
+                                            <Border
+                                                Style="{StaticResource StatePillStyle}"
+                                                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                                Visibility="{x:Bind SystemNoteVisibility}">
+                                                <TextBlock
+                                                    Style="{StaticResource StatePillTextStyle}"
+                                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                    Text="随酒馆启用" />
+                                            </Border>
+
+                                            <Button
+                                                AutomationProperties.Name="删除扩展"
+                                                Click="RowDelete_Click"
+                                                Style="{StaticResource DangerIconButtonStyle}"
+                                                ToolTipService.ToolTip="删除扩展"
+                                                Visibility="{x:Bind DeleteVisibility}">
+                                                <FontIcon FontSize="13" Glyph="&#xE74D;" />
+                                            </Button>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!--  空态：搜索无结果或目录为空时替换列表  -->
+                    <StackPanel
+                        x:Name="EmptyPanel"
+                        Margin="0,28,0,34"
+                        HorizontalAlignment="Center"
+                        Spacing="8"
+                        Visibility="Collapsed">
+                        <Border
+                            Width="44"
+                            Height="44"
+                            HorizontalAlignment="Center"
+                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                            CornerRadius="10">
+                            <FontIcon
+                                FontSize="18"
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                Glyph="&#xE8F1;" />
+                        </Border>
                         <TextBlock
-                            Grid.Column="1"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource MonoTextStyle}"
-                            Text="3.2.0" />
+                            x:Name="EmptyTitleText"
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource CardTitleTextStyle}"
+                            Text="没有匹配的扩展" />
                         <TextBlock
-                            Grid.Column="2"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource CardBodyTextStyle}"
-                            Text="已启用" />
-                        <ToggleSwitch
-                            Grid.Column="3"
-                            MinWidth="0"
-                            HorizontalAlignment="Left"
-                            IsOn="True"
-                            OffContent=""
-                            OnContent="" />
-                    </Grid>
+                            x:Name="EmptyHintText"
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource FieldHintTextStyle}"
+                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                            Text="换个关键词，或清空搜索框后重试。" />
+                    </StackPanel>
+
+                    <!--  卡底：说明常驻，动作靠右  -->
+                    <Border
+                        Padding="18,8,18,8"
+                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                        BorderThickness="0,1,0,0">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                Style="{StaticResource FieldHintTextStyle}"
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                Text="停用扩展只改配置、不删文件；删除会移除整个扩展目录，无法撤销。" />
+                            <Button
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                Click="CheckUpdate_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="7">
+                                    <FontIcon FontSize="12" Glyph="&#xE895;" />
+                                    <TextBlock Text="检查更新" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                    </Border>
                 </StackPanel>
             </Border>
 

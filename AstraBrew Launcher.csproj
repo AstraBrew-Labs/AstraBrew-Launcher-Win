@@ -30,6 +30,14 @@
     <Content Include="Assets\brand-lockup-dark.png" />
   </ItemGroup>
 
+  <!--
+    非打包构建时 Content 不会自动落到输出目录，ms-appx:///Assets/... 会解析失败
+    （表现是 Image 渲染成一片空白）。这里统一补上复制到输出目录。
+  -->
+  <ItemGroup>
+    <Content Update="Assets\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <Manifest Include="$(ApplicationManifest)" />
   </ItemGroup>
@@ -62,5 +70,16 @@
     <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
     <PublishTrimmed Condition="'$(Configuration)' == 'Debug'">False</PublishTrimmed>
     <PublishTrimmed Condition="'$(Configuration)' != 'Debug'">True</PublishTrimmed>
+  </PropertyGroup>
+
+  <!--
+    调试构建一律把 Windows App SDK 运行库复制到输出目录（自包含）。
+    本机只装了 framework-only 的 WindowsAppRuntime.2（缺 Deployment/CBS 组件），
+    走框架依赖模式时 WindowsAppSDK 的启动自举会抛 REGDB_E_CLASSNOTREG 直接崩，
+    exe 表现为「进程在、无窗口」或双击无反应。自包含后不再依赖系统运行时，
+    且 VS 里的 (Unpackaged) 调试与直接双击 exe 都能跑。
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
   </PropertyGroup>
 </Project>

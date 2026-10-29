@@ -159,6 +159,27 @@
         <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
 
+    <!--  危险图标按钮：删除这类不可逆操作，静默态也用危险色，不靠悬停才暴露  -->
+    <Style
+        x:Key="DangerIconButtonStyle"
+        TargetType="Button"
+        BasedOn="{StaticResource SubtleIconButtonStyle}">
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCriticalBrush}" />
+    </Style>
+
+    <!--
+        确认弹窗里的破坏性按钮：刻意不用强调色——强调色留给「取消」这类安全出口，
+        危险动作靠危险色文字提示，避免手指自动点向最亮的按钮。
+    -->
+    <Style x:Key="DangerDialogButtonStyle" TargetType="Button">
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCriticalBrush}" />
+        <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="MinWidth" Value="110" />
+    </Style>
+
     <!--
         卡片式操作按钮：保持 Fluent 的悬停/按下反馈，但外观是卡片而不是按钮条。
         VisualState 直接改写根 Border 的填充，避免默认 Button 模板回退成灰色。
@@ -708,6 +729,154 @@
         <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
         <Setter Property="CornerRadius" Value="4" />
         <Setter Property="Padding" Value="10,7" />
+    </Style>
+
+    <!--
+        主从列表的行：整行可点，自身不画底色——选中态由行内容再叠一层强调色淡填充 + 描边，
+        这样悬停反馈（模板里的 HoverSurface）与选中态不会互相覆盖。
+    -->
+    <Style x:Key="ListRowButtonStyle" TargetType="Button">
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="UseSystemFocusVisuals" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Grid>
+                        <Border
+                            x:Name="HoverSurface"
+                            Background="Transparent"
+                            CornerRadius="{TemplateBinding CornerRadius}" />
+                        <ContentPresenter
+                            Padding="{TemplateBinding Padding}"
+                            HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                            Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}" />
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <VisualState.Setters>
+                                        <Setter Target="HoverSurface.Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <VisualState.Setters>
+                                        <Setter Target="HoverSurface.Background" Value="{ThemeResource SubtleFillColorTertiaryBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <VisualState.Setters>
+                                        <Setter Target="HoverSurface.Opacity" Value="0.4" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!--  键值信息格：2 列网格里成对排布，比 SubPanel 更轻  -->
+    <Style x:Key="MetaCellStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="12,8,12,9" />
+        <Setter Property="VerticalAlignment" Value="Stretch" />
+    </Style>
+
+    <Style x:Key="MetaCellLabelStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorTertiaryBrush}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <Style x:Key="MetaCellValueStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <!--  指标小卡：详情页顶部一排 3～4 个，数量 / 体积这类只读指标  -->
+    <Style x:Key="MetricTileStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="12,9,12,10" />
+    </Style>
+
+    <Style x:Key="MetricTileLabelStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorTertiaryBrush}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style x:Key="MetricTileValueStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="16" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <!--  详情页里的小节标题：比 CardTitle 轻一档，不抢上方资源名  -->
+    <Style x:Key="SubSectionTitleTextStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+    </Style>
+
+    <!--  ==================== 编辑态 ====================  -->
+
+    <!--
+        可编辑标签胶囊：强调色淡底 + 强调色文字，右侧带一个小叉。
+        与只读的 MetaChipStyle 刻意区分——有叉的才是能改的。
+    -->
+    <Style x:Key="EditTagChipStyle" TargetType="Border">
+        <Setter Property="Background" Value="#1A2B88D8" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="Padding" Value="7,2,2,2" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!--  标签上的小叉：14×14，只留图标，不占横向空间  -->
+    <Style x:Key="ChipCloseButtonStyle" TargetType="Button">
+        <Setter Property="Width" Value="14" />
+        <Setter Property="Height" Value="14" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="7" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorTertiaryBrush}" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <!--
+        编辑器里的输入框：外框交给所在的 SubPanel，输入框本身只留文字与光标。
+        这样一组字段看起来是一块面板，而不是一堆独立的方框。
+    -->
+    <Style x:Key="FlatTextBoxStyle" TargetType="TextBox">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="10,6,10,7" />
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="CornerRadius" Value="4" />
+    </Style>
+
+    <!--  长文本编辑器：左上角对齐，多行，竖向滚动条按需出现  -->
+    <Style x:Key="BodyTextBoxStyle" TargetType="TextBox" BasedOn="{StaticResource FlatTextBoxStyle}">
+        <Setter Property="AcceptsReturn" Value="True" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="VerticalContentAlignment" Value="Top" />
+        <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
     </Style>
 
     <!--  ==================== 页面布局 ====================  -->

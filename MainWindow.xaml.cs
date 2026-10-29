@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -31,12 +31,16 @@ namespace AstraBrew_Launcher
             ["versions"] = typeof(VersionPage),
             ["extensions"] = typeof(ExtensionsPage),
             ["resources"] = typeof(ResourcesPage),
+            ["workbench"] = typeof(WorkbenchPage),
             ["console"] = typeof(ConsolePage),
             ["settings"] = typeof(SettingsPage),
             ["about"] = typeof(AboutPage),
         };
 
         private string _currentTag = string.Empty;
+
+        /// <summary>程序化同步导航选中项时，屏蔽 SelectionChanged 里的一次跳转。</summary>
+        private bool _syncingSelection;
 
         public MainWindow()
         {
@@ -95,7 +99,9 @@ namespace AstraBrew_Launcher
 
             _currentTag = tag;
             ContentFrame.Navigate(pageType, null, new EntranceNavigationTransitionInfo());
-            SyncSelection(tag);
+
+            // 工作台是资源管理的子页面，导航高亮留在入口那一项
+            SyncSelection(tag == "workbench" ? "resources" : tag);
         }
 
         /// <summary>让左侧导航的选中项与当前路由保持一致。</summary>
@@ -124,7 +130,15 @@ namespace AstraBrew_Launcher
             {
                 if (!ReferenceEquals(NavView.SelectedItem, item))
                 {
-                    NavView.SelectedItem = item;
+                    _syncingSelection = true;
+                    try
+                    {
+                        NavView.SelectedItem = item;
+                    }
+                    finally
+                    {
+                        _syncingSelection = false;
+                    }
                 }
 
                 return true;
@@ -203,6 +217,11 @@ namespace AstraBrew_Launcher
 
         private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
         {
+            if (_syncingSelection)
+            {
+                return;
+            }
+
             if (args.IsSettingsSelected)
             {
                 NavigateTo("settings");

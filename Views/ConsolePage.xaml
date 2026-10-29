@@ -7,143 +7,353 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid Margin="32,24,32,28" RowSpacing="12">
+    <Page.Resources>
+        <ResourceDictionary>
+
+            <!--  安静描边按钮：运行条里的一排指令，靠语义色区分而不是实心填充  -->
+            <Style x:Key="ConsoleActionButtonStyle" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="Padding" Value="10,5,11,6" />
+                <Setter Property="FontSize" Value="11.5" />
+                <Setter Property="MinHeight" Value="30" />
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+
+            <!--  日志正文：等宽让「时间 · 级别」列天然对齐，无需再套三层 Grid  -->
+            <Style x:Key="LogLineTextStyle" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="Consolas" />
+                <Setter Property="FontSize" Value="12.5" />
+                <Setter Property="LineHeight" Value="19" />
+                <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+                <Setter Property="IsTextSelectionEnabled" Value="True" />
+            </Style>
+
+            <!--  日志区里的小计数胶囊  -->
+            <Style x:Key="LogCountPillStyle" TargetType="Border">
+                <Setter Property="CornerRadius" Value="9" />
+                <Setter Property="Padding" Value="7,1,7,2" />
+                <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+
+        </ResourceDictionary>
+    </Page.Resources>
+
+    <Grid Padding="24,20,24,20" RowSpacing="12">
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="LayoutStates">
+                <VisualState x:Name="WideLayout">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="1120" />
+                    </VisualState.StateTriggers>
+                </VisualState>
+                <VisualState x:Name="NarrowLayout">
+                    <VisualState.StateTriggers>
+                        <AdaptiveTrigger MinWindowWidth="0" />
+                    </VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <!--  指令改成第二行左侧排布，避免和标题挤成一团  -->
+                        <Setter Target="Actions.(Grid.Row)" Value="1" />
+                        <Setter Target="Actions.(Grid.Column)" Value="0" />
+                        <Setter Target="Actions.(Grid.ColumnSpan)" Value="3" />
+                        <Setter Target="Actions.HorizontalAlignment" Value="Left" />
+                        <Setter Target="Actions.Margin" Value="0,8,0,0" />
+                        <Setter Target="RunBar.Padding" Value="14,10,14,12" />
+
+                        <!--  窄窗收起 PID / 运行模式，只保留状态  -->
+                        <Setter Target="PidGroup.Visibility" Value="Collapsed" />
+                        <Setter Target="ModeGroup.Visibility" Value="Collapsed" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
+
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <StackPanel Spacing="4">
-            <TextBlock Style="{StaticResource PageTitleTextStyle}" Text="控制台" />
-            <TextBlock Style="{StaticResource PageSubtitleTextStyle}" Text="实时查看酒馆服务日志，并直接下发运行时指令。" />
-        </StackPanel>
-
-        <!--  工具栏  -->
-        <Grid Grid.Row="1" ColumnSpacing="8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-
-            <StackPanel Orientation="Horizontal" Spacing="12">
-                <ToggleSwitch
-                    MinWidth="0"
-                    IsOn="True"
-                    OffContent="暂停滚动"
-                    OnContent="自动滚动" />
-                <ComboBox
-                    MinWidth="120"
-                    VerticalAlignment="Center"
-                    SelectedIndex="0">
-                    <ComboBoxItem Content="全部级别" />
-                    <ComboBoxItem Content="仅警告以上" />
-                    <ComboBoxItem Content="仅错误" />
-                </ComboBox>
-            </StackPanel>
-
-            <StackPanel
-                Grid.Column="2"
-                Orientation="Horizontal"
-                Spacing="8">
-                <Button Content="复制全部" />
-                <Button Content="导出日志" />
-                <Button Content="清空" />
-            </StackPanel>
-        </Grid>
-
-        <!--  日志面板  -->
+        <!--  ==================== 运行条 ====================  -->
         <Border
-            Grid.Row="2"
-            Padding="0"
-            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-            BorderThickness="1"
-            CornerRadius="8">
-            <ScrollViewer
-                Padding="16,12"
-                HorizontalScrollBarVisibility="Auto"
-                VerticalScrollBarVisibility="Auto">
-                <StackPanel Spacing="2">
-                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
-                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:38 " />
-                        <Run Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="[BOOT]   " />
-                        <Run Text="正在启动 SiliconTavern v1.4.2 …" />
-                    </TextBlock>
-                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
-                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:39 " />
-                        <Run Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="[BOOT]   " />
-                        <Run Text="工作目录：%AppData%\AstraBrew Launcher\lib\tavern" />
-                    </TextBlock>
-                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
-                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:41 " />
-                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
-                        <Run Text="加载配置文件 config.yaml 成功" />
-                    </TextBlock>
-                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
-                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:41 " />
-                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
-                        <Run Text="已加载 12 个扩展，其中 9 个启用" />
-                    </TextBlock>
-                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
-                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:42 " />
-                        <Run Foreground="{ThemeResource SystemFillColorCautionBrush}" Text="[WARN]   " />
-                        <Run Text="扩展「变量脚本」未通过完整性校验，已跳过加载" />
-                    </TextBlock>
-                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
-                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:42 " />
-                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
-                        <Run Text="角色卡索引完成：48 张 / 26.4 MB" />
-                    </TextBlock>
-                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
-                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:43 " />
-                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
-                        <Run Text="HTTP 服务已监听 http://127.0.0.1:8000" />
-                    </TextBlock>
-                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
-                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:12:43 " />
-                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
-                        <Run Text="启动完成，耗时 4.82s（PID 14208）" />
-                    </TextBlock>
-                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
-                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:14:07 " />
-                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
-                        <Run Text="POST /api/chat 200 · 1.42s · 642 tokens" />
-                    </TextBlock>
-                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
-                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:15:22 " />
-                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
-                        <Run Text="POST /api/chat 200 · 0.98s · 418 tokens" />
-                    </TextBlock>
-                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
-                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:18:35 " />
-                        <Run Foreground="{ThemeResource SystemFillColorCriticalBrush}" Text="[ERROR]  " />
-                        <Run Text="上游模型接口超时（30000ms），已触发重试" />
-                    </TextBlock>
-                    <TextBlock Style="{StaticResource MonoTextStyle}" TextWrapping="Wrap">
-                        <Run Foreground="{ThemeResource TextFillColorTertiaryBrush}" Text="00:18:41 " />
-                        <Run Foreground="{ThemeResource SystemFillColorSuccessBrush}" Text="[INFO]   " />
-                        <Run Text="重试成功，切换至备用节点" />
-                    </TextBlock>
+            x:Name="RunBar"
+            Padding="14,10,14,10"
+            Style="{StaticResource CardStyle}">
+
+            <Grid ColumnSpacing="12" RowSpacing="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel
+                    Orientation="Horizontal"
+                    Spacing="10"
+                    VerticalAlignment="Center">
+                    <Border
+                        Width="34"
+                        Height="34"
+                        Background="#1F2B88D8"
+                        CornerRadius="8">
+                        <FontIcon
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            FontSize="15"
+                            Foreground="#4C9EE8"
+                            Glyph="&#xE756;" />
+                    </Border>
+
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        FontSize="15"
+                        FontWeight="SemiBold"
+                        Text="控制台" />
+
+                    <!--  状态胶囊：颜色与文案随运行状态走  -->
+                    <Border
+                        x:Name="StatusPill"
+                        Style="{StaticResource StatusPillStyle}">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <FontIcon
+                                x:Name="StatusGlyph"
+                                FontSize="11"
+                                Glyph="&#xE73B;" />
+                            <TextBlock
+                                x:Name="StatusText"
+                                Style="{StaticResource StatusPillTextStyle}"
+                                Text="未启动" />
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel
+                        x:Name="PidGroup"
+                        Orientation="Horizontal"
+                        Spacing="10"
+                        VerticalAlignment="Center">
+                        <Rectangle
+                            Width="1"
+                            Height="14"
+                            Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                        <TextBlock
+                            x:Name="PidText"
+                            VerticalAlignment="Center"
+                            FontFamily="Consolas"
+                            FontSize="11"
+                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                            Text="PID —" />
+                    </StackPanel>
+
+                    <StackPanel
+                        x:Name="ModeGroup"
+                        Orientation="Horizontal"
+                        Spacing="10"
+                        VerticalAlignment="Center">
+                        <Rectangle
+                            Width="1"
+                            Height="14"
+                            Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                        <TextBlock
+                            x:Name="ModeText"
+                            VerticalAlignment="Center"
+                            FontSize="11"
+                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                            Text="—" />
+                    </StackPanel>
+
+                    <!--  网络模式胶囊：运行中才出现，点开设备访问弹窗  -->
+                    <Button
+                        x:Name="NetworkButton"
+                        Padding="9,4,10,5"
+                        Background="Transparent"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        Click="NetworkButton_Click"
+                        CornerRadius="10"
+                        ToolTipService.ToolTip="查看手机 / 平板访问地址"
+                        Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <FontIcon
+                                x:Name="NetworkGlyph"
+                                FontSize="10"
+                                Glyph="&#xE701;" />
+                            <TextBlock
+                                x:Name="NetworkText"
+                                FontSize="11"
+                                FontWeight="SemiBold"
+                                Text="局域网" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
-            </ScrollViewer>
+
+                <StackPanel
+                    x:Name="Actions"
+                    Grid.Column="2"
+                    Orientation="Horizontal"
+                    Spacing="8"
+                    VerticalAlignment="Center">
+
+                    <Button
+                        x:Name="FollowButton"
+                        Click="Follow_Click"
+                        Style="{StaticResource ConsoleActionButtonStyle}"
+                        Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <FontIcon FontSize="11" Glyph="&#xE74A;" />
+                            <TextBlock FontSize="11.5" Text="跟随" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        x:Name="ExportButton"
+                        Click="Export_Click"
+                        Style="{StaticResource ConsoleActionButtonStyle}">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <FontIcon FontSize="11" Glyph="&#xE896;" />
+                            <TextBlock FontSize="11.5" Text="导出" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        x:Name="ClearButton"
+                        Width="30"
+                        Height="30"
+                        Padding="0"
+                        Click="Clear_Click"
+                        Style="{StaticResource SubtleIconButtonStyle}"
+                        ToolTipService.ToolTip="清空本次会话日志">
+                        <FontIcon FontSize="12" Glyph="&#xE74D;" />
+                    </Button>
+
+                    <Button
+                        x:Name="RestartButton"
+                        Click="Restart_Click"
+                        Style="{StaticResource ConsoleActionButtonStyle}"
+                        Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <FontIcon FontSize="11" Glyph="&#xE72C;" />
+                            <TextBlock FontSize="11.5" Text="重启" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        x:Name="StopButton"
+                        Click="Stop_Click"
+                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                        Style="{StaticResource ConsoleActionButtonStyle}"
+                        Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <FontIcon FontSize="11" Glyph="&#xE71A;" />
+                            <TextBlock FontSize="11.5" Text="停止" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        x:Name="KillButton"
+                        Click="Kill_Click"
+                        Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                        Style="{StaticResource ConsoleActionButtonStyle}"
+                        Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <FontIcon FontSize="11" Glyph="&#xE71A;" />
+                            <TextBlock FontSize="11.5" Text="强制结束" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        x:Name="StartButton"
+                        MinHeight="30"
+                        Padding="12,5,14,6"
+                        Click="Start_Click"
+                        Style="{StaticResource AccentButtonStyle}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon FontSize="11" Glyph="&#xE768;" />
+                            <TextBlock FontSize="11.5" Text="启动" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
         </Border>
 
-        <!--  命令输入  -->
-        <Grid Grid.Row="3" ColumnSpacing="8">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <TextBox
-                FontFamily="Consolas"
-                PlaceholderText="输入指令，例如 /reload · /stop · /status" />
-            <Button
-                Grid.Column="1"
-                Content="发送"
-                Style="{StaticResource AccentButtonStyle}" />
-        </Grid>
+        <!--  ==================== 日志 ====================  -->
+        <Border
+            Grid.Row="1"
+            Padding="0"
+            Style="{StaticResource CardStyle}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid Padding="16,9,14,9" ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock
+                        VerticalAlignment="Center"
+                        FontSize="12"
+                        FontWeight="SemiBold"
+                        Text="实时输出" />
+
+                    <Border
+                        Grid.Column="1"
+                        Style="{StaticResource LogCountPillStyle}">
+                        <TextBlock
+                            x:Name="LogCountText"
+                            FontFamily="Consolas"
+                            FontSize="10.5"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Text="0 行" />
+                    </Border>
+
+                    <TextBlock
+                        x:Name="FollowStateText"
+                        Grid.Column="2"
+                        Margin="4,0,0,0"
+                        VerticalAlignment="Center"
+                        FontSize="11"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        Text="自动跟随" />
+
+                    <TextBlock
+                        x:Name="SessionText"
+                        Grid.Column="3"
+                        VerticalAlignment="Center"
+                        FontFamily="Consolas"
+                        FontSize="10.5"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        Text="本次会话" />
+                </Grid>
+
+                <Rectangle
+                    Grid.Row="1"
+                    Height="1"
+                    Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                <ScrollViewer
+                    x:Name="LogScroll"
+                    Grid.Row="2"
+                    Padding="16,10,12,14"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto"
+                    ViewChanged="LogScroll_ViewChanged">
+                    <StackPanel x:Name="LogStack" Spacing="1" />
+                </ScrollViewer>
+            </Grid>
+        </Border>
     </Grid>
 </Page>

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="AstraBrew_Launcher.Views.Controls.SettingRow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!--
+        设置行：图标座 34 + 「标题 13 / 说明 12」+ 右侧控件槽。
+        宽度不够时由代码把控件槽挪到第二行，保持控件完整可见 —— 这一层逻辑
+        统一下沉到控件里，页面上三十多行不必各自写一遍 VisualState。
+    -->
+    <UserControl.Content>
+    <Grid
+        x:Name="Root"
+        Padding="16,14"
+        ColumnSpacing="12"
+        RowSpacing="0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <Border
+            x:Name="IconTile"
+            Width="34"
+            Height="34"
+            VerticalAlignment="Center"
+            CornerRadius="8">
+            <FontIcon x:Name="IconGlyph" FontSize="16" />
+        </Border>
+
+        <StackPanel
+            Grid.Column="1"
+            VerticalAlignment="Center"
+            Spacing="2">
+            <TextBlock x:Name="TitleText" Style="{StaticResource CellTitleTextStyle}" />
+            <TextBlock x:Name="DescriptionText" Style="{StaticResource FieldHintTextStyle}" />
+        </StackPanel>
+
+        <ContentPresenter
+            x:Name="ControlHost"
+            Grid.Column="2"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Center" />
+    </Grid>
+    </UserControl.Content>
+
+</UserControl>
