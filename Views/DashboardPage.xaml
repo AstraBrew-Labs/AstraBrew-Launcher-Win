@@ -498,16 +498,12 @@
                             </Grid>
 
                             <StackPanel Orientation="Horizontal" Spacing="8">
+                                <!--  选项由 TavernInstances 在代码里填充，与版本管理页共用同一份清单  -->
                                 <ComboBox
                                     x:Name="VersionCombo"
                                     MinWidth="220"
                                     AutomationProperties.Name="酒馆版本"
-                                    SelectionChanged="VersionCombo_SelectionChanged">
-                                    <ComboBoxItem Content="内置酒馆" />
-                                    <ComboBoxItem Content="本地-1.19.0" />
-                                    <ComboBoxItem Content="本地-1.18.0" />
-                                    <ComboBoxItem Content="本地-1.17.2" />
-                                </ComboBox>
+                                    SelectionChanged="VersionCombo_SelectionChanged" />
                                 <Button
                                     Click="RescanVersions_Click"
                                     Style="{StaticResource SubtleIconButtonStyle}"

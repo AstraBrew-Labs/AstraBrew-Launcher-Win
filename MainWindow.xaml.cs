@@ -50,7 +50,7 @@ namespace AstraBrew_Launcher
             SetupTitleBar();
 
             // 标题栏的实例徽章是全局状态，切换实例后立刻更新
-            ActiveInstance.Changed += (_, _) => ApplyInstanceChip();
+            TavernInstances.Changed += (_, _) => ApplyInstanceChip();
             ApplyInstanceChip();
 
             // 默认选中「仪表盘」
@@ -186,10 +186,10 @@ namespace AstraBrew_Launcher
                 return;
             }
 
-            InstanceChipText.Text = ActiveInstance.DisplayLabel;
+            InstanceChipText.Text = TavernInstances.Current.DisplayLabel;
             ToolTipService.SetToolTip(
                 InstanceChip,
-                $"当前酒馆实例 · {ActiveInstance.KindLabel} v{ActiveInstance.Version}　在「版本管理」中切换");
+                $"当前酒馆实例 · {TavernInstances.Current.KindLabel} {TavernInstances.Current.KernelLabel}　在「版本管理」中切换");
         }
 
         private void SetupWindow()

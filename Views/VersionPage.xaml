@@ -490,7 +490,24 @@
                                 Orientation="Horizontal"
                                 Spacing="8"
                                 VerticalAlignment="Center">
-                                <Border Style="{StaticResource StatusPillStyle}">
+
+                                <!--  使用中：当前来源就是内置实例  -->
+                                <Border
+                                    x:Name="BuiltinActivePill"
+                                    Style="{StaticResource StatusPillStyle}"
+                                    Visibility="Collapsed">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Ellipse
+                                            Width="6"
+                                            Height="6"
+                                            VerticalAlignment="Center"
+                                            Fill="{ThemeResource AccentFillColorDefaultBrush}" />
+                                        <TextBlock Style="{StaticResource StatusPillTextStyle}" Text="使用中" />
+                                    </StackPanel>
+                                </Border>
+
+                                <!--  已安装：内置实例存在，但当前在用某个本地实例  -->
+                                <Border x:Name="BuiltinIdlePill" Style="{StaticResource StatusPillStyle}">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <Ellipse
                                             Width="6"
@@ -500,6 +517,21 @@
                                         <TextBlock Style="{StaticResource StatusPillTextStyle}" Text="已安装" />
                                     </StackPanel>
                                 </Border>
+
+                                <!--
+                                    从本地实例切回内置实例的唯一入口。
+                                    仅在当前使用本地实例时出现，与本地实例行内的「使用」按钮对称。
+                                -->
+                                <Button
+                                    x:Name="UseBuiltinBtn"
+                                    Click="UseBuiltin_Click"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    Visibility="Collapsed">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <FontIcon FontSize="13" Glyph="&#xE7E8;" />
+                                        <TextBlock Text="使用内置实例" />
+                                    </StackPanel>
+                                </Button>
                             </StackPanel>
                         </Grid>
 

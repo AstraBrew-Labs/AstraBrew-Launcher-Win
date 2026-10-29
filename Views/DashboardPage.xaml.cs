@@ -15,40 +15,23 @@ namespace AstraBrew_Launcher.Views
     {
         private const string LocalEndpoint = "http://127.0.0.1:8000";
 
-        /// <summary>可选酒馆版本：内置一份，本地若干份。</summary>
-        private sealed class TavernVersion
-        {
-            public string Name { get; init; } = string.Empty;
-
-            public string Kind { get; init; } = string.Empty;
-
-            public string Kernel { get; init; } = string.Empty;
-
-            public string Path { get; init; } = string.Empty;
-
-            public string Size { get; init; } = string.Empty;
-        }
-
-        /// <summary>顺序与 <see cref="VersionCombo"/> 的项一一对应。</summary>
-        private static readonly TavernVersion[] Versions =
-        {
-            new() { Name = "内置酒馆", Kind = "内置", Kernel = "v1.19.2", Path = @"…\lib\tavern", Size = "428 MB" },
-            new() { Name = "本地-1.19.0", Kind = "本地", Kernel = "v1.19.0", Path = @"D:\Tavern\1.19.0", Size = "1.24 GB" },
-            new() { Name = "本地-1.18.0", Kind = "本地", Kernel = "v1.18.0", Path = @"D:\Tavern\1.18.0", Size = "1.18 GB" },
-            new() { Name = "本地-1.17.2", Kind = "本地", Kernel = "v1.17.2", Path = @"D:\Tavern\1.17.2", Size = "1.06 GB" },
-        };
-
         private Storyboard? _pulseStoryboard;
 
         /// <summary>程序回填共享状态时屏蔽回写，避免与配置页来回触发。</summary>
         private bool _syncing;
 
+        /// <summary>程序回填版本下拉时屏蔽回写，避免把「同步」当成用户切换。</summary>
+        private bool _syncingVersion;
+
+        /// <summary>下拉框当前承载的清单快照，只有清单变化才重建控件。</summary>
+        private string _versionSignature = string.Empty;
+
         public DashboardPage()
         {
             InitializeComponent();
 
-            // 初始化顺序：版本详情 → 模式面板 → 服务器地址，三者互相独立
-            VersionCombo.SelectedIndex = 0;
+            // 初始化顺序：版本 → 模式面板 → 服务器地址，三者互相独立
+            SyncFromCatalog();
             SyncFromShared();
             ApplyModeVisibility();
             SyncServiceScope();
@@ -60,6 +43,12 @@ namespace AstraBrew_Launcher.Views
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             TavernSettings.Changed += Shared_Changed;
+
+            // 先减后加：避免同一页面重复 Loaded 时累积多份订阅
+            TavernInstances.Changed -= Instances_Changed;
+            TavernInstances.Changed += Instances_Changed;
+
+            SyncFromCatalog();
             SyncFromShared();
             StartStatusPulse();
         }
@@ -67,6 +56,8 @@ namespace AstraBrew_Launcher.Views
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             TavernSettings.Changed -= Shared_Changed;
+            TavernInstances.Changed -= Instances_Changed;
+
             _pulseStoryboard?.Stop();
             _pulseStoryboard = null;
         }
@@ -205,34 +196,177 @@ namespace AstraBrew_Launcher.Views
 
         // ==================== 启动配置 ====================
 
+        // ==================== 启动配置：酒馆版本 ====================
+
+        /// <summary>
+        /// 清单或当前实例变化后重画版本区。
+        /// 本页与版本管理页读写同一份 <see cref="TavernInstances"/>，
+        /// 任何一边切换都会走到这里，不存在「这边改了那边不知道」。
+        /// </summary>
+        private void Instances_Changed(object? sender, EventArgs e) => SyncFromCatalog();
+
+        private void SyncFromCatalog()
+        {
+            if (VersionCombo is null || VersionTypeText is null || CurrentVersionValue is null)
+            {
+                return;
+            }
+
+            string signature = BuildVersionSignature();
+            if (!string.Equals(signature, _versionSignature, StringComparison.Ordinal))
+            {
+                _versionSignature = signature;
+                RebuildVersionCombo();
+            }
+
+            SelectCurrentInCombo();
+            ShowInstanceDetails(TavernInstances.Current);
+        }
+
+        /// <summary>清单指纹：来源 + 版本 + 依赖状态，任一变化都要重建下拉项。</summary>
+        private static string BuildVersionSignature()
+        {
+            var builder = new System.Text.StringBuilder();
+
+            foreach (var instance in TavernInstances.All)
+            {
+                builder.Append(instance.Kind)
+                    .Append(':')
+                    .Append(instance.Version)
+                    .Append(':')
+                    .Append(instance.DepsReady ? '1' : '0')
+                    .Append('|');
+            }
+
+            return builder.ToString();
+        }
+
+        private void RebuildVersionCombo()
+        {
+            _syncingVersion = true;
+
+            VersionCombo.Items.Clear();
+
+            foreach (var instance in TavernInstances.All)
+            {
+                VersionCombo.Items.Add(new ComboBoxItem
+                {
+                    Content = instance.DisplayName,
+                    Tag = instance,
+                });
+            }
+
+            _syncingVersion = false;
+        }
+
+        /// <summary>把下拉框的选中项对齐到共享状态里的当前实例。</summary>
+        private void SelectCurrentInCombo()
+        {
+            var current = TavernInstances.Current;
+
+            for (int i = 0; i < VersionCombo.Items.Count; i++)
+            {
+                if (VersionCombo.Items[i] is ComboBoxItem { Tag: TavernInstance instance }
+                    && ReferenceEquals(instance, current))
+                {
+                    if (VersionCombo.SelectedIndex != i)
+                    {
+                        _syncingVersion = true;
+                        VersionCombo.SelectedIndex = i;
+                        _syncingVersion = false;
+                    }
+
+                    return;
+                }
+            }
+        }
+
+        private void ShowInstanceDetails(TavernInstance instance)
+        {
+            VersionTypeText.Text = instance.KindLabel;
+            VersionKernelText.Text = $"内核 {instance.KernelLabel}";
+            VersionPathText.Text = instance.Path;
+            VersionSizeText.Text = instance.Size;
+
+            HeroVersionPillText.Text = $"{instance.KindLabel} · {instance.KernelLabel}";
+            CurrentVersionValue.Text = instance.KernelLabel;
+            CurrentVersionCaption.Text = BuildVersionCaption(instance);
+        }
+
+        private static string BuildVersionCaption(TavernInstance instance)
+        {
+            if (instance.IsBuiltin)
+            {
+                return instance.Version == TavernInstances.LatestStable
+                    ? $"{instance.DisplayName} · 已是最新"
+                    : instance.Version == TavernInstances.StagingTag
+                        ? $"{instance.DisplayName} · 开发版"
+                        : $"{instance.DisplayName} · 可更新到 v{TavernInstances.LatestStable}";
+            }
+
+            return instance.DepsReady
+                ? $"{instance.DisplayName} · 依赖就绪"
+                : $"{instance.DisplayName} · 缺少依赖";
+        }
+
         private void VersionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (VersionCombo.SelectedIndex < 0 || VersionCombo.SelectedIndex >= Versions.Length)
+            if (_syncingVersion)
             {
                 return;
             }
 
-            // 构造函数里设 SelectedIndex 时，下方控件可能尚未赋值
-            if (VersionTypeText is null || CurrentVersionValue is null)
+            if (VersionCombo.SelectedItem is not ComboBoxItem { Tag: TavernInstance instance })
             {
                 return;
             }
 
-            var version = Versions[VersionCombo.SelectedIndex];
+            // 缺少依赖的本地实例不允许成为当前实例：把选择弹回原处并说明原因
+            if (!instance.IsBuiltin && !instance.DepsReady)
+            {
+                ShowBar(
+                    "该实例缺少依赖",
+                    $"{instance.DisplayName} 需要先在「版本管理」安装 Node 依赖才能启动，当前仍使用 {TavernInstances.Current.DisplayName}。",
+                    InfoBarSeverity.Warning);
 
-            VersionTypeText.Text = version.Kind;
-            VersionKernelText.Text = $"内核 {version.Kernel}";
-            VersionPathText.Text = version.Path;
-            VersionSizeText.Text = version.Size;
+                SelectCurrentInCombo();
+                return;
+            }
 
-            HeroVersionPillText.Text = $"{version.Kind} · {version.Kernel}";
-            CurrentVersionValue.Text = version.Kernel;
-            CurrentVersionCaption.Text = $"{version.Name} · 已是最新";
+            if (ReferenceEquals(instance, TavernInstances.Current))
+            {
+                return;
+            }
+
+            TavernInstances.Use(instance);
+
+            ShowBar(
+                "已切换版本",
+                instance.IsBuiltin
+                    ? $"后续启动将使用内置实例 {instance.KernelLabel}。"
+                    : $"后续启动将使用本地 {instance.KernelLabel}，目录：{instance.Path}",
+                InfoBarSeverity.Success);
         }
 
         private void RescanVersions_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar("已重新扫描本地版本", "发现 3 个本地版本，均可正常启动。", InfoBarSeverity.Success);
+            SyncFromCatalog();
+
+            int missing = 0;
+            foreach (var instance in TavernInstances.Locals)
+            {
+                if (!instance.DepsReady)
+                {
+                    missing++;
+                }
+            }
+
+            ShowBar(
+                "已重新扫描本地版本",
+                missing == 0
+                    ? $"发现 {TavernInstances.Locals.Count} 个本地版本，均可正常启动。"
+                    : $"发现 {TavernInstances.Locals.Count} 个本地版本，其中 {missing} 个缺少 Node 依赖。",
+                InfoBarSeverity.Success);
         }
 
         private void ManageVersions_Click(object sender, RoutedEventArgs e)

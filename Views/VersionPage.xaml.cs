@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using AstraBrew_Launcher.Services;
@@ -16,6 +15,9 @@ namespace AstraBrew_Launcher.Views
     /// </summary>
     public sealed class LocalInstanceRow
     {
+        /// <summary>行对应的共享实例对象，交互时直接回写它，不再按版本号反查。</summary>
+        public TavernInstance? Instance { get; set; }
+
         public string Version { get; set; } = string.Empty;
 
         public string Path { get; set; } = string.Empty;
@@ -48,61 +50,20 @@ namespace AstraBrew_Launcher.Views
     /// 版本管理：两个独立页签。
     /// 「本地实例」是列表——用户已有的多个酒馆目录可以并存；
     /// 「内置实例」是单张管理卡——启动器只托管一份代码，支持切换版本但不支持版本共存。
+    ///
+    /// 本页不持有任何实例状态：清单与「当前使用哪一份」都在
+    /// <see cref="TavernInstances"/>，这里只负责渲染与派发动作。
     /// </summary>
     public sealed partial class VersionPage : Page
     {
-        private const string LatestStable = "1.19.2";
-
-        /// <summary>可在内置实例中切换的稳定版；索引 0 恒为最新。</summary>
-        private static readonly (string Version, string Date, string Size, string Files)[] StableReleases =
-        {
-            ("1.19.2", "2026-10-20", "186 MB", "1,284 个文件"),
-            ("1.19.0", "2026-09-28", "184 MB", "1,271 个文件"),
-            ("1.18.0", "2026-08-30", "181 MB", "1,246 个文件"),
-            ("1.17.2", "2026-07-18", "178 MB", "1,208 个文件"),
-        };
-
-        /// <summary>本地实例的可变状态；列表行由它派生，交互只改这里。</summary>
-        private sealed class LocalInstanceData
-        {
-            public string Version = string.Empty;
-            public string FolderPath = string.Empty;
-            public string Node = string.Empty;
-            public bool IsCurrent;
-            public bool DepsReady = true;
-        }
-
-        private readonly List<LocalInstanceData> _localData = new()
-        {
-            new LocalInstanceData
-            {
-                Version = "1.19.0",
-                FolderPath = @"C:\Users\al01\Documents\SillyTavern-1.19.0",
-                Node = "Node 20.11.0",
-            },
-            new LocalInstanceData
-            {
-                Version = "1.18.0",
-                FolderPath = @"D:\AstraBrew\tavern-1.18.0",
-                Node = "Node 20.11.0",
-            },
-            new LocalInstanceData
-            {
-                Version = "1.17.2",
-                FolderPath = @"C:\Users\al01\Documents\SillyTavern-legacy",
-                Node = "Node 18.20.4",
-                DepsReady = false,
-            },
-        };
-
         private readonly DispatcherTimer _scanTimer = new();
         private readonly DispatcherTimer _switchTimer = new();
 
-        private string _builtinVersion = LatestStable;
-        private bool _currentSourceIsLocal;
-        private string _currentLocalVersion = string.Empty;
+        /// <summary>最近一次同步到界面上的内置版本，用来判断是否需要重置通道单选项。</summary>
+        private string _lastBuiltinVersion = string.Empty;
 
         private bool _syncingPicker;
+        private bool _syncingChannel;
         private bool _switching;
         private bool _secondPhase;
         private double _switchProgress;
@@ -131,17 +92,73 @@ namespace AstraBrew_Launcher.Views
 
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
+            // 先减后加：避免同一页面重复 Loaded 时累积多份订阅
+            TavernInstances.Changed -= Catalog_Changed;
+            TavernInstances.Changed += Catalog_Changed;
+
             ApplyTab();
-            RefreshLocalRows();
-            ApplyBuiltinCurrent();
-            ReloadVersions();
-            UpdateHeaderCurrent();
+            SyncFromCatalog();
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
+            TavernInstances.Changed -= Catalog_Changed;
+
             _scanTimer.Stop();
             _switchTimer.Stop();
+        }
+
+        /// <summary>
+        /// 清单或当前实例变化后重画整页。所有动作只改 <see cref="TavernInstances"/>，
+        /// 界面统一在这里跟上，因此仪表盘 / 标题栏 / 关于页与本页不会出现两套状态。
+        /// </summary>
+        private void Catalog_Changed(object? sender, EventArgs e)
+        {
+            SyncFromCatalog();
+        }
+
+        private void SyncFromCatalog()
+        {
+            if (LocalList is null)
+            {
+                return;
+            }
+
+            string builtinVersion = TavernInstances.Builtin.Version;
+            if (!string.Equals(_lastBuiltinVersion, builtinVersion, StringComparison.Ordinal))
+            {
+                _lastBuiltinVersion = builtinVersion;
+                SyncChannelChips();
+            }
+
+            RefreshLocalRows();
+            ApplyBuiltinCurrent();
+            ReloadVersions();
+            SyncHeaderCurrent();
+        }
+
+        /// <summary>
+        /// 通道单选项跟随内置实例的实际版本：否则从仪表盘或别处换过版后回到本页，
+        /// 单选项会停在「稳定版」而实际代码是开发版。
+        /// </summary>
+        private void SyncChannelChips()
+        {
+            if (StableChip is null || StagingChip is null)
+            {
+                return;
+            }
+
+            bool staging = TavernInstances.Builtin.Version == TavernInstances.StagingTag;
+
+            _syncingChannel = true;
+            StagingChip.IsChecked = staging;
+            StableChip.IsChecked = !staging;
+            _syncingChannel = false;
+
+            if (StagingNote is not null)
+            {
+                StagingNote.IsOpen = staging;
+            }
         }
 
         // ==================== 页签 ====================
@@ -165,130 +182,142 @@ namespace AstraBrew_Launcher.Views
             BuiltinPanel.Visibility = local ? Visibility.Collapsed : Visibility.Visible;
         }
 
-        private void UpdateHeaderCurrent()
+        /// <summary>页头状态胶囊与内置卡状态：读同一份 <see cref="TavernInstances.Current"/>。</summary>
+        private void SyncHeaderCurrent()
         {
             if (HeaderCurrentText is null)
             {
                 return;
             }
 
-            HeaderCurrentText.Text = _currentSourceIsLocal
-                ? $"当前 · 本地 v{_currentLocalVersion}"
-                : $"当前 · 内置 {DisplayVersion(_builtinVersion)}";
+            var current = TavernInstances.Current;
 
-            // 关于页标题旁的实例徽章读同一份状态，两处永远一致
-            if (_currentSourceIsLocal && _currentLocalVersion.Length > 0)
+            HeaderCurrentText.Text = current.IsBuiltin
+                ? $"当前 · 内置 {current.KernelLabel}"
+                : $"当前 · 本地 {current.KernelLabel}";
+
+            UpdateBuiltinActiveState();
+        }
+
+        /// <summary>
+        /// 内置卡头部的状态：使用中 / 已安装，并决定「使用内置实例」按钮是否出现。
+        /// </summary>
+        private void UpdateBuiltinActiveState()
+        {
+            if (BuiltinActivePill is null || BuiltinIdlePill is null || UseBuiltinBtn is null)
             {
-                ActiveInstance.Set(TavernInstanceKind.Local, _currentLocalVersion);
+                return;
             }
-            else
+
+            bool builtinActive = TavernInstances.IsBuiltinActive;
+
+            BuiltinActivePill.Visibility = builtinActive ? Visibility.Visible : Visibility.Collapsed;
+            BuiltinIdlePill.Visibility = builtinActive ? Visibility.Collapsed : Visibility.Visible;
+            UseBuiltinBtn.Visibility = builtinActive ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        private void UseBuiltin_Click(object sender, RoutedEventArgs e)
+        {
+            if (TavernInstances.IsBuiltinActive)
             {
-                ActiveInstance.Set(
-                    TavernInstanceKind.Builtin,
-                    _builtinVersion == "staging" ? "开发版" : _builtinVersion);
+                return;
             }
+
+            TavernInstances.Use(TavernInstances.Builtin);
+
+            ShowBar(
+                "已切换实例",
+                $"后续启动将使用内置实例 {TavernInstances.Builtin.KernelLabel}。本地实例仍保留在列表中，随时可以切回。",
+                InfoBarSeverity.Success);
         }
 
         // ==================== 本地实例：列表 ====================
 
         private void RefreshLocalRows()
         {
+            var locals = TavernInstances.Locals;
+            var current = TavernInstances.Current;
+
             Rows.Clear();
 
-            foreach (var data in _localData)
+            foreach (var instance in locals)
             {
                 Rows.Add(new LocalInstanceRow
                 {
-                    Version = data.Version,
-                    Path = data.FolderPath,
-                    NodeText = data.Node,
-                    IsCurrent = data.IsCurrent,
-                    DepsReady = data.DepsReady,
+                    Instance = instance,
+                    Version = instance.Version,
+                    Path = instance.Path,
+                    NodeText = instance.Node,
+                    IsCurrent = ReferenceEquals(instance, current),
+                    DepsReady = instance.DepsReady,
                 });
             }
 
-            int missing = _localData.Count(item => !item.DepsReady);
+            int missing = locals.Count(item => !item.DepsReady);
 
-            LocalTabCount.Text = _localData.Count.ToString();
-            LocalSummaryText.Text = _localData.Count == 0
+            LocalTabCount.Text = locals.Count.ToString();
+            LocalSummaryText.Text = locals.Count == 0
                 ? "尚未扫描到实例"
                 : missing == 0
-                    ? $"已发现 {_localData.Count} 个实例 · 依赖全部就绪"
-                    : $"已发现 {_localData.Count} 个实例 · {missing} 个缺少依赖";
+                    ? $"已发现 {locals.Count} 个实例 · 依赖全部就绪"
+                    : $"已发现 {locals.Count} 个实例 · {missing} 个缺少依赖";
 
-            LocalList.Visibility = _localData.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-            LocalEmpty.Visibility = _localData.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            LocalList.Visibility = locals.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+            LocalEmpty.Visibility = locals.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void LocalUse_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button { DataContext: LocalInstanceRow row })
+            if (sender is not Button { DataContext: LocalInstanceRow row } || row.Instance is null)
             {
                 return;
             }
 
-            var target = _localData.FirstOrDefault(item => item.Version == row.Version);
-            if (target is null || !target.DepsReady)
+            var target = row.Instance;
+            if (!target.DepsReady)
             {
                 return;
             }
 
-            foreach (var item in _localData)
-            {
-                item.IsCurrent = ReferenceEquals(item, target);
-            }
-
-            _currentSourceIsLocal = true;
-            _currentLocalVersion = target.Version;
-
-            RefreshLocalRows();
-            UpdateHeaderCurrent();
+            // 只改共享状态；列表与页头由 Catalog_Changed 统一刷新
+            TavernInstances.Use(target);
 
             ShowBar(
                 "已切换实例",
-                $"后续启动将使用本地 v{target.Version}，目录：{target.FolderPath}",
+                $"后续启动将使用本地 {target.KernelLabel}，目录：{target.Path}",
                 InfoBarSeverity.Success);
         }
 
         private void LocalFixDeps_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button { DataContext: LocalInstanceRow row })
+            if (sender is not Button { DataContext: LocalInstanceRow row } || row.Instance is null)
             {
                 return;
             }
 
-            var target = _localData.FirstOrDefault(item => item.Version == row.Version);
-            if (target is null)
-            {
-                return;
-            }
-
-            target.DepsReady = true;
-            RefreshLocalRows();
+            var target = row.Instance;
+            TavernInstances.SetDepsReady(target, true);
 
             ShowBar(
                 "依赖已安装",
-                $"已为 v{target.Version} 安装 Node 依赖（{target.Node} · npm 10.5.2），现在可以切换使用。",
+                $"已为 {target.KernelLabel} 安装 Node 依赖（{target.Node} · npm 10.5.2），现在可以切换使用。",
                 InfoBarSeverity.Success);
         }
 
         private async void LocalRemove_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button { DataContext: LocalInstanceRow row })
+            if (sender is not Button { DataContext: LocalInstanceRow row } || row.Instance is null)
             {
                 return;
             }
 
-            var target = _localData.FirstOrDefault(item => item.Version == row.Version);
-            if (target is null)
-            {
-                return;
-            }
+            var target = row.Instance;
+            bool wasCurrent = ReferenceEquals(target, TavernInstances.Current);
 
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = $"从列表移除 v{target.Version}？",
+                Title = $"从列表移除 {target.KernelLabel}？",
                 Content = "只从启动器列表中移除，不会删除磁盘上的目录。",
                 PrimaryButtonText = "移除",
                 CloseButtonText = "取消",
@@ -300,19 +329,13 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            _localData.Remove(target);
-
-            if (target.IsCurrent)
-            {
-                _currentSourceIsLocal = false;
-                UpdateHeaderCurrent();
-            }
-
-            RefreshLocalRows();
+            TavernInstances.RemoveLocal(target);
 
             ShowBar(
                 "已移除实例",
-                $"v{target.Version} 不再出现在列表中，目录 {target.FolderPath} 仍然保留。",
+                wasCurrent
+                    ? $"{target.KernelLabel} 不再出现在列表中，目录 {target.Path} 仍然保留；当前已回落到内置实例 {TavernInstances.Builtin.KernelLabel}。"
+                    : $"{target.KernelLabel} 不再出现在列表中，目录 {target.Path} 仍然保留。",
                 InfoBarSeverity.Informational);
         }
 
@@ -339,7 +362,7 @@ namespace AstraBrew_Launcher.Views
 
             ShowBar(
                 "扫描完成",
-                $"已检查 18,432 个文件夹，识别到 {_localData.Count} 个实例（跳过 2 个缺少 config.yaml 的目录）。",
+                $"已检查 18,432 个文件夹，识别到 {TavernInstances.Locals.Count} 个实例（跳过 2 个缺少 config.yaml 的目录）。",
                 InfoBarSeverity.Informational);
         }
 
@@ -375,6 +398,8 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
+            string builtinVersion = TavernInstances.Builtin.Version;
+
             _syncingPicker = true;
             VersionPicker.Items.Clear();
 
@@ -383,20 +408,20 @@ namespace AstraBrew_Launcher.Views
                 VersionPicker.Items.Add(new ComboBoxItem
                 {
                     Content = "staging · 4c1f9ab（开发分支最新）",
-                    Tag = "staging",
+                    Tag = TavernInstances.StagingTag,
                 });
             }
             else
             {
-                foreach (var release in StableReleases)
+                foreach (var release in TavernInstances.StableReleases)
                 {
                     string label = $"v{release.Version} · {release.Date}";
-                    if (release.Version == _builtinVersion)
+                    if (release.Version == builtinVersion)
                     {
                         // 当前版本不再重复标「最新」，避免「最新 · 当前」两个标签挤在一起。
                         label += " · 当前";
                     }
-                    else if (release.Version == LatestStable)
+                    else if (release.Version == TavernInstances.LatestStable)
                     {
                         label += " · 最新";
                     }
@@ -417,7 +442,7 @@ namespace AstraBrew_Launcher.Views
 
         private void Channel_Checked(object sender, RoutedEventArgs e)
         {
-            if (StagingNote is null || VersionPicker is null)
+            if (StagingNote is null || VersionPicker is null || _syncingChannel)
             {
                 return;
             }
@@ -440,13 +465,13 @@ namespace AstraBrew_Launcher.Views
 
         private void UpdateSwitchButton()
         {
-            if (SwitchVersionBtn is null || SwitchHintText is null)
+            if (SwitchVersionBtn is null || SwitchHintText is null || VersionPicker is null)
             {
                 return;
             }
 
             string target = (VersionPicker.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
-            bool same = target.Length > 0 && target == _builtinVersion;
+            bool same = target.Length > 0 && target == TavernInstances.Builtin.Version;
 
             SwitchVersionBtn.IsEnabled = !_switching && target.Length > 0 && !same;
             SwitchVersionBtn.Content = _switching
@@ -457,9 +482,13 @@ namespace AstraBrew_Launcher.Views
                         ? $"切换到 {DisplayVersion(target)}"
                         : "选择要切换的版本";
 
-            SwitchHintText.Text = IsStaging
-                ? "开发版跟随 staging 分支，切换同样覆盖当前代码。"
-                : "切换会覆盖当前版本，旧版本不会保留。";
+            // 当前在用本地实例时，「换版」只改内置代码，不改变使用来源，必须写清楚，
+            // 否则用户会以为换版就等于切回内置。
+            SwitchHintText.Text = !TavernInstances.IsBuiltinActive
+                ? "换版只更新内置实例的代码，不改变当前使用的实例；换版后点右上角「使用内置实例」即可启用。"
+                : IsStaging
+                    ? "开发版跟随 staging 分支，切换同样覆盖当前代码。"
+                    : "切换会覆盖当前版本，旧版本不会保留。";
         }
 
         private void ApplyBuiltinCurrent()
@@ -469,26 +498,34 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            if (_builtinVersion == "staging")
+            var builtin = TavernInstances.Builtin;
+            string version = builtin.Version;
+
+            // 安装目录来自共享清单，不再写死一份样例路径
+            BuiltinPathText.Text = builtin.Path;
+
+            if (version == TavernInstances.StagingTag)
             {
-                BuiltinVersionText.Text = "staging";
+                BuiltinVersionText.Text = TavernInstances.StagingTag;
                 MetaChannelText.Text = "开发版";
                 MetaDateText.Text = "更新于 2026-10-27";
-                MetaSizeText.Text = "192 MB";
+                MetaSizeText.Text = builtin.Size;
                 MetaFilesText.Text = "1,312 个文件";
                 LatestPill.Visibility = Visibility.Collapsed;
                 return;
             }
 
-            BuiltinVersionText.Text = "v" + _builtinVersion;
+            BuiltinVersionText.Text = "v" + version;
             MetaChannelText.Text = "稳定版";
 
-            int index = Array.FindIndex(StableReleases, item => item.Version == _builtinVersion);
-            MetaDateText.Text = index >= 0 ? "发布于 " + StableReleases[index].Date : "发布日期未知";
-            MetaSizeText.Text = index >= 0 ? StableReleases[index].Size : "—";
-            MetaFilesText.Text = index >= 0 ? StableReleases[index].Files : "—";
+            int index = Array.FindIndex(
+                TavernInstances.StableReleases,
+                item => item.Version == version);
+            MetaDateText.Text = index >= 0 ? "发布于 " + TavernInstances.StableReleases[index].Date : "发布日期未知";
+            MetaSizeText.Text = index >= 0 ? TavernInstances.StableReleases[index].Size : "—";
+            MetaFilesText.Text = index >= 0 ? TavernInstances.StableReleases[index].Files : "—";
 
-            LatestPill.Visibility = _builtinVersion == LatestStable
+            LatestPill.Visibility = version == TavernInstances.LatestStable
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
@@ -505,7 +542,7 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            if (target == _builtinVersion)
+            if (target == TavernInstances.Builtin.Version)
             {
                 return;
             }
@@ -557,16 +594,18 @@ namespace AstraBrew_Launcher.Views
             SwitchPhaseText.Text = "第 2/2 步 · 依赖安装完成";
             AppendSwitchLog($"完成：代码已检出 {DisplayVersion(_switchTarget)}，npm install 结束。");
 
-            _builtinVersion = _switchTarget;
+            bool builtinActive = TavernInstances.IsBuiltinActive;
 
-            ApplyBuiltinCurrent();
+            // 只改共享状态：卡片、通道单选项与下拉框由 Catalog_Changed 统一重画
+            TavernInstances.SetBuiltinVersion(_switchTarget);
+
             SwitchProgressPanel.Visibility = Visibility.Collapsed;
-            ReloadVersions();
-            UpdateHeaderCurrent();
 
             ShowBar(
                 "版本已切换",
-                $"内置实例现在使用 {DisplayVersion(_builtinVersion)}，旧版本代码已被覆盖，需要时可重新下载。",
+                builtinActive
+                    ? $"内置实例现在使用 {TavernInstances.Builtin.KernelLabel}，旧版本代码已被覆盖，需要时可重新下载。"
+                    : $"内置实例的代码已更新为 {TavernInstances.Builtin.KernelLabel}；当前仍在使用本地 {TavernInstances.Current.KernelLabel}，点右上角「使用内置实例」即可启用新版本。",
                 InfoBarSeverity.Success);
         }
 
@@ -578,56 +617,56 @@ namespace AstraBrew_Launcher.Views
         }
 
         private static string DisplayVersion(string version)
-            => version == "staging" ? "开发版" : "v" + version;
+            => version == TavernInstances.StagingTag ? "开发版" : "v" + version;
 
         // ==================== 内置实例：其它操作 ====================
 
         private void CheckUpdate_Click(object sender, RoutedEventArgs e)
         {
-            if (_builtinVersion == LatestStable)
+            if (TavernInstances.Builtin.Version == TavernInstances.LatestStable)
             {
-                ShowBar("已是最新版本", "内置实例 v1.19.2 是当前最新的稳定版。", InfoBarSeverity.Success);
+                ShowBar(
+                    "已是最新版本",
+                    $"内置实例 v{TavernInstances.LatestStable} 是当前最新的稳定版。",
+                    InfoBarSeverity.Success);
                 return;
             }
 
             ShowBar(
-                "发现新版本 v1.19.2",
-                "在右侧「切换版本」中选择 v1.19.2 即可更新，旧版本会被覆盖。",
+                $"发现新版本 v{TavernInstances.LatestStable}",
+                $"在右侧「切换版本」中选择 v{TavernInstances.LatestStable} 即可更新，旧版本会被覆盖。",
                 InfoBarSeverity.Informational);
         }
 
         private void OpenBuiltinDir_Click(object sender, RoutedEventArgs e)
-            => ShowBar("安装目录", BuiltinPathText.Text, InfoBarSeverity.Informational);
+            => ShowBar("安装目录", TavernInstances.Builtin.Path, InfoBarSeverity.Informational);
 
         private void CopyBuiltinPath_Click(object sender, RoutedEventArgs e)
         {
             var package = new DataPackage();
-            package.SetText(BuiltinPathText.Text);
+            package.SetText(TavernInstances.Builtin.Path);
             Clipboard.SetContent(package);
 
-            ShowBar("路径已复制", BuiltinPathText.Text, InfoBarSeverity.Success);
+            ShowBar("路径已复制", TavernInstances.Builtin.Path, InfoBarSeverity.Success);
         }
 
         private void ViewChangelog_Click(object sender, RoutedEventArgs e)
         {
             ShowBar(
-                "v1.19.2 更新日志",
+                $"v{TavernInstances.LatestStable} 更新日志",
                 "稳定性改进 · 修复扩展加载顺序 · 依赖升级；完整日志见发布页。",
                 InfoBarSeverity.Informational);
         }
 
         private void Refresh_Click(object sender, RoutedEventArgs e)
         {
-            RefreshLocalRows();
-            ApplyBuiltinCurrent();
+            SyncFromCatalog();
 
-            string current = _currentSourceIsLocal
-                ? $"本地 v{_currentLocalVersion}"
-                : $"内置 {DisplayVersion(_builtinVersion)}";
+            var current = TavernInstances.Current;
 
             ShowBar(
                 "实例状态已刷新",
-                $"本地 {_localData.Count} 个实例 · 内置 1 个实例 · 当前使用 {current}。",
+                $"本地 {TavernInstances.Locals.Count} 个实例 · 内置 1 个实例 · 当前使用 {(current.IsBuiltin ? "内置" : "本地")} {current.KernelLabel}。",
                 InfoBarSeverity.Informational);
         }
 

@@ -100,7 +100,7 @@ namespace AstraBrew_Launcher.Views
             text.AppendLine("AstraBrew Launcher 星酿启动器");
             text.AppendLine($"版本       {VersionValue.Text}");
             text.AppendLine($"构建       {BuildValue.Text}");
-            text.AppendLine($"酒馆实例   {ActiveInstance.DisplayLabel}");
+            text.AppendLine($"酒馆实例   {TavernInstances.Current.DisplayLabel}");
             text.AppendLine($"运行时     {RuntimeValue.Text}");
             text.AppendLine($"操作系统   {OsValue.Text}");
             text.AppendLine($"进程架构   {ArchValue.Text}");
