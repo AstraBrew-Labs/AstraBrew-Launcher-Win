@@ -5,6 +5,9 @@
 要适配多屏切换
 要适配如果软件界面在副屏，但副屏断开，要自动切换到主屏显示
 
+> 实现集中在 `Services/WindowPlacement.cs`（由 `MainWindow.SetupWindow` 创建）。
+> 新增窗口相关行为请改这里，不要在页面或 MainWindow 里另写一套 DPI / 尺寸计算。
+
 ## 目录结构
 
 %AppData%/AstraBrew Launcher/   ← 根目录 (root)

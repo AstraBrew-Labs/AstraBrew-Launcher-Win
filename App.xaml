@@ -19,16 +19,24 @@
                 <ResourceDictionary x:Key="Light">
                     <BitmapImage x:Key="BrandIconSource" UriSource="ms-appx:///Assets/brand-icon-light.png" />
                     <BitmapImage x:Key="BrandLockupSource" UriSource="ms-appx:///Assets/brand-lockup-light.png" />
+                    <!--  标题栏实例徽章：浅色背景需要更深的蓝才够对比  -->
+                    <SolidColorBrush x:Key="InstanceChipBackgroundBrush" Color="#1F2B88D8" />
+                    <SolidColorBrush x:Key="InstanceChipForegroundBrush" Color="#FF1B6CB8" />
                 </ResourceDictionary>
 
                 <ResourceDictionary x:Key="Dark">
                     <BitmapImage x:Key="BrandIconSource" UriSource="ms-appx:///Assets/brand-icon-dark.png" />
                     <BitmapImage x:Key="BrandLockupSource" UriSource="ms-appx:///Assets/brand-lockup-dark.png" />
+                    <!--  深色背景：蓝字提亮到 12px 小字也能读清  -->
+                    <SolidColorBrush x:Key="InstanceChipBackgroundBrush" Color="#244CC2FF" />
+                    <SolidColorBrush x:Key="InstanceChipForegroundBrush" Color="#FF7CC7F5" />
                 </ResourceDictionary>
 
                 <ResourceDictionary x:Key="HighContrast">
                     <BitmapImage x:Key="BrandIconSource" UriSource="ms-appx:///Assets/brand-icon-dark.png" />
                     <BitmapImage x:Key="BrandLockupSource" UriSource="ms-appx:///Assets/brand-lockup-dark.png" />
+                    <SolidColorBrush x:Key="InstanceChipBackgroundBrush" Color="#1F2B88D8" />
+                    <SolidColorBrush x:Key="InstanceChipForegroundBrush" Color="#FF2B88D8" />
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
         </ResourceDictionary>

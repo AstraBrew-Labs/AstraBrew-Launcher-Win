@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Runtime.InteropServices;
 using AstraBrew_Launcher.Services;
 using AstraBrew_Launcher.Views;
 using Microsoft.UI;
@@ -9,9 +8,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Animation;
-using Windows.Graphics;
 using Windows.UI;
-using WinRT.Interop;
 
 namespace AstraBrew_Launcher
 {
@@ -20,9 +17,6 @@ namespace AstraBrew_Launcher
     /// </summary>
     public sealed partial class MainWindow : Window
     {
-        private const int DefaultWidth = 1180;
-        private const int DefaultHeight = 780;
-
         /// <summary>导航项 Tag 与页面类型的映射。</summary>
         private static readonly Dictionary<string, Type> PageMap = new()
         {
@@ -42,12 +36,22 @@ namespace AstraBrew_Launcher
         /// <summary>程序化同步导航选中项时，屏蔽 SelectionChanged 里的一次跳转。</summary>
         private bool _syncingSelection;
 
+        /// <summary>窗口规范执行者：禁最大化 / DPI 尺寸 / 多屏归属 / 断屏回迁。</summary>
+        private WindowPlacement? _placement;
+
         public MainWindow()
         {
             InitializeComponent();
 
-            SetupTitleBar();
+            // 先定窗口外观与尺寸，再接管标题栏：
+            // presenter 的 IsMaximizable 要在 ExtendsContentIntoTitleBar 之前设好，
+            // 否则等于在「已自定义标题栏」的状态下改窗口能力，部分版本会抛 E_UNEXPECTED。
             SetupWindow();
+            SetupTitleBar();
+
+            // 标题栏的实例徽章是全局状态，切换实例后立刻更新
+            ActiveInstance.Changed += (_, _) => ApplyInstanceChip();
+            ApplyInstanceChip();
 
             // 默认选中「仪表盘」
             if (NavView.MenuItems.Count > 0 && NavView.MenuItems[0] is NavigationViewItem first)
@@ -171,6 +175,23 @@ namespace AstraBrew_Launcher
             }
         }
 
+        /// <summary>
+        /// 标题栏徽章：显示当前选中的酒馆实例（内置-1.19.2 / 本地-1.19.0）。
+        /// 常驻标题栏，用户在任意页面都能确认启动时用的是哪一份实例。
+        /// </summary>
+        private void ApplyInstanceChip()
+        {
+            if (InstanceChipText is null)
+            {
+                return;
+            }
+
+            InstanceChipText.Text = ActiveInstance.DisplayLabel;
+            ToolTipService.SetToolTip(
+                InstanceChip,
+                $"当前酒馆实例 · {ActiveInstance.KindLabel} v{ActiveInstance.Version}　在「版本管理」中切换");
+        }
+
         private void SetupWindow()
         {
             AppWindow.Title = "AstraBrew Launcher";
@@ -182,37 +203,10 @@ namespace AstraBrew_Launcher
                 AppWindow.SetIcon(iconPath);
             }
 
-            // 保证界面在窄窗下仍使用紧凑布局，而不是被压垮
-            if (AppWindow.Presenter is OverlappedPresenter presenter)
-            {
-                presenter.PreferredMinimumWidth = 900;
-                presenter.PreferredMinimumHeight = 620;
-            }
-
-            var hwnd = WindowNative.GetWindowHandle(this);
-            double scale = GetDpiForWindow(hwnd) / 96.0;
-
-            AppWindow.Resize(new SizeInt32(
-                (int)(DefaultWidth * scale),
-                (int)(DefaultHeight * scale)));
-
-            CenterOnScreen();
-        }
-
-        private void CenterOnScreen()
-        {
-            var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary);
-            if (area is null)
-            {
-                return;
-            }
-
-            var size = AppWindow.Size;
-            var work = area.WorkArea;
-
-            AppWindow.Move(new PointInt32(
-                work.X + Math.Max(0, (work.Width - size.Width) / 2),
-                work.Y + Math.Max(0, (work.Height - size.Height) / 2)));
+            // 窗口规范统一交给 WindowPlacement：
+            // 禁止最大化、按当前显示器 DPI 定尺寸并夹进工作区、跟随多屏切换、副屏断开自动回主屏。
+            _placement = new WindowPlacement(this);
+            Closed += (_, _) => _placement?.Dispose();
         }
 
         private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
@@ -233,8 +227,5 @@ namespace AstraBrew_Launcher
                 NavigateTo(tag);
             }
         }
-
-        [DllImport("user32.dll")]
-        private static extern uint GetDpiForWindow(IntPtr hwnd);
     }
 }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
@@ -174,6 +175,18 @@ namespace AstraBrew_Launcher.Views
             HeaderCurrentText.Text = _currentSourceIsLocal
                 ? $"当前 · 本地 v{_currentLocalVersion}"
                 : $"当前 · 内置 {DisplayVersion(_builtinVersion)}";
+
+            // 关于页标题旁的实例徽章读同一份状态，两处永远一致
+            if (_currentSourceIsLocal && _currentLocalVersion.Length > 0)
+            {
+                ActiveInstance.Set(TavernInstanceKind.Local, _currentLocalVersion);
+            }
+            else
+            {
+                ActiveInstance.Set(
+                    TavernInstanceKind.Builtin,
+                    _builtinVersion == "staging" ? "开发版" : _builtinVersion);
+            }
         }
 
         // ==================== 本地实例：列表 ====================

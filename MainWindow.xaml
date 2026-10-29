@@ -54,6 +54,26 @@
                     FontSize="12"
                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                     Text="酒馆启动器" />
+
+                <!--  全局状态：当前酒馆实例的来源与版本（内置-1.19.2 / 本地-1.19.0），任何页面都可见  -->
+                <Rectangle
+                    Width="1"
+                    Height="12"
+                    VerticalAlignment="Center"
+                    Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                <Border
+                    x:Name="InstanceChip"
+                    Padding="8,2,8,3"
+                    VerticalAlignment="Center"
+                    Background="{ThemeResource InstanceChipBackgroundBrush}"
+                    CornerRadius="4">
+                    <TextBlock
+                        x:Name="InstanceChipText"
+                        FontSize="11.5"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource InstanceChipForegroundBrush}"
+                        Text="内置-1.19.2" />
+                </Border>
             </StackPanel>
         </Grid>
 
