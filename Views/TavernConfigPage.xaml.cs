@@ -379,7 +379,7 @@ namespace AstraBrew_Launcher.Views
         {
             ShowBar(
                 "已定位配置文件",
-                @"%AppData%\AstraBrew Launcher\data\config.yaml",
+                System.IO.Path.Combine(AppPaths.RoamingRoot, "data", "config.yaml"),
                 InfoBarSeverity.Informational);
         }
 

@@ -629,13 +629,13 @@
                                 Text="characters" />
                         </Border>
                     </StackPanel>
+                    <!--  路径在代码里按共享清单的内置实例目录填充，避免写死用户名  -->
                     <TextBlock
                         x:Name="DataPathText"
                         VerticalAlignment="Center"
                         FontFamily="Consolas"
                         FontSize="11"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Text="C:\Users\al01\AppData\Roaming\AstraBrew Launcher\sillytavern\data\default-user\characters"
                         TextTrimming="CharacterEllipsis" />
                 </StackPanel>
 

@@ -18,6 +18,22 @@
 > 结果一边切换另一边毫无反应。新增涉及实例的界面请直接读 `TavernInstances`。
 > 清单目前是内存原型数据，落盘位置见下方 `data/local_instances.json`。
 
+## 路径显示
+
+界面上出现的路径一律是展开后的真实路径，不要直接显示 `%AppData%`、`%Temp%`、`%LOCALAPPDATA%`
+这类环境变量——用户没法把变量粘进资源管理器。
+
+- 取值统一走 `Services/AppPaths.cs`（`RoamingRoot` / `LocalRoot` / `TempRoot`），
+  或用 `Environment.GetFolderPath(...)`、`AppPaths.Expand(...)` 把变量换成实际目录；
+- 覆盖范围：页面文本、ToolTip、反馈条（InfoBar）、控制台日志、对话框、复制到剪贴板的文本；
+- 宽度不够时用 `TextTrimming="CharacterEllipsis"` 截断 + ToolTip 给完整路径，
+  **不要**反过来把真实路径折叠成 `%APPDATA%\…` 来省宽度；
+- 变量形式只允许出现在存储值（配置文件里记的默认目录）与注释 / 文档示意中，
+  这类值读出后必须先 `Expand` 再交给界面。
+
+> 反例（已修）：仪表盘「打开数据目录」曾直接弹 `%AppData%\AstraBrew Launcher\data`；
+> 设置页曾把 `C:\Users\…\AppData\Roaming\…` 折叠成 `%APPDATA%\…` 显示。
+
 ## 目录结构
 
 %AppData%/AstraBrew Launcher/   ← 根目录 (root)

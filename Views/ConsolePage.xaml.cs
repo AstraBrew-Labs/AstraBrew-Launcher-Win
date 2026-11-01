@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Threading.Tasks;
+using AstraBrew_Launcher.Services;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -70,7 +71,7 @@ namespace AstraBrew_Launcher.Views
             ActualThemeChanged += (_, _) => RenderLogs();
 
             Append(LogKind.System, "控制台就绪，等待运行时指令");
-            Append(LogKind.System, @"工作目录 %AppData%\AstraBrew Launcher\lib\tavern");
+            Append(LogKind.System, $"工作目录 {Path.Combine(AppPaths.RoamingRoot, "lib", "tavern")}");
             SessionText.Text = "SillyTavern v1.12.9";
             ApplyState();
         }

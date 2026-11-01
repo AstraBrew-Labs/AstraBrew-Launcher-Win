@@ -350,7 +350,7 @@ namespace AstraBrew_Launcher.Views
 
             ScanPanel.Visibility = Visibility.Visible;
             ScanStatusText.Text = "正在扫描本地磁盘…";
-            ScanPathText.Text = @"C:\Users\al01\Documents";
+            ScanPathText.Text = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
             ScanBar.IsIndeterminate = true;
             _scanTimer.Start();
         }

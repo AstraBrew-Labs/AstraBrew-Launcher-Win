@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -501,7 +502,10 @@ namespace AstraBrew_Launcher.Views
 
         private void OpenDataDir_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar("已打开数据目录", @"%AppData%\AstraBrew Launcher\data", InfoBarSeverity.Informational);
+            ShowBar(
+                "已打开数据目录",
+                Path.Combine(AppPaths.RoamingRoot, "data"),
+                InfoBarSeverity.Informational);
             App.MainWindow?.NavigateTo("resources");
         }
 

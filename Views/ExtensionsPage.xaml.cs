@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using AstraBrew_Launcher.Services;
 using AstraBrew_Launcher.Views.Controls;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -137,8 +139,13 @@ namespace AstraBrew_Launcher.Views
     /// </summary>
     public sealed partial class ExtensionsPage : Page
     {
-        private const string TargetPath =
-            @"C:\Users\al01\AppData\Roaming\AstraBrew Launcher\sillytavern\public\scripts\extensions\third-party";
+        /// <summary>目标实例的扩展目录：取自共享清单的内置实例路径，不再写死某个用户名。</summary>
+        private static readonly string TargetPath = Path.Combine(
+            TavernInstances.Builtin.Path,
+            "public",
+            "scripts",
+            "extensions",
+            "third-party");
 
         private readonly List<ExtensionRow> _all = new();
 
@@ -149,6 +156,10 @@ namespace AstraBrew_Launcher.Views
         public ExtensionsPage()
         {
             InitializeComponent();
+
+            // 界面上直接给出展开后的真实路径
+            TargetPathText.Text = TargetPath;
+
             Seed();
             Loaded += (_, _) => RefreshRows();
         }

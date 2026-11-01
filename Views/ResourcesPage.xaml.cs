@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -349,8 +351,11 @@ namespace AstraBrew_Launcher.Views
     /// </summary>
     public sealed partial class ResourcesPage : Page
     {
-        private const string DataRoot =
-            @"C:\Users\al01\AppData\Roaming\AstraBrew Launcher\sillytavern\data\default-user";
+        /// <summary>目标实例的默认用户目录：取自共享清单的内置实例路径，不再写死某个用户名。</summary>
+        private static readonly string DataRoot = Path.Combine(
+            TavernInstances.Builtin.Path,
+            "data",
+            "default-user");
 
         private enum TabKind
         {
@@ -382,6 +387,10 @@ namespace AstraBrew_Launcher.Views
         public ResourcesPage()
         {
             InitializeComponent();
+
+            // 界面上直接给出展开后的真实路径
+            DataPathText.Text = Path.Combine(DataRoot, FolderOf(_tab));
+
             Seed();
 
             _ready = true;
@@ -992,7 +1001,7 @@ namespace AstraBrew_Launcher.Views
 
             ListTitleText.Text = TitleOf(_tab);
             TabFolderChip.Text = FolderOf(_tab);
-            DataPathText.Text = DataRoot + @"\" + FolderOf(_tab);
+            DataPathText.Text = Path.Combine(DataRoot, FolderOf(_tab));
             ListFootText.Text = FootOf(_tab);
 
             ImportButton.Visibility = _tab == TabKind.Chats ? Visibility.Collapsed : Visibility.Visible;
@@ -1422,7 +1431,7 @@ namespace AstraBrew_Launcher.Views
 
         private void CopyPath_Click(object sender, RoutedEventArgs e)
         {
-            string path = DataRoot + @"\" + FolderOf(_tab);
+            string path = Path.Combine(DataRoot, FolderOf(_tab));
             var package = new DataPackage();
             package.SetText(path);
             Clipboard.SetContent(package);
@@ -1431,7 +1440,7 @@ namespace AstraBrew_Launcher.Views
 
         private void OpenDirectory_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar("资源目录", DataRoot + @"\" + FolderOf(_tab), InfoBarSeverity.Informational);
+            ShowBar("资源目录", Path.Combine(DataRoot, FolderOf(_tab)), InfoBarSeverity.Informational);
         }
 
         private void OpenWorkbench_Click(object sender, RoutedEventArgs e)

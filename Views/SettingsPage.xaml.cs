@@ -673,32 +673,16 @@ namespace AstraBrew_Launcher.Views
         // ==================== 系统交互 ====================
 
         /// <summary>
-        /// 路径控件宽度有限，把用户目录折叠成 %APPDATA% / %LOCALAPPDATA%，
-        /// 让「装在哪一级目录」一眼可见；完整路径放进 ToolTip。
+        /// 路径控件宽度有限：显示完整真实路径，超宽由 TextTrimming 截断，完整值同时放进 ToolTip。
+        /// 不要折叠成 %APPDATA% —— 用户没法把变量粘进资源管理器。
         /// </summary>
         private static void ShowPath(TextBlock target, string fullPath)
         {
-            var text = fullPath;
-            var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
-            if (text.StartsWith(local, StringComparison.OrdinalIgnoreCase))
-            {
-                text = "%LOCALAPPDATA%" + text[local.Length..];
-            }
-            else if (text.StartsWith(roaming, StringComparison.OrdinalIgnoreCase))
-            {
-                text = "%APPDATA%" + text[roaming.Length..];
-            }
-
-            target.Text = text;
+            target.Text = fullPath;
             ToolTipService.SetToolTip(target, fullPath);
         }
 
-        private static string Expand(string path) =>
-            Environment.ExpandEnvironmentVariables(path.Replace(
-                "%APPDATA%",
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)));
+        private static string Expand(string path) => AppPaths.Expand(path);
 
         private async Task<string?> PickFolderAsync()
         {
@@ -945,7 +929,7 @@ namespace AstraBrew_Launcher.Views
             {
                 $"GET https://github.com/…/{name} · 12.4 MB",
                 "校验 SHA-256 与发布清单一致",
-                "解压到 %APPDATA%\\AstraBrew Launcher\\lib",
+                $"解压到 {Path.Combine(AppPaths.RoamingRoot, "lib")}",
                 "写入版本标记，注册到 PATH 前置目录",
             };
 
