@@ -5,6 +5,7 @@
 
 ## AI
 .workbuddy/
+.workbuddy-ai/
 .aidocs/
 
 # User-specific files
