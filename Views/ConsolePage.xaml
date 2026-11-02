@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Page
     x:Class="AstraBrew_Launcher.Views.ConsolePage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -15,7 +15,7 @@
                 <Setter Property="Background" Value="Transparent" />
                 <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="CornerRadius" Value="8" />
                 <Setter Property="Padding" Value="10,5,11,6" />
                 <Setter Property="FontSize" Value="11.5" />
                 <Setter Property="MinHeight" Value="30" />
@@ -177,7 +177,7 @@
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                         BorderThickness="1"
                         Click="NetworkButton_Click"
-                        CornerRadius="10"
+                        CornerRadius="8"
                         ToolTipService.ToolTip="查看手机 / 平板访问地址"
                         Visibility="Collapsed">
                         <StackPanel Orientation="Horizontal" Spacing="5">
@@ -273,7 +273,7 @@
                         MinHeight="30"
                         Padding="12,5,14,6"
                         Click="Start_Click"
-                        Style="{StaticResource AccentButtonStyle}">
+                        Style="{StaticResource AccentActionButtonStyle}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon FontSize="11" Glyph="&#xE768;" />
                             <TextBlock FontSize="11.5" Text="启动" />

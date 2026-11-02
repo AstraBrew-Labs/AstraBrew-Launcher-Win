@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Page
     x:Class="AstraBrew_Launcher.Views.TavernConfigPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -430,7 +430,7 @@
                                     AutomationProperties.Name="添加白名单"
                                     Click="AddWhitelistSimple_Click"
                                     Content="添加"
-                                    Style="{StaticResource AccentButtonStyle}" />
+                                    Style="{StaticResource AccentActionButtonStyle}" />
                             </Grid>
 
                             <TextBlock
@@ -2111,7 +2111,7 @@
                 <Button
                     AutomationProperties.Name="保存配置"
                     Click="Save_Click"
-                    Style="{StaticResource AccentButtonStyle}">
+                    Style="{StaticResource AccentActionButtonStyle}">
                     <StackPanel Orientation="Horizontal" Spacing="7">
                         <FontIcon FontSize="13" Glyph="&#xE74E;" />
                         <TextBlock Text="保存配置" />

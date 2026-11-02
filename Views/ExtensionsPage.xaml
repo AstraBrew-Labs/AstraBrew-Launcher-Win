@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Page
     x:Class="AstraBrew_Launcher.Views.ExtensionsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -76,7 +76,7 @@
                                 Text="已启用 6 / 9" />
                         </StackPanel>
                     </Border>
-                    <Button Click="Install_Click" Style="{StaticResource AccentButtonStyle}">
+                    <Button Click="Install_Click" Style="{StaticResource AccentActionButtonStyle}">
                         <StackPanel Orientation="Horizontal" Spacing="7">
                             <FontIcon FontSize="13" Glyph="&#xE710;" />
                             <TextBlock Text="安装扩展" />

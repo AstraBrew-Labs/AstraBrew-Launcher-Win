@@ -404,6 +404,10 @@ namespace AstraBrew_Launcher.Views
                 DefaultButton = ContentDialogButton.Close,
             };
 
+            // DefaultButton 会被模板套上框架 AccentButtonStyle，圆角取自 ControlCornerRadius（4）。
+            // 在弹窗作用域里把它收到 8，让「取消」这颗强调按钮跟页面按钮同一个圆角。
+            dialog.Resources["ControlCornerRadius"] = new CornerRadius(8);
+
             if (Application.Current.Resources.TryGetValue("DangerDialogButtonStyle", out object dangerStyle)
                 && dangerStyle is Style style)
             {

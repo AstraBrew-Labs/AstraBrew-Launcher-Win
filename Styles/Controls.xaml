@@ -7,11 +7,26 @@
         AstraBrew Launcher · Fluent 2 设计标记
 
         栅格    ：8pt 基准（4 用于紧凑元素）
-        圆角    ：窗口/卡片 8 · 嵌套 6 · 控件 4
+        圆角    ：窗口/卡片/按钮 8 · 嵌套 6 · 其它控件 4（框架默认 ControlCornerRadius）
         字阶    ：28 / 18 / 14 / 13 / 12（Segoe UI Variable，随系统）
         材质    ：窗口 Mica Alt · 卡片 CardBackgroundFillColorDefault
         层次    ：以 stroke 为主、阴影为辅（Fluent 2 优于重阴影）
+
+        按钮圆角为什么单独定：
+        框架的 Button 圆角来自 ControlCornerRadius = 4，在 30~34 高的按钮上几乎看不出圆角，
+        观感接近直角。这里把按钮单独提到 8（与卡片同档），并保持其它控件仍是 4——
+        直接改 ControlCornerRadius 会连带改掉输入框、下拉框、滑块等一大片控件。
+        新增按钮相关样式请沿用这里的做法：显式 Style 自己设 CornerRadius=8，
+        强调按钮用 AccentActionButtonStyle 而不是框架的 AccentButtonStyle。
     -->
+
+    <!--
+        按钮统一圆角：管住所有没显式挂 Style 的 Button（含代码里 new Button 出来的）。
+        显式挂样式的按钮不受隐式样式影响，需要在各自样式里自己设 8。
+    -->
+    <Style TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="CornerRadius" Value="8" />
+    </Style>
 
     <!--  ==================== 文本 ====================  -->
 
@@ -146,6 +161,18 @@
 
     <!--  ==================== 交互控件 ====================  -->
 
+    <!--
+        强调按钮：框架 AccentButtonStyle 的圆角取自 ControlCornerRadius（4），
+        这里只叠一层圆角，模板与各状态色仍走框架，避免抄一份两百行模板。
+        页面里要用强调按钮时请用这个，不要直接挂 AccentButtonStyle。
+    -->
+    <Style
+        x:Key="AccentActionButtonStyle"
+        TargetType="Button"
+        BasedOn="{StaticResource AccentButtonStyle}">
+        <Setter Property="CornerRadius" Value="8" />
+    </Style>
+
     <!--  安静图标按钮：用于信息密度高的行内操作  -->
     <Style x:Key="SubtleIconButtonStyle" TargetType="Button">
         <Setter Property="Width" Value="28" />
@@ -153,7 +180,7 @@
         <Setter Property="Padding" Value="0" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="CornerRadius" Value="8" />
         <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -176,7 +203,7 @@
         <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="CornerRadius" Value="8" />
         <Setter Property="MinWidth" Value="110" />
     </Style>
 
@@ -739,7 +766,7 @@
         <Setter Property="Padding" Value="0" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="CornerRadius" Value="8" />
         <Setter Property="HorizontalAlignment" Value="Stretch" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
         <Setter Property="VerticalContentAlignment" Value="Center" />

@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Page
     x:Class="AstraBrew_Launcher.Views.VersionPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -353,7 +353,7 @@
                                                 <Button
                                                     Click="LocalFixDeps_Click"
                                                     Content="安装依赖"
-                                                    Style="{StaticResource AccentButtonStyle}"
+                                                    Style="{StaticResource AccentActionButtonStyle}"
                                                     Visibility="{x:Bind FixVisibility}" />
 
                                                 <Button
@@ -406,7 +406,7 @@
                                 HorizontalAlignment="Center"
                                 Orientation="Horizontal"
                                 Spacing="8">
-                                <Button Click="Scan_Click" Content="开始扫描" Style="{StaticResource AccentButtonStyle}" />
+                                <Button Click="Scan_Click" Content="开始扫描" Style="{StaticResource AccentActionButtonStyle}" />
                                 <Button Click="Import_Click" Content="手动添加" />
                             </StackPanel>
                         </StackPanel>
@@ -525,7 +525,7 @@
                                 <Button
                                     x:Name="UseBuiltinBtn"
                                     Click="UseBuiltin_Click"
-                                    Style="{StaticResource AccentButtonStyle}"
+                                    Style="{StaticResource AccentActionButtonStyle}"
                                     Visibility="Collapsed">
                                     <StackPanel Orientation="Horizontal" Spacing="7">
                                         <FontIcon FontSize="13" Glyph="&#xE7E8;" />
@@ -675,7 +675,7 @@
                                         Click="SwitchVersion_Click"
                                         Content="已是当前版本"
                                         IsEnabled="False"
-                                        Style="{StaticResource AccentButtonStyle}" />
+                                        Style="{StaticResource AccentActionButtonStyle}" />
 
                                     <TextBlock
                                         x:Name="SwitchHintText"

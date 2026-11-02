@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <UserControl
     x:Class="AstraBrew_Launcher.Views.OnboardingView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -109,7 +109,7 @@
                 <Setter Property="Background" Value="Transparent" />
                 <Setter Property="BorderThickness" Value="0" />
                 <Setter Property="Padding" Value="10,5" />
-                <Setter Property="CornerRadius" Value="4" />
+                <Setter Property="CornerRadius" Value="8" />
                 <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
             </Style>
         </ResourceDictionary>
@@ -824,7 +824,7 @@
                                     Click="Next_Click"
                                     Content="下一步"
                                     IsEnabled="False"
-                                    Style="{StaticResource AccentButtonStyle}" />
+                                    Style="{StaticResource AccentActionButtonStyle}" />
                             </StackPanel>
                         </Grid>
                     </Grid>

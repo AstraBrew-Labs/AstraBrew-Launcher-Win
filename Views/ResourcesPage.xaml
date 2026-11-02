@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Page
     x:Class="AstraBrew_Launcher.Views.ResourcesPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -569,7 +569,7 @@
                 <Button
                     x:Name="ImportButton"
                     Click="Import_Click"
-                    Style="{StaticResource AccentButtonStyle}">
+                    Style="{StaticResource AccentActionButtonStyle}">
                     <StackPanel Orientation="Horizontal" Spacing="7">
                         <FontIcon FontSize="13" Glyph="&#xE8B5;" />
                         <TextBlock x:Name="ImportButtonText" Text="导入角色卡" />

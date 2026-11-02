@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Page
     x:Class="AstraBrew_Launcher.Views.DashboardPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -243,7 +243,7 @@
                                     Margin="0,2,0,0"
                                     Orientation="Horizontal"
                                     Spacing="8">
-                                    <Button Click="Restart_Click" Style="{StaticResource AccentButtonStyle}">
+                                    <Button Click="Restart_Click" Style="{StaticResource AccentActionButtonStyle}">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <FontIcon FontSize="14" Glyph="&#xE72C;" />
                                             <TextBlock Text="重启服务" />

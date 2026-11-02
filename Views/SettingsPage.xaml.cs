@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -819,7 +819,7 @@ namespace AstraBrew_Launcher.Views
         private static Button ShellButton(string text, bool accent = false, bool danger = false)
         {
             var button = new Button { Content = text, MinWidth = 96 };
-            var key = danger ? "DangerDialogButtonStyle" : accent ? "AccentButtonStyle" : null;
+            var key = danger ? "DangerDialogButtonStyle" : accent ? "AccentActionButtonStyle" : null;
             if (key is not null
                 && Application.Current.Resources.TryGetValue(key, out object style)
                 && style is Style buttonStyle)

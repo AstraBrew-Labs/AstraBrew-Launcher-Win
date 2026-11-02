@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -472,7 +472,7 @@ namespace AstraBrew_Launcher.Views
             var close = new Button
             {
                 Content = "关闭",
-                Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+                Style = (Style)Application.Current.Resources["AccentActionButtonStyle"],
             };
             retry.Click += (_, _) =>
             {

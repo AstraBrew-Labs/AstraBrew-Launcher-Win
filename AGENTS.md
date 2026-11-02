@@ -8,6 +8,22 @@
 > 实现集中在 `Services/WindowPlacement.cs`（由 `MainWindow.SetupWindow` 创建）。
 > 新增窗口相关行为请改这里，不要在页面或 MainWindow 里另写一套 DPI / 尺寸计算。
 
+## 按钮圆角
+
+所有按钮圆角统一 8（与卡片同档），不要出现 4 以下的按钮圆角。
+
+- 全局默认值在 `Styles/Controls.xaml` 顶部的隐式 `Button` 样式里，覆盖所有没显式挂 Style 的
+  按钮（含代码里 `new Button` 出来的）；
+- 显式挂 Style 的按钮不受隐式样式影响，各自样式里必须自己写 `CornerRadius=8`
+  ——新增按钮样式时照抄这条；
+- 强调按钮用 `AccentActionButtonStyle`（= 框架 `AccentButtonStyle` + 圆角 8），
+  不要直接挂框架的 `AccentButtonStyle`，它的圆角来自 `ControlCornerRadius` 的 4；
+- 弹窗里由 `DefaultButton` 自动套上的强调按钮拿不到自定义 Style，需要在该 `ContentDialog`
+  上写 `dialog.Resources["ControlCornerRadius"] = new CornerRadius(8)`。
+- 例外：`ChipCloseButtonStyle`（14×14 的标签小叉）保持 7，等于圆形。
+
+> 不要把 `ControlCornerRadius` 全局改成 8 —— 那会连带改掉输入框、下拉框、滑块等一大片控件。
+
 ## 实例状态
 
 酒馆实例清单与「当前使用哪一份」只有一份数据：`Services/TavernInstances.cs`。
