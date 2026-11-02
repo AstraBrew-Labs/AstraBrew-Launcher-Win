@@ -21,6 +21,14 @@
             <Setter Property="Fill" Value="{ThemeResource DividerStrokeColorDefaultBrush}" />
         </Style>
 
+        <!--  链接行之间的分隔线：左右内缩，跟内缩后的悬停块同一套边距  -->
+        <Style
+            x:Key="LinkRowDividerStyle"
+            TargetType="Rectangle"
+            BasedOn="{StaticResource RowDividerStyle}">
+            <Setter Property="Margin" Value="16,0" />
+        </Style>
+
         <!--  信息行：左右内缩 16 与卡片内容对齐，行高由 Padding 撑开  -->
         <Style x:Key="InfoRowStyle" TargetType="Grid">
             <Setter Property="Padding" Value="16,11" />
@@ -58,23 +66,31 @@
             <Setter Property="MinHeight" Value="34" />
             <Setter Property="Padding" Value="14,4" />
             <Setter Property="FontSize" Value="13" />
+            <!--  圆角与页面卡片（8）对齐，不用框架默认的 4——4 在 34 高的按钮上接近直角  -->
+            <Setter Property="CornerRadius" Value="8" />
         </Style>
 
-        <!--  链接行：整行可点，hover 时铺一层 subtle 底，不描边  -->
+        <!--
+            链接行：整行可点，hover 时铺一层 subtle 底，不描边。
+            圆角 8 + 左右内缩 8，让悬停块浮在卡片里而不是贴死卡片边缘；
+            分割线同步内缩到 16（LinkRowDividerStyle），与内容左边缘对齐。
+        -->
         <Style x:Key="LinkRowStyle" TargetType="Button">
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="Padding" Value="16,10" />
+            <Setter Property="Margin" Value="8,0" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="CornerRadius" Value="0" />
+            <Setter Property="CornerRadius" Value="8" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border
                             x:Name="LinkBorder"
                             Padding="{TemplateBinding Padding}"
-                            Background="{TemplateBinding Background}">
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="{TemplateBinding CornerRadius}">
                             <ContentPresenter
                                 HorizontalAlignment="Stretch"
                                 VerticalAlignment="Center"
@@ -168,7 +184,10 @@
                         VerticalAlignment="Center"
                         Orientation="Horizontal"
                         Spacing="8">
-                        <Button Click="CopyVersionInfo_Click" ToolTipService.ToolTip="把版本与运行环境复制到剪贴板">
+                        <Button
+                            Click="CopyVersionInfo_Click"
+                            CornerRadius="8"
+                            ToolTipService.ToolTip="把版本与运行环境复制到剪贴板">
                             <StackPanel Orientation="Horizontal" Spacing="7">
                                 <FontIcon x:Name="CopyIcon" FontSize="13" Glyph="&#xE8C8;" />
                                 <TextBlock x:Name="CopyLabel" Text="复制版本信息" />
@@ -267,7 +286,8 @@
                                         Click="CheckUpdate_Click"
                                         Style="{StaticResource AccentButtonStyle}"
                                         MinHeight="34"
-                                        Padding="14,4">
+                                        Padding="14,4"
+                                        CornerRadius="8">
                                         <StackPanel Orientation="Horizontal" Spacing="7">
                                             <FontIcon FontSize="13" Glyph="&#xE72C;" />
                                             <TextBlock x:Name="CheckUpdateText" FontSize="13" Text="检查更新" />
@@ -526,6 +546,7 @@
                                 <Button
                                     Grid.Column="2"
                                     Click="OpenFolder_Click"
+                                    CornerRadius="8"
                                     ToolTipService.ToolTip="在资源管理器中打开"
                                     Tag="app">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
@@ -552,6 +573,7 @@
                                 <Button
                                     Grid.Column="2"
                                     Click="OpenFolder_Click"
+                                    CornerRadius="8"
                                     ToolTipService.ToolTip="在资源管理器中打开"
                                     Tag="data">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
@@ -578,6 +600,7 @@
                                 <Button
                                     Grid.Column="2"
                                     Click="OpenFolder_Click"
+                                    CornerRadius="8"
                                     ToolTipService.ToolTip="在资源管理器中打开"
                                     Tag="logs">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
@@ -634,7 +657,7 @@
                                 </Grid>
                             </Button>
 
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
+                            <Rectangle Style="{StaticResource LinkRowDividerStyle}" />
 
                             <Button
                                 Click="OpenLink_Click"
@@ -659,7 +682,7 @@
                                 </Grid>
                             </Button>
 
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
+                            <Rectangle Style="{StaticResource LinkRowDividerStyle}" />
 
                             <Button
                                 Click="OpenLink_Click"
@@ -684,7 +707,7 @@
                                 </Grid>
                             </Button>
 
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
+                            <Rectangle Style="{StaticResource LinkRowDividerStyle}" />
 
                             <Button
                                 Click="OpenLink_Click"
@@ -709,7 +732,7 @@
                                 </Grid>
                             </Button>
 
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
+                            <Rectangle Style="{StaticResource LinkRowDividerStyle}" />
 
                             <Button
                                 Click="OpenLink_Click"
