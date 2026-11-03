@@ -32,12 +32,57 @@ namespace AstraBrew_Launcher.Views.Controls
         /// <summary>消失动画跑完后触发：宿主收到后把这张卡从栈里移除。</summary>
         public event EventHandler? Dismissed;
 
+        /// <summary>这条消息的钥匙；常驻消息靠它被原地更新与定向撤走。</summary>
+        public string? Key { get; private set; }
+
+        /// <summary>常驻消息：不给关闭按钮，也不会被新消息挤掉。</summary>
+        public bool IsPinned { get; private set; }
+
         /// <summary>
         /// 填入一条消息并播放入场动画。调用前请先挂进视觉树——
         /// 图标配色要看 <see cref="FrameworkElement.ActualTheme"/>，离开树就取不到真实主题。
         /// </summary>
         public void Present(NotifyMessage message)
         {
+            Apply(message);
+
+            PlayEnter();
+
+            if (message.Seconds > 0)
+            {
+                CountdownTrack.Visibility = Visibility.Visible;
+                StartCountdown(message.Seconds);
+
+                _timer.Interval = TimeSpan.FromSeconds(message.Seconds);
+                _timer.Start();
+            }
+            else
+            {
+                // 常驻消息（失败类、任务进度类）不给倒计时条，避免暗示它会自己走
+                CountdownTrack.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        /// <summary>
+        /// 原地更新（同一把钥匙的后续版本）。不重播入场动画：
+        /// 扫描进度每四分之一秒来一条，每次都滑一遍就没法读了。
+        /// </summary>
+        public void Update(NotifyMessage message)
+        {
+            if (_closing)
+            {
+                return;
+            }
+
+            Apply(message);
+        }
+
+        /// <summary>标题 / 正文 / 图标 / 操作按钮：新消息与更新共用这一份。</summary>
+        private void Apply(NotifyMessage message)
+        {
+            Key = message.Key;
+            IsPinned = !message.Dismissible;
+
             TitleText.Text = message.Title;
 
             bool hasBody = !string.IsNullOrWhiteSpace(message.Message);
@@ -47,6 +92,9 @@ namespace AstraBrew_Launcher.Views.Controls
             var (glyph, accent) = Look(message.Severity, IsDark);
             SeverityIcon.Glyph = glyph;
             SeverityIcon.Foreground = new SolidColorBrush(accent);
+
+            // 常驻消息没有关闭按钮：能关掉但任务还在跑，反而更让人以为任务停了
+            CloseButton.Visibility = message.Dismissible ? Visibility.Visible : Visibility.Collapsed;
 
             if (!string.IsNullOrWhiteSpace(message.ActionText) && message.Action is not null)
             {
@@ -61,22 +109,6 @@ namespace AstraBrew_Launcher.Views.Controls
 
             // 倒计时条用同色半透明：既指出「还会停留多久」，又不抢标题的注意力
             CountdownBar.Background = new SolidColorBrush(Color.FromArgb(0x80, accent.R, accent.G, accent.B));
-
-            PlayEnter();
-
-            if (message.Seconds > 0)
-            {
-                CountdownTrack.Visibility = Visibility.Visible;
-                StartCountdown(message.Seconds);
-
-                _timer.Interval = TimeSpan.FromSeconds(message.Seconds);
-                _timer.Start();
-            }
-            else
-            {
-                // 常驻消息（失败类）不给倒计时条，避免暗示它会自己走
-                CountdownTrack.Visibility = Visibility.Collapsed;
-            }
         }
 
         /// <summary>播放淡出动画，结束后由宿主移除。</summary>

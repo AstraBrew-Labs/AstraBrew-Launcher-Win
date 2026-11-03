@@ -185,56 +185,27 @@
                                         <TextBlock Text="扫描" />
                                     </StackPanel>
                                 </Button>
-                                <Button Click="Import_Click" ToolTipService.ToolTip="手动指定酒馆目录">
+                                <Button Click="Import_Click" ToolTipService.ToolTip="指定一个已存在的酒馆 package.json">
                                     <StackPanel Orientation="Horizontal" Spacing="7">
                                         <FontIcon FontSize="13" Glyph="&#xE8E5;" />
                                         <TextBlock Text="导入" />
                                     </StackPanel>
                                 </Button>
+                                <!--
+                                    逐盘进度与命中清单的入口。搬到这里是因为「扫描到哪了」这句
+                                    已经由右下角的常驻消息一直说着，列表顶部不必再占一条。
+                                -->
                                 <Button
-                                    AutomationProperties.Name="扫描日志"
-                                    Click="ScanLog_Click"
+                                    x:Name="ScanDetailBtn"
+                                    AutomationProperties.Name="扫描详情"
+                                    Click="ScanDetail_Click"
                                     Style="{StaticResource SubtleIconButtonStyle}"
-                                    ToolTipService.ToolTip="扫描日志">
-                                    <FontIcon FontSize="13" Glyph="&#xE8A5;" />
+                                    ToolTipService.ToolTip="扫描详情：逐盘进度与找到的实例"
+                                    Visibility="Collapsed">
+                                    <FontIcon FontSize="13" Glyph="&#xE9D9;" />
                                 </Button>
                             </StackPanel>
                         </Grid>
-
-                        <!--  扫描进度：未扫描时不占位  -->
-                        <Border
-                            x:Name="ScanPanel"
-                            Padding="18,12"
-                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                            Visibility="Collapsed">
-                            <StackPanel Spacing="8">
-                                <Grid>
-                                    <TextBlock
-                                        x:Name="ScanStatusText"
-                                        VerticalAlignment="Center"
-                                        FontSize="13"
-                                        FontWeight="SemiBold"
-                                        Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                        Text="正在扫描本地磁盘…" />
-                                    <HyperlinkButton
-                                        HorizontalAlignment="Right"
-                                        VerticalAlignment="Center"
-                                        Click="CancelScan_Click"
-                                        Content="取消" />
-                                </Grid>
-                                <ProgressBar
-                                    x:Name="ScanBar"
-                                    Height="4"
-                                    IsIndeterminate="True" />
-                                <TextBlock
-                                    x:Name="ScanPathText"
-                                    FontFamily="Consolas"
-                                    FontSize="11"
-                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                    Text="C:\Users\al01\Documents\SillyTavern-1.19.0"
-                                    TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
-                        </Border>
 
                         <!--  实例列表：8 的卡片内缩 + 10 的行内边距 = 与卡头、卡底同为 18 的内容线  -->
                         <ItemsControl
@@ -337,7 +308,8 @@
 
                                                 <Button
                                                     Click="LocalFixDeps_Click"
-                                                    Content="安装依赖"
+                                                    Content="{x:Bind FixText}"
+                                                    IsEnabled="{x:Bind FixEnabled}"
                                                     Style="{StaticResource AccentActionButtonStyle}"
                                                     Visibility="{x:Bind FixVisibility}" />
 
@@ -385,7 +357,7 @@
                             <TextBlock
                                 HorizontalAlignment="Center"
                                 Style="{StaticResource FieldHintTextStyle}"
-                                Text="扫描磁盘或手动指定一个已存在的酒馆目录。" />
+                                Text="扫描磁盘，或指定一个已存在酒馆的 package.json。" />
                             <StackPanel
                                 Margin="0,4,0,0"
                                 HorizontalAlignment="Center"

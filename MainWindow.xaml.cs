@@ -65,6 +65,9 @@ namespace AstraBrew_Launcher
             // 全局消息：页面只管投递「装好了 / 装失败了」，弹出的位置与样式由窗口统一决定
             AppNotify.Raised += OnNotifyRaised;
 
+            // 扫描进度卡的「查看详情」：服务层不认页面，这里把两边接起来
+            InstanceScan.OpenDetail = OpenScanDetail;
+
             // 默认选中「仪表盘」
             if (NavView.MenuItems.Count > 0 && NavView.MenuItems[0] is NavigationViewItem first)
             {
@@ -110,6 +113,20 @@ namespace AstraBrew_Launcher
         private void Onboarding_Finished(object? sender, OnboardingResult result)
         {
             Onboarding.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>
+        /// 打开扫描详情：先切到版本管理页，再让页面把弹窗打开。
+        /// 页面刚导航过去时还没挂进视觉树（没有 XamlRoot），所以由页面自己记一笔、Loaded 时再弹。
+        /// </summary>
+        public void OpenScanDetail()
+        {
+            NavigateTo("versions");
+
+            if (ContentFrame.Content is VersionPage page)
+            {
+                page.OpenScanDetail();
+            }
         }
 
         /// <summary>当前导航到的路由标识。</summary>

@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentDialog
+    x:Class="AstraBrew_Launcher.Views.Controls.ScanDetailDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    Title="扫描本地实例"
+    CloseButtonText="后台运行"
+    mc:Ignorable="d">
+
+    <!--
+        详情弹窗：只是后台扫描任务的一个观察窗口。
+        关掉它不会停扫描——「取消扫描」是另一个明确的动作，不能让人靠关窗口来表达。
+
+        这里不重复右下角常驻消息里已经说过的话（扫了多少、找到几个、用了多久），
+        只放那儿看不见的细节：每块盘各自的进度环、还要多久、此刻翻到了哪个目录。
+    -->
+    <ContentDialog.Resources>
+        <!--  内容宽 620，默认 548 的弹窗会把每块盘右侧的剩余时间挤掉  -->
+        <x:Double x:Key="ContentDialogMaxWidth">760</x:Double>
+    </ContentDialog.Resources>
+
+    <Grid Width="620">
+        <StackPanel Spacing="12">
+
+            <!--  状态头  -->
+            <Grid ColumnSpacing="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <Border
+                    Width="36"
+                    Height="36"
+                    VerticalAlignment="Center"
+                    Background="#1F2B88D8"
+                    CornerRadius="8">
+                    <FontIcon
+                        FontSize="16"
+                        Foreground="#FF2B88D8"
+                        Glyph="&#xE721;" />
+                </Border>
+
+                <StackPanel
+                    Grid.Column="1"
+                    VerticalAlignment="Center"
+                    Spacing="2">
+                    <TextBlock
+                        x:Name="PhaseText"
+                        FontSize="14"
+                        FontWeight="SemiBold"
+                        Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                        Text="正在扫描本地磁盘…" />
+                    <TextBlock
+                        x:Name="PhaseHintText"
+                        Style="{StaticResource MetaChipTextStyle}"
+                        Text="正在统计线程分配…" />
+                </StackPanel>
+
+                <HyperlinkButton
+                    x:Name="CancelScanBtn"
+                    Grid.Column="2"
+                    Padding="8,4"
+                    VerticalAlignment="Center"
+                    Click="CancelScan_Click"
+                    Content="取消扫描" />
+            </Grid>
+
+            <!--  逐盘进度：每块盘一个环 + 还要多久  -->
+            <Grid>
+                <TextBlock Style="{StaticResource SubSectionTitleTextStyle}" Text="扫描进度" />
+                <TextBlock
+                    x:Name="RangeText"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Center"
+                    Style="{StaticResource MetaChipTextStyle}"
+                    Text="" />
+            </Grid>
+
+            <ItemsControl x:Name="DriveList" ItemsSource="{x:Bind Drives}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Spacing="6" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="controls:ScanDriveRow">
+                        <Border Padding="12,10" Style="{StaticResource SubPanelStyle}">
+                            <Grid ColumnSpacing="13">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <!--  环就是这块盘的完成度：百分比压在环心里，不用另起一行  -->
+                                <Grid
+                                    Width="46"
+                                    Height="46"
+                                    VerticalAlignment="Center">
+                                    <ProgressRing
+                                        Width="46"
+                                        Height="46"
+                                        Foreground="{ThemeResource AccentFillColorDefaultBrush}"
+                                        IsIndeterminate="{x:Bind IsIndeterminate, Mode=OneWay}"
+                                        Value="{x:Bind Percent, Mode=OneWay}" />
+                                    <TextBlock
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        FontSize="10"
+                                        FontWeight="SemiBold"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        Text="{x:Bind PercentText, Mode=OneWay}" />
+                                </Grid>
+
+                                <StackPanel
+                                    Grid.Column="1"
+                                    VerticalAlignment="Center"
+                                    Spacing="3">
+                                    <StackPanel
+                                        Orientation="Horizontal"
+                                        Spacing="7"
+                                        VerticalAlignment="Center">
+                                        <TextBlock
+                                            FontSize="13"
+                                            FontWeight="SemiBold"
+                                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                            Text="{x:Bind Root, Mode=OneWay}" />
+                                        <Border
+                                            Padding="6,1"
+                                            VerticalAlignment="Center"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            CornerRadius="4"
+                                            Visibility="{x:Bind KindVisibility, Mode=OneWay}">
+                                            <TextBlock
+                                                FontSize="10"
+                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                Text="{x:Bind KindText, Mode=OneWay}" />
+                                        </Border>
+                                        <TextBlock
+                                            VerticalAlignment="Center"
+                                            FontSize="11"
+                                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                            Text="{x:Bind DirsText, Mode=OneWay}" />
+                                    </StackPanel>
+
+                                    <!--  此刻翻到哪个目录：卡住不动时用户能看出是在啃大目录，不是死了  -->
+                                    <TextBlock
+                                        FontFamily="Consolas"
+                                        FontSize="11"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Text="{x:Bind Current, Mode=OneWay}"
+                                        TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+
+                                <TextBlock
+                                    Grid.Column="2"
+                                    VerticalAlignment="Center"
+                                    FontSize="11.5"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Text="{x:Bind StateText, Mode=OneWay}" />
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!--
+                机械盘提示：只在扫描范围里真有机械盘时出现。
+                固态盘上等十几秒是正常的，机械盘可能要好几分钟——不解释一句，
+                用户会以为卡死了。
+            -->
+            <InfoBar
+                x:Name="HddNotice"
+                IsClosable="False"
+                IsOpen="False"
+                Message="扫描速度与等待时间受设备配置影响；机械硬盘的读取速度较慢，请耐心等待。"
+                Severity="Warning"
+                Title="这块机械硬盘需要多等一会儿" />
+
+            <!--  找到的实例：扫到一个就加一条，不用等全盘扫完  -->
+            <Grid>
+                <TextBlock Style="{StaticResource SubSectionTitleTextStyle}" Text="找到的实例" />
+                <TextBlock
+                    x:Name="AddedText"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Center"
+                    Style="{StaticResource MetaChipTextStyle}"
+                    Text="" />
+            </Grid>
+
+            <Border Padding="12,10" Style="{StaticResource SubPanelStyle}">
+                <Grid>
+                    <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="HitList" ItemsSource="{x:Bind Hits}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Spacing="6" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="controls:ScanHitRow">
+                                    <StackPanel Spacing="1">
+                                        <TextBlock
+                                            FontSize="12"
+                                            FontWeight="SemiBold"
+                                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                            Text="{x:Bind Version}" />
+                                        <TextBlock
+                                            FontFamily="Consolas"
+                                            FontSize="11"
+                                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                            Text="{x:Bind Path}"
+                                            TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <TextBlock
+                        x:Name="HitEmptyText"
+                        Padding="0,6"
+                        Style="{StaticResource FieldHintTextStyle}"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        Text="还没有找到酒馆目录…" />
+                </Grid>
+            </Border>
+
+            <TextBlock
+                x:Name="FootHintText"
+                Style="{StaticResource FieldHintTextStyle}"
+                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                Text="关掉这个窗口不会中断扫描：进度一直显示在右下角的消息里，点它的「查看详情」就能回到这里。"
+                TextWrapping="Wrap" />
+        </StackPanel>
+    </Grid>
+</ContentDialog>

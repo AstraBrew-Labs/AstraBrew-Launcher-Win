@@ -341,7 +341,7 @@
 
                             <controls:SettingRow
                                 x:Name="CpuRow"
-                                Description="扫盘、解压与构建时的并行度；自动会按机器负载取一半核心。"
+                                Description="扫盘时开几条线程：自动留 2 核给系统、其余全用来扫；一半对半分；全部用满所有核心。"
                                 Glyph="&#xE950;"
                                 Title="占用 CPU 核心"
                                 WrapAt="500">

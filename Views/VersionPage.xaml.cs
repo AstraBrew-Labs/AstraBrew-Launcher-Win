@@ -2,13 +2,18 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AstraBrew_Launcher.Services;
+using AstraBrew_Launcher.Views.Controls;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
+using Windows.Storage.Pickers;
+using WinRT.Interop;
 
 namespace AstraBrew_Launcher.Views
 {
@@ -32,7 +37,14 @@ namespace AstraBrew_Launcher.Views
 
         public bool DepsReady { get; set; } = true;
 
-        public string VersionLabel => "v" + Version;
+        /// <summary>这一行的依赖正在装（同一时刻只允许一处，见 <see cref="VersionPage"/>）。</summary>
+        public bool IsFixing { get; set; }
+
+        public string VersionLabel => Version.Length == 0 ? "版本未知" : "v" + Version;
+
+        public string FixText => IsFixing ? "正在安装…" : "安装依赖";
+
+        public bool FixEnabled => !IsFixing;
 
         public string UseText => IsCurrent ? "使用中" : "使用";
 
@@ -60,7 +72,14 @@ namespace AstraBrew_Launcher.Views
     /// </summary>
     public sealed partial class VersionPage : Page
     {
-        private readonly DispatcherTimer _scanTimer = new();
+        /// <summary>已经开着的扫描详情弹窗。ContentDialog 同一时刻只能有一个。</summary>
+        private ScanDetailDialog? _scanDialog;
+
+        /// <summary>「查看详情」点进来时页面还没挂进视觉树，先记下来等 Loaded 再开弹窗。</summary>
+        private bool _pendingScanDetail;
+
+        /// <summary>正在补依赖的那份本地实例：同一时刻只跑一份 npm。</summary>
+        private TavernInstance? _fixingDeps;
 
         /// <summary>最近一次同步到界面上的内置版本，用来判断是否需要重置通道单选项。</summary>
         private string _lastBuiltinVersion = string.Empty;
@@ -74,9 +93,6 @@ namespace AstraBrew_Launcher.Views
         public VersionPage()
         {
             InitializeComponent();
-
-            _scanTimer.Interval = TimeSpan.FromMilliseconds(2200);
-            _scanTimer.Tick += ScanTimer_Tick;
 
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
@@ -95,18 +111,51 @@ namespace AstraBrew_Launcher.Views
             TavernInstances.Changed -= Catalog_Changed;
             TavernInstances.Changed += Catalog_Changed;
 
+            // 扫描在自己的后台任务里跑，页面只是它的一个观察者：
+            // 翻走再翻回来要能立刻接上当前进度
+            InstanceScan.Changed -= Scan_Changed;
+            InstanceScan.Changed += Scan_Changed;
+
             ApplyTab();
             SyncFromCatalog();
+            RefreshScanEntry();
 
             // 有缓存就直接画出来，没有才去请求；失败只影响下拉框，不影响其它内容
             _ = LoadReleasesAsync(force: false);
+            _ = LoadRuntimeLabelAsync();
+
+            // 从全局消息里的「查看详情」点过来时，页面刚导航完还没挂进视觉树，
+            // 那时开不了弹窗，只能在这里补一次
+            if (_pendingScanDetail)
+            {
+                _pendingScanDetail = false;
+                _ = ShowScanDialogAsync();
+            }
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             TavernInstances.Changed -= Catalog_Changed;
+            InstanceScan.Changed -= Scan_Changed;
+        }
 
-            _scanTimer.Stop();
+        private void Scan_Changed(object? sender, EventArgs e) => RefreshScanEntry();
+
+        /// <summary>
+        /// 各行显示的 Node.js 是「启动这份实例时用的那一套」，属于全应用共用的运行环境，
+        /// 不是每个目录各自的——所以统一探测一次，再铺到所有行上。
+        /// </summary>
+        private async Task LoadRuntimeLabelAsync()
+        {
+            try
+            {
+                RuntimeEnvironment env = await RuntimeProbe.ProbeAsync(LauncherSettings.Runtime);
+                TavernInstances.SetRuntimeLabel(env.Node);
+            }
+            catch (Exception)
+            {
+                // 探不到就保持「Node 未检测」，不影响实例本身的增删
+            }
         }
 
         /// <summary>
@@ -265,6 +314,7 @@ namespace AstraBrew_Launcher.Views
                     NodeText = instance.Node,
                     IsCurrent = ReferenceEquals(instance, current),
                     DepsReady = instance.DepsReady,
+                    IsFixing = ReferenceEquals(instance, _fixingDeps),
                 });
             }
 
@@ -272,7 +322,7 @@ namespace AstraBrew_Launcher.Views
 
             LocalTabCount.Text = locals.Count.ToString();
             LocalSummaryText.Text = locals.Count == 0
-                ? "尚未扫描到实例"
+                ? "尚未扫描到实例，点「扫描」全盘查找，或用「导入」指定 package.json"
                 : missing == 0
                     ? $"已发现 {locals.Count} 个实例 · 依赖全部就绪"
                     : $"已发现 {locals.Count} 个实例 · {missing} 个缺少依赖";
@@ -303,21 +353,118 @@ namespace AstraBrew_Launcher.Views
                 NotifySeverity.Success);
         }
 
-        private void LocalFixDeps_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// 给本地实例补 Node 依赖：在它自己的目录里跑一次 npm install，
+        /// 依赖落在它自己的 <c>node_modules</c> 里，不碰内置实例那一份。
+        /// </summary>
+        private async void LocalFixDeps_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not Button { DataContext: LocalInstanceRow row } || row.Instance is null)
             {
                 return;
             }
 
-            var target = row.Instance;
-            TavernInstances.SetDepsReady(target, true);
+            if (_fixingDeps is not null)
+            {
+                Notify(
+                    "正在安装依赖",
+                    $"先等 {_fixingDeps.KernelLabel} 装完，一次只跑一份 npm，同时跑两份会互相抢网络与磁盘。",
+                    NotifySeverity.Warning);
+                return;
+            }
+
+            TavernInstance target = row.Instance;
+            if (!await ConfirmLocalDepsAsync(target))
+            {
+                return;
+            }
+
+            _fixingDeps = target;
+            RefreshLocalRows();
 
             Notify(
-                "依赖已安装",
-                $"已为 {target.KernelLabel} 安装 Node 依赖（{target.Node} · npm 10.5.2），现在可以切换使用。",
-                NotifySeverity.Success);
+                "正在安装依赖",
+                $"{target.KernelLabel} 的依赖装在它自己的目录里，源为{LauncherSettings.NpmRegistryName}；"
+                    + "大约需要下载 300 MB，期间可以继续用启动器做别的事。",
+                NotifySeverity.Informational);
+
+            TavernInstallResult result;
+            try
+            {
+                result = await TavernInstaller.InstallDependenciesAsync(target.Path, null, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                result = new TavernInstallResult(false, "安装依赖时出错，请重试。", ex.Message, null, null, null);
+            }
+            finally
+            {
+                _fixingDeps = null;
+            }
+
+            // 装没装好以磁盘为准：重新读一遍 node_modules，不拿结果里的标记当真
+            TavernInstances.ReloadLocal(target);
+
+            if (result.Success && target.DepsReady)
+            {
+                Notify(
+                    "依赖已安装",
+                    $"{target.KernelLabel} 的 Node 依赖已就位，现在可以切换使用。",
+                    NotifySeverity.Success);
+                return;
+            }
+
+            string detail = result.Message
+                + (result.Hint is { Length: > 0 } hint ? " " + hint : string.Empty);
+
+            AppNotify.Post(
+                NotifySeverity.Error,
+                "依赖没有装好",
+                detail,
+                result.LogPath is { Length: > 0 } path ? "查看日志" : null,
+                result.LogPath is { Length: > 0 } logPath ? () => OpenPath(logPath) : null);
         }
+
+        /// <summary>
+        /// 补依赖前的确认：说清楚装在哪、走哪个源、装多久，以及只对这一次生效——
+        /// 用户最怕启动器偷偷改了 npm 的全局配置。
+        /// </summary>
+        private async Task<bool> ConfirmLocalDepsAsync(TavernInstance target)
+        {
+            var body = new StackPanel { Spacing = 8 };
+            body.Children.Add(new TextBlock
+            {
+                Text = "这份代码在，只是缺 Node 依赖。依赖装完才能启动，代码不会被改动。",
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = 22,
+            });
+            body.Children.Add(HintText($"安装位置　{target.Path}"));
+            body.Children.Add(HintText($"包　源　{LauncherSettings.NpmRegistryName}（{LauncherSettings.NpmRegistryUrl}）"));
+            body.Children.Add(HintText("源以参数形式传给这一次 npm，不改动全局 .npmrc；大约需要下载 300 MB、一到三分钟。"));
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = $"为 {target.KernelLabel} 安装依赖",
+                Content = body,
+                PrimaryButtonText = "开始安装",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+            };
+
+            // 与页面按钮同一个圆角
+            dialog.Resources["ControlCornerRadius"] = new CornerRadius(8);
+
+            return await dialog.ShowAsync() == ContentDialogResult.Primary;
+        }
+
+        private static TextBlock HintText(string text) => new()
+        {
+            Text = text,
+            FontSize = 12,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorTertiaryBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        };
 
         private async void LocalRemove_Click(object sender, RoutedEventArgs e)
         {
@@ -360,52 +507,161 @@ namespace AstraBrew_Launcher.Views
 
         // ==================== 本地实例：扫描 / 导入 ====================
 
-        private void Scan_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// 扫描是后台任务：点一次就开跑，进度落在右下角的常驻消息里（切页面也看得见），
+        /// 同时把详情弹窗打开——用户点了「扫描」，总得当场知道它开始动了。
+        /// 已经在扫时再点，只把弹窗重新打开，不再起第二遍。
+        /// </summary>
+        private async void Scan_Click(object sender, RoutedEventArgs e)
         {
-            if (_scanTimer.IsEnabled)
+            if (!InstanceScan.IsRunning)
+            {
+                InstanceScan.Start();
+            }
+
+            await ShowScanDialogAsync();
+        }
+
+        /// <summary>供全局消息的「查看详情」调用：页面还没挂进视觉树时先记一笔，Loaded 再弹。</summary>
+        public void OpenScanDetail()
+        {
+            if (XamlRoot is null)
+            {
+                _pendingScanDetail = true;
+                return;
+            }
+
+            _ = ShowScanDialogAsync();
+        }
+
+        private async void ScanDetail_Click(object sender, RoutedEventArgs e) => await ShowScanDialogAsync();
+
+        private async Task ShowScanDialogAsync()
+        {
+            if (_scanDialog is not null || XamlRoot is null)
             {
                 return;
             }
 
-            ScanPanel.Visibility = Visibility.Visible;
-            ScanStatusText.Text = "正在扫描本地磁盘…";
-            ScanPathText.Text = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            ScanBar.IsIndeterminate = true;
-            _scanTimer.Start();
+            var dialog = new ScanDetailDialog { XamlRoot = XamlRoot };
+            _scanDialog = dialog;
+
+            try
+            {
+                await dialog.ShowAsync();
+            }
+            catch (Exception)
+            {
+                // 同一 XamlRoot 上已经有别的弹窗：这次不打开，摘要条本身仍是实时的
+            }
+            finally
+            {
+                _scanDialog = null;
+            }
         }
 
-        private void ScanTimer_Tick(object? sender, object e)
+        /// <summary>
+        /// 详情按钮只在扫过之后出现。扫了多少、找到几个这些话已经由右下角的常驻消息
+        /// 一直说着，列表顶部不再单占一条摘要，只留一个进详情的入口。
+        /// </summary>
+        private void RefreshScanEntry()
         {
-            _scanTimer.Stop();
-            ScanPanel.Visibility = Visibility.Collapsed;
+            if (ScanDetailBtn is null)
+            {
+                return;
+            }
 
-            Notify(
-                "扫描完成",
-                $"已检查 18,432 个文件夹，识别到 {TavernInstances.Locals.Count} 个实例（跳过 2 个缺少 config.yaml 的目录）。",
-                NotifySeverity.Informational);
+            ScanDetailBtn.Visibility = InstanceScan.State.HasRun
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
 
-        private void CancelScan_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// 手动导入：选一个 <c>package.json</c>，校验 <c>name</c> 是不是 sillytavern。
+        ///
+        /// 选文件而不是选目录，是因为判据就在这个文件里：让人指一个目录，还得替他猜
+        /// package.json 在哪一层；指到文件就等于把判据直接摆出来了。
+        /// 校验统一走 <see cref="TavernInstances.AddLocal"/>，与扫描同一套标准。
+        /// </summary>
+        private async void Import_Click(object sender, RoutedEventArgs e)
         {
-            _scanTimer.Stop();
-            ScanPanel.Visibility = Visibility.Collapsed;
-            Notify("已取消扫描", "本次没有新增实例，已发现的列表保持不变。", NotifySeverity.Informational);
+            string? picked = await PickManifestAsync();
+            if (string.IsNullOrEmpty(picked))
+            {
+                return;
+            }
+
+            if (!string.Equals(Path.GetFileName(picked), "package.json", StringComparison.OrdinalIgnoreCase))
+            {
+                Notify(
+                    "请选择 package.json",
+                    "启动器靠 package.json 里的 name 字段判断这是不是酒馆目录，选别的文件没法验证。",
+                    NotifySeverity.Warning);
+                return;
+            }
+
+            // 实例路径是 package.json 所在的那一层
+            string root = Path.GetDirectoryName(picked) ?? picked;
+
+            switch (TavernInstances.AddLocal(root, out TavernInstance? added))
+            {
+                case LocalAddStatus.Added:
+                    Notify(
+                        "已添加本地实例",
+                        $"{added!.KernelLabel} · {added.Path}"
+                            + (added.DepsReady
+                                ? "；依赖已就绪，可以直接切换使用。"
+                                : "；还缺 Node 依赖，点行里的「安装依赖」补齐后才能启动。"),
+                        NotifySeverity.Success);
+                    break;
+
+                case LocalAddStatus.Duplicate:
+                    Notify(
+                        "这个实例已经在列表里",
+                        $"{root} 无需重复添加；要启用它，直接点行里的「使用」。",
+                        NotifySeverity.Informational);
+                    break;
+
+                case LocalAddStatus.Builtin:
+                    Notify(
+                        "这是内置实例，不能重复添加",
+                        "内置实例已经由「内置实例」页签托管，再加一份会出现两个入口指向同一份代码。"
+                            + "请选择其他目录下的 package.json。",
+                        NotifySeverity.Warning);
+                    break;
+
+                case LocalAddStatus.NotTavern:
+                    Notify(
+                        "这不是酒馆目录",
+                        $"package.json 里的 name 不是 \"{InstanceScanner.PackageName}\"，启动器不会把它当成酒馆代码。",
+                        NotifySeverity.Error);
+                    break;
+
+                default:
+                    Notify(
+                        "路径读不到",
+                        $"没有找到 {root}，或者当前账户没有读取它的权限。",
+                        NotifySeverity.Error);
+                    break;
+            }
         }
 
-        private void ScanLog_Click(object sender, RoutedEventArgs e)
+        private static async Task<string?> PickManifestAsync()
         {
-            Notify(
-                "扫描日志",
-                "2026-10-28 00:52 · 命中 3 个目录 · 跳过 2 个无 config.yaml 的目录 · 耗时 4.1 秒。",
-                NotifySeverity.Informational);
-        }
+            var picker = new FileOpenPicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+            };
 
-        private void Import_Click(object sender, RoutedEventArgs e)
-        {
-            Notify(
-                "请选择酒馆目录",
-                "选择包含 package.json 与 config.yaml 的目录，启动器会检查 Node 依赖后加入列表。",
-                NotifySeverity.Informational);
+            picker.FileTypeFilter.Add(".json");
+
+            if (App.MainWindow is not null)
+            {
+                InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(App.MainWindow));
+            }
+
+            StorageFile? file = await picker.PickSingleFileAsync();
+            return file?.Path;
         }
 
         // ==================== 内置实例：版本切换 ====================
@@ -1340,6 +1596,13 @@ namespace AstraBrew_Launcher.Views
 
         private void Refresh_Click(object sender, RoutedEventArgs e)
         {
+            // 磁盘才是真相：目录被删、在目录里 git pull 过，都要在这里对齐
+            TavernInstances.DropMissingLocals();
+            foreach (TavernInstance instance in TavernInstances.Locals.ToArray())
+            {
+                TavernInstances.ReloadLocal(instance);
+            }
+
             SyncFromCatalog();
 
             var current = TavernInstances.Current;

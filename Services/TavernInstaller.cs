@@ -111,9 +111,20 @@ namespace AstraBrew_Launcher.Services
         public static Task<TavernInstallResult> InstallDependenciesAsync(
             IProgress<TavernInstallProgress>? progress,
             CancellationToken token) =>
-            Task.Run(() => RunDepsOnlyAsync(progress, token));
+            Task.Run(() => RunDepsOnlyAsync(InstallRoot, progress, token));
+
+        /// <summary>
+        /// 给任意一份酒馆目录补依赖。本地实例的「安装依赖」走这条：
+        /// 依赖装在它自己的目录里，不碰内置实例那一份。
+        /// </summary>
+        public static Task<TavernInstallResult> InstallDependenciesAsync(
+            string root,
+            IProgress<TavernInstallProgress>? progress,
+            CancellationToken token) =>
+            Task.Run(() => RunDepsOnlyAsync(root, progress, token));
 
         private static async Task<TavernInstallResult> RunDepsOnlyAsync(
+            string root,
             IProgress<TavernInstallProgress>? progress,
             CancellationToken token)
         {
@@ -121,18 +132,18 @@ namespace AstraBrew_Launcher.Services
             var reporter = new Reporter(progress);
             var clock = Stopwatch.StartNew();
 
-            log.Info($"依赖安装开始 · 目录 {InstallRoot}");
+            log.Info($"依赖安装开始 · 目录 {root}");
             log.Info($"npm 源 {LauncherSettings.NpmRegistryName} {LauncherSettings.NpmRegistryUrl}");
 
-            if (!File.Exists(Path.Combine(InstallRoot, "package.json")))
+            if (!File.Exists(Path.Combine(root, "package.json")))
             {
-                log.Fail("安装目录里没有 package.json");
-                return Failure("还没有安装内置酒馆的代码。", "先在版本列表里选一个版本安装，再补依赖。", log);
+                log.Fail("目录里没有 package.json");
+                return Failure("这个目录里没有 package.json。", "确认一下选的是酒馆代码目录，再补依赖。", log);
             }
 
             try
             {
-                DepsOutcome deps = await InstallDepsAsync(InstallRoot, reporter, log, token).ConfigureAwait(false);
+                DepsOutcome deps = await InstallDepsAsync(root, reporter, log, token).ConfigureAwait(false);
 
                 if (!deps.Ok)
                 {
