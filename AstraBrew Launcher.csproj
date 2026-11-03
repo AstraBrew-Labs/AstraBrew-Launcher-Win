@@ -31,6 +31,16 @@
   </ItemGroup>
 
   <!--
+    内置字体：随包分发，设置页里「软件默认」用的就是这一份，不依赖本机是否安装。
+    文件名用 PostScript 名（Nowar-Warcraft-Rounded-CN-*）而不是中文名：
+    ms-appx:/// 是 URI，中文路径要转义，换成中文名后出问题很难查。
+    族名仍以 ttf 里的 name 表为准（有愛魔獸圓體 CN），见 FontCatalog.EmbeddedFamily。
+  -->
+  <ItemGroup>
+    <Content Include="Assets\Fonts\*.ttf" />
+  </ItemGroup>
+
+  <!--
     非打包构建时 Content 不会自动落到输出目录，ms-appx:///Assets/... 会解析失败
     （表现是 Image 渲染成一片空白）。这里统一补上复制到输出目录。
   -->

@@ -390,6 +390,7 @@ namespace AstraBrew_Launcher.Views
 
             // 界面上直接给出展开后的真实路径
             DataPathText.Text = Path.Combine(DataRoot, FolderOf(_tab));
+            TargetInstanceChipText.Text = $"内置 · {TavernInstances.Builtin.KernelLabel}";
 
             Seed();
 
@@ -1361,13 +1362,13 @@ namespace AstraBrew_Launcher.Views
 
             if (_pendingImport is null || _tab != TabKind.Characters)
             {
-                ShowBar("没有可导入的文件", $"{FolderOf(_tab)} 目录里没有新的文件，把资源放进去后再试。", InfoBarSeverity.Warning);
+                Notify("没有可导入的文件", $"{FolderOf(_tab)} 目录里没有新的文件，把资源放进去后再试。", NotifySeverity.Warning);
                 return;
             }
 
             _busy = true;
             ImportButton.IsEnabled = false;
-            ShowBar("正在校验", $"读取 {_pendingImport.FileName} 的角色卡字段…", InfoBarSeverity.Informational);
+            Notify("正在校验", $"读取 {_pendingImport.FileName} 的角色卡字段…", NotifySeverity.Informational);
 
             await Task.Delay(900);
 
@@ -1386,7 +1387,7 @@ namespace AstraBrew_Launcher.Views
             ApplyTabChrome();
             RefreshRows();
             SelectNewest(0);
-            ShowBar("导入完成", $"{imported.Name}（{imported.Version}）已写入 characters 目录。", InfoBarSeverity.Success);
+            Notify("导入完成", $"{imported.Name}（{imported.Version}）已写入 characters 目录。", NotifySeverity.Success);
         }
 
         private void SelectNewest(int index)
@@ -1426,7 +1427,7 @@ namespace AstraBrew_Launcher.Views
             }
 
             RefreshRows();
-            ShowBar("已重新扫描", $"{FolderOf(_tab)} 目录共 {CountOf(_tab)} 个资源。", InfoBarSeverity.Informational);
+            Notify("已重新扫描", $"{FolderOf(_tab)} 目录共 {CountOf(_tab)} 个资源。", NotifySeverity.Informational);
         }
 
         private void CopyPath_Click(object sender, RoutedEventArgs e)
@@ -1435,12 +1436,12 @@ namespace AstraBrew_Launcher.Views
             var package = new DataPackage();
             package.SetText(path);
             Clipboard.SetContent(package);
-            ShowBar("路径已复制", path, InfoBarSeverity.Success);
+            Notify("路径已复制", path, NotifySeverity.Success);
         }
 
         private void OpenDirectory_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar("资源目录", Path.Combine(DataRoot, FolderOf(_tab)), InfoBarSeverity.Informational);
+            Notify("资源目录", Path.Combine(DataRoot, FolderOf(_tab)), NotifySeverity.Informational);
         }
 
         private void OpenWorkbench_Click(object sender, RoutedEventArgs e)
@@ -1501,7 +1502,7 @@ namespace AstraBrew_Launcher.Views
             }
 
             RemoveSelected();
-            ShowBar("已删除", $"{name} 已从 {target} 目录中移除。", InfoBarSeverity.Success);
+            Notify("已删除", $"{name} 已从 {target} 目录中移除。", NotifySeverity.Success);
         }
 
         private void RemoveSelected()
@@ -1582,12 +1583,8 @@ namespace AstraBrew_Launcher.Views
 
         private static string SizeOf(long bytes) => ResourcePalette.Size(bytes);
 
-        private void ShowBar(string title, string message, InfoBarSeverity severity)
-        {
-            ActionInfoBar.Title = title;
-            ActionInfoBar.Message = message;
-            ActionInfoBar.Severity = severity;
-            ActionInfoBar.IsOpen = true;
-        }
+        /// <summary>页面播报统一走全局消息（窗口右下角），页面里不再挂 InfoBar。</summary>
+        private static void Notify(string title, string message, NotifySeverity severity)
+            => AppNotify.Post(severity, title, message);
     }
 }

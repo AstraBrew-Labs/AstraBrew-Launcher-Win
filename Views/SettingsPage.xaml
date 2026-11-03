@@ -104,7 +104,7 @@
                                 <TextBlock
                                     x:Name="SaveStateText"
                                     Style="{StaticResource StatusPillTextStyle}"
-                                    Text="已生效" />
+                                    Text="已保存" />
                             </StackPanel>
                         </Border>
 
@@ -116,6 +116,72 @@
                         </Button>
                     </StackPanel>
                 </Grid>
+
+                <!--  ==================== 配置版本 ====================  -->
+                <Border
+                    Padding="16,12"
+                    Style="{StaticResource CardStyle}">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Style="{StaticResource SegmentTrackStyle}">
+                            <StackPanel Orientation="Horizontal" Spacing="3">
+                                <RadioButton
+                                    x:Name="SimpleLevelRadio"
+                                    AutomationProperties.Name="小白版"
+                                    Checked="LevelRadio_Checked"
+                                    GroupName="SettingsLevel"
+                                    Style="{StaticResource SegmentRadioStyle}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon FontSize="12" Glyph="&#xE8A5;" />
+                                        <TextBlock Text="小白版" />
+                                    </StackPanel>
+                                </RadioButton>
+
+                                <RadioButton
+                                    x:Name="AdvancedLevelRadio"
+                                    AutomationProperties.Name="高手版"
+                                    Checked="LevelRadio_Checked"
+                                    GroupName="SettingsLevel"
+                                    Style="{StaticResource SegmentRadioStyle}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon FontSize="12" Glyph="&#xE943;" />
+                                        <TextBlock Text="高手版" />
+                                    </StackPanel>
+                                </RadioButton>
+                            </StackPanel>
+                        </Border>
+
+                        <Grid
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel VerticalAlignment="Center" Spacing="1">
+                                <TextBlock x:Name="LevelTitle" Style="{StaticResource CellTitleTextStyle}" Text="小白版 · 常用设置" />
+                                <TextBlock
+                                    x:Name="LevelHint"
+                                    Style="{StaticResource FieldHintTextStyle}"
+                                    Text="只保留日常会用到的分组，其余按推荐值运行。" />
+                            </StackPanel>
+
+                            <TextBlock
+                                x:Name="LevelCount"
+                                Grid.Column="1"
+                                Margin="10,0,0,0"
+                                VerticalAlignment="Center"
+                                Style="{StaticResource FootnoteTextStyle}"
+                                Text="6 组" />
+                        </Grid>
+                    </Grid>
+                </Border>
 
                 <!--  ==================== 界面 ====================  -->
                 <StackPanel Spacing="11">
@@ -134,7 +200,7 @@
                             VerticalAlignment="Center"
                             Spacing="2">
                             <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" Text="界面" />
-                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="语言、主题、缩放与字体；这些选项只影响启动器本身。" />
+                            <TextBlock x:Name="UiSectionHint" Style="{StaticResource FieldHintTextStyle}" Text="语言、主题、缩放与字体；这些选项只影响启动器本身。" />
                         </StackPanel>
                     </Grid>
 
@@ -165,9 +231,10 @@
                                     SelectionChanged="ThemePicker_SelectionChanged" />
                             </controls:SettingRow>
 
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
+                            <Rectangle x:Name="DividerBeforeScale" Style="{StaticResource RowDividerStyle}" />
 
                             <controls:SettingRow
+                                x:Name="ScaleRow"
                                 Description="按比例放大全部文字与控件，适合高分屏或视力不佳时使用。"
                                 Glyph="&#xE9E9;"
                                 Title="界面缩放"
@@ -192,21 +259,21 @@
                                 </StackPanel>
                             </controls:SettingRow>
 
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
+                            <Rectangle x:Name="DividerBeforeFont" Style="{StaticResource RowDividerStyle}" />
 
                             <controls:SettingRow
-                                Description="中文缺字时自动回退到系统字体，仅影响观感。"
+                                x:Name="FontRow"
+                                Description="加载本机已安装的字体…"
                                 Glyph="&#xE8D2;"
                                 Title="界面字体"
                                 WrapAt="620">
+                                <!--  条目由 SettingsPage.BuildFontList 动态填充：首项是内置的「软件默认」，其余是本机已装字体  -->
                                 <ComboBox
                                     x:Name="FontCombo"
-                                    Width="260"
-                                    SelectionChanged="FontCombo_SelectionChanged">
-                                    <ComboBoxItem Content="系统默认（Segoe UI Variable）" />
-                                    <ComboBoxItem Content="思源黑体 / 更圆润" />
-                                    <ComboBoxItem Content="等宽（Cascadia Mono）" />
-                                </ComboBox>
+                                    Width="300"
+                                    MaxDropDownHeight="420"
+                                    PlaceholderText="选择字体"
+                                    SelectionChanged="FontCombo_SelectionChanged" />
                             </controls:SettingRow>
 
                             <Rectangle Style="{StaticResource RowDividerStyle}" />
@@ -242,7 +309,7 @@
                             VerticalAlignment="Center"
                             Spacing="2">
                             <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" Text="基础" />
-                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="启动时机、资源分配与酒馆的默认启动方式。" />
+                            <TextBlock x:Name="BasicSectionHint" Style="{StaticResource FieldHintTextStyle}" Text="启动时机、资源分配与酒馆的默认启动方式。" />
                         </StackPanel>
                     </Grid>
 
@@ -273,6 +340,7 @@
                             <Rectangle Style="{StaticResource RowDividerStyle}" />
 
                             <controls:SettingRow
+                                x:Name="CpuRow"
                                 Description="扫盘、解压与构建时的并行度；自动会按机器负载取一半核心。"
                                 Glyph="&#xE950;"
                                 Title="占用 CPU 核心"
@@ -283,7 +351,7 @@
                                     SelectionChanged="CpuPicker_SelectionChanged" />
                             </controls:SettingRow>
 
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
+                            <Rectangle x:Name="DividerAfterCpu" Style="{StaticResource RowDividerStyle}" />
 
                             <controls:SettingRow
                                 Description="普通模式在浏览器里打开，桌面模式套一层独立窗口。"
@@ -344,9 +412,10 @@
                                 </controls:SettingRow>
                             </StackPanel>
 
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
+                            <Rectangle x:Name="DividerBeforeServerMode" Style="{StaticResource RowDividerStyle}" />
 
                             <controls:SettingRow
+                                x:Name="ServerModeRow"
                                 Description="允许局域网 / 公网访问酒馆；关闭时只有本机能连。"
                                 Glyph="&#xE968;"
                                 Title="服务器模式"
@@ -412,9 +481,10 @@
                                 </StackPanel>
                             </StackPanel>
 
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
+                            <Rectangle x:Name="DividerBeforeDataLocation" Style="{StaticResource RowDividerStyle}" />
 
                             <controls:SettingRow
+                                x:Name="DataLocationRow"
                                 Description="全局共享让多个实例共用一份角色卡；独立存放便于整体迁移。"
                                 Glyph="&#xE8B7;"
                                 Title="数据存放"
@@ -425,9 +495,10 @@
                                     SelectionChanged="DataLocationPicker_SelectionChanged" />
                             </controls:SettingRow>
 
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
+                            <Rectangle x:Name="DividerBeforeGlobalData" Style="{StaticResource RowDividerStyle}" />
 
                             <controls:SettingRow
+                                x:Name="GlobalDataRow"
                                 Description="全局共享模式下，角色卡与设置实际存放在这里。"
                                 Glyph="&#xE8E5;"
                                 Title="全局数据目录"
@@ -460,7 +531,7 @@
                 </StackPanel>
 
                 <!--  ==================== 控制台 ====================  -->
-                <StackPanel Spacing="11">
+                <StackPanel x:Name="ConsoleSection" Spacing="11">
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -497,11 +568,12 @@
                 </StackPanel>
 
                 <!--  ==================== 运行环境 ====================  -->
-                <StackPanel Spacing="11">
+                <StackPanel x:Name="RuntimeSection" Spacing="11">
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <Border
                             Background="#1F16A34A"
@@ -513,12 +585,55 @@
                             VerticalAlignment="Center"
                             Spacing="2">
                             <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" Text="运行环境" />
-                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="酒馆依赖的 Git、Node.js、PM2 等组件；内置环境与系统环境各有一套版本。" />
+                            <TextBlock x:Name="RuntimeSectionHint" Style="{StaticResource FieldHintTextStyle}" Text="酒馆依赖的 Git、Node.js、PM2 等组件；下面显示的是本机实际检测到的版本，没装就是「未安装」。" />
                         </StackPanel>
+                        <Button
+                            x:Name="RecheckEnvironmentButton"
+                            Grid.Column="2"
+                            VerticalAlignment="Center"
+                            Click="RecheckEnvironment_Click"
+                            Style="{StaticResource RowButtonStyle}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon FontSize="12" Glyph="&#xE72C;" />
+                                <TextBlock Text="重新检测" />
+                            </StackPanel>
+                        </Button>
                     </Grid>
 
                     <Border Style="{StaticResource SectionCardStyle}">
                         <StackPanel>
+                            <!--
+                                小白版：把五个组件收成一行结论 —— 三项必要环境齐了就是「正常」，
+                                缺任意一项才出现「修复」，不让人对着一排版本来回对照。
+                            -->
+                            <controls:SettingRow
+                                x:Name="RuntimeSummaryRow"
+                                Description="Git、Node.js 与 WebView2 三项齐全即可正常启动。"
+                                Glyph="&#xE964;"
+                                Title="必要运行环境"
+                                Visibility="Collapsed"
+                                WrapAt="500">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <Border x:Name="RuntimeStatePill" Style="{StaticResource StatePillStyle}">
+                                        <TextBlock
+                                            x:Name="RuntimeStateText"
+                                            Style="{StaticResource StatePillTextStyle}"
+                                            Text="检测中…" />
+                                    </Border>
+                                    <Button
+                                        x:Name="RepairRuntimeButton"
+                                        Click="RepairRuntime_Click"
+                                        Style="{StaticResource RowButtonStyle}"
+                                        Visibility="Collapsed">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <FontIcon FontSize="12" Glyph="&#xE90F;" />
+                                            <TextBlock Text="修复" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                            </controls:SettingRow>
+
+                            <StackPanel x:Name="AdvancedRuntimeRows">
                             <controls:SettingRow
                                 Description="内置环境装在启动器目录里，可随启动器一起搬走；系统环境由你自己维护。"
                                 Glyph="&#xE90F;"
@@ -580,7 +695,7 @@
                                         <TextBlock
                                             Style="{StaticResource StatePillTextStyle}"
                                             Foreground="{ThemeResource SystemFillColorCautionBrush}"
-                                            Text="可更新" />
+                                            Text="版本过低" />
                                     </Border>
                                     <Button
                                         x:Name="NodeInstallButton"
@@ -595,13 +710,40 @@
                                 </StackPanel>
                             </controls:SettingRow>
 
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
+                            <!--  npm 是 Node.js 的附带品：Node 没装时「npm」与「npm 包源」两行连同分隔线一起收起  -->
+                            <Rectangle
+                                x:Name="DividerBeforeNpm"
+                                Style="{StaticResource RowDividerStyle}"
+                                Visibility="Collapsed" />
 
                             <controls:SettingRow
                                 x:Name="NpmRow"
-                                Description="安装扩展与 PM2 时使用的包源。"
+                                Description="随 Node.js 一起装好的包管理器；安装扩展与 PM2 都靠它。"
                                 Glyph="&#xE774;"
+                                Title="npm"
+                                Visibility="Collapsed"
+                                WrapAt="500">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <TextBlock
+                                        x:Name="NpmVersionText"
+                                        VerticalAlignment="Center"
+                                        FontSize="13"
+                                        FontWeight="SemiBold" />
+                                </StackPanel>
+                            </controls:SettingRow>
+
+                            <!--  包源是 npm 的一项设置，和「npm 装没装、什么版本」分开一行，别挤在一起  -->
+                            <Rectangle
+                                x:Name="DividerBeforeNpmRegistry"
+                                Style="{StaticResource RowDividerStyle}"
+                                Visibility="Collapsed" />
+
+                            <controls:SettingRow
+                                x:Name="NpmRegistryRow"
+                                Description="安装扩展与 PM2 时使用的包源。"
+                                Glyph="&#xE71B;"
                                 Title="npm 包源"
+                                Visibility="Collapsed"
                                 WrapAt="700">
                                 <StackPanel
                                     HorizontalAlignment="Right"
@@ -706,6 +848,7 @@
                                     </Button>
                                 </StackPanel>
                             </controls:SettingRow>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
                 </StackPanel>
@@ -727,7 +870,7 @@
                             VerticalAlignment="Center"
                             Spacing="2">
                             <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" Text="下载" />
-                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="从 GitHub 取源码与依赖包时走哪条通道；国内直连经常超时，反代更稳。" />
+                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="获取源码与版本列表时走哪条通道；镜像下载更快，GitHub 链接可单独开加速。" />
                         </StackPanel>
                     </Grid>
 
@@ -737,44 +880,43 @@
                                 x:Name="ChannelRow"
                                 Glyph="&#xE8AB;"
                                 Title="下载通道"
-                                WrapAt="760">
-                                <controls:SegmentedPicker
-                                    x:Name="ChannelPicker"
-                                    Options="自动,gh-proxy.org,ghfast.top,官方"
-                                    SelectionChanged="ChannelPicker_SelectionChanged" />
-                            </controls:SettingRow>
-
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
-
-                            <controls:SettingRow
-                                Description="自动通道依赖最近一次测速结果，超过 15 分钟会标记为过期。"
-                                Glyph="&#xE72C;"
-                                Title="通道测速缓存"
-                                WrapAt="620">
-                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock
-                                            x:Name="ChannelCacheText"
-                                            HorizontalAlignment="Right"
-                                            FontSize="13"
-                                            FontWeight="SemiBold" />
-                                        <TextBlock
-                                            x:Name="ChannelCacheHintText"
-                                            HorizontalAlignment="Right"
-                                            FontSize="11"
-                                            Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
-                                    </StackPanel>
-                                    <Button
-                                        x:Name="RetestButton"
-                                        Click="RetestChannel_Click"
-                                        Style="{StaticResource RowButtonStyle}">
-                                        <StackPanel Orientation="Horizontal" Spacing="6">
-                                            <FontIcon FontSize="12" Glyph="&#xE895;" />
-                                            <TextBlock Text="测速" />
-                                        </StackPanel>
-                                    </Button>
+                                WrapAt="820">
+                                <StackPanel
+                                    HorizontalAlignment="Right"
+                                    Spacing="4">
+                                    <controls:SegmentedPicker
+                                        x:Name="ChannelPicker"
+                                        HorizontalAlignment="Right"
+                                        Options="Gitee 镜像,GitCode 镜像,GitHub 直连"
+                                        SelectionChanged="ChannelPicker_SelectionChanged" />
+                                    <TextBlock
+                                        x:Name="ChannelUrlText"
+                                        HorizontalAlignment="Right"
+                                        FontFamily="Consolas"
+                                        FontSize="11"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                                 </StackPanel>
                             </controls:SettingRow>
+
+                            <!--
+                                加速常显：一个开关管两件事——应用内的 GitHub 请求加前缀（HTTP/API/下载），
+                                全局 git 配置写 insteadOf（命令行、酒馆自动更新、酒馆内装扩展）。
+                                所以选镜像时它同样有意义，不能收起来。
+                            -->
+                            <StackPanel>
+                                <Rectangle Style="{StaticResource RowDividerStyle}" />
+
+                                <controls:SettingRow
+                                    x:Name="AccelRow"
+                                    Glyph="&#xE774;"
+                                    Title="GitHub 加速服务"
+                                    WrapAt="640">
+                                    <ToggleSwitch
+                                        x:Name="AccelSwitch"
+                                        Style="{StaticResource RowSwitchStyle}"
+                                        Toggled="AccelSwitch_Toggled" />
+                                </controls:SettingRow>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
                 </StackPanel>
@@ -796,41 +938,44 @@
                             VerticalAlignment="Center"
                             Spacing="2">
                             <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" Text="网络" />
-                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="访问 GitHub 与 npm 时使用的代理；系统代理跟随 Windows 的 Internet 选项。" />
+                            <TextBlock x:Name="NetworkSectionHint" Style="{StaticResource FieldHintTextStyle}" Text="访问 GitHub 与 npm 时使用的代理；系统代理跟随 Windows 的 Internet 选项。" />
                         </StackPanel>
                     </Grid>
 
                     <Border Style="{StaticResource SectionCardStyle}">
                         <StackPanel>
-                            <controls:SettingRow
-                                x:Name="ProxyRow"
-                                Glyph="&#xE71B;"
-                                Title="代理方式"
-                                WrapAt="700">
-                                <controls:SegmentedPicker
-                                    x:Name="ProxyPicker"
-                                    Glyphs="E72E,E7F4,E774"
-                                    Options="不使用,系统代理,自定义"
-                                    SelectionChanged="ProxyPicker_SelectionChanged" />
-                            </controls:SettingRow>
-
-                            <StackPanel x:Name="CustomProxyRows" Visibility="Collapsed">
-                                <Rectangle Style="{StaticResource RowDividerStyle}" />
-
+                            <!--  小白版整组收起：代理是排障手段，日常用户只需知道 GitHub 通不通  -->
+                            <StackPanel x:Name="ProxyGroup">
                                 <controls:SettingRow
-                                    Description="支持 http 与 socks5；带认证时写成 http://user:pass@host:port。"
+                                    x:Name="ProxyRow"
                                     Glyph="&#xE71B;"
-                                    Title="代理地址"
-                                    WrapAt="660">
-                                    <TextBox
-                                        x:Name="CustomProxyBox"
-                                        Width="322"
-                                        PlaceholderText="http://127.0.0.1:7890"
-                                        TextChanged="CustomProxyBox_TextChanged" />
+                                    Title="代理方式"
+                                    WrapAt="700">
+                                    <controls:SegmentedPicker
+                                        x:Name="ProxyPicker"
+                                        Glyphs="E72E,E7F4,E774"
+                                        Options="不使用,系统代理,自定义"
+                                        SelectionChanged="ProxyPicker_SelectionChanged" />
                                 </controls:SettingRow>
+
+                                <StackPanel x:Name="CustomProxyRows" Visibility="Collapsed">
+                                    <Rectangle Style="{StaticResource RowDividerStyle}" />
+
+                                    <controls:SettingRow
+                                        Description="支持 http 与 socks5；带认证时写成 http://user:pass@host:port。"
+                                        Glyph="&#xE71B;"
+                                        Title="代理地址"
+                                        WrapAt="660">
+                                        <TextBox
+                                            x:Name="CustomProxyBox"
+                                            Width="322"
+                                            PlaceholderText="http://127.0.0.1:7890"
+                                            TextChanged="CustomProxyBox_TextChanged" />
+                                    </controls:SettingRow>
+                                </StackPanel>
                             </StackPanel>
 
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
+                            <Rectangle x:Name="DividerBeforeGithub" Style="{StaticResource RowDividerStyle}" />
 
                             <controls:SettingRow
                                 Description="依次访问 GitHub 的网页、API 与下载域名，找出当前能跑通的那条。"
@@ -919,7 +1064,7 @@
                 </StackPanel>
 
                 <!--  ==================== 原型工具 ====================  -->
-                <StackPanel Spacing="11">
+                <StackPanel x:Name="PrototypeSection" Spacing="11">
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />

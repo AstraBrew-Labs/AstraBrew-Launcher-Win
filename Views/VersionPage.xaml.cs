@@ -1,6 +1,10 @@
-using System;
+﻿using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -57,7 +61,6 @@ namespace AstraBrew_Launcher.Views
     public sealed partial class VersionPage : Page
     {
         private readonly DispatcherTimer _scanTimer = new();
-        private readonly DispatcherTimer _switchTimer = new();
 
         /// <summary>最近一次同步到界面上的内置版本，用来判断是否需要重置通道单选项。</summary>
         private string _lastBuiltinVersion = string.Empty;
@@ -65,9 +68,8 @@ namespace AstraBrew_Launcher.Views
         private bool _syncingPicker;
         private bool _syncingChannel;
         private bool _switching;
-        private bool _secondPhase;
-        private double _switchProgress;
-        private string _switchTarget = string.Empty;
+        private bool _loadingReleases;
+        private bool _checkingMirror;
 
         public VersionPage()
         {
@@ -75,9 +77,6 @@ namespace AstraBrew_Launcher.Views
 
             _scanTimer.Interval = TimeSpan.FromMilliseconds(2200);
             _scanTimer.Tick += ScanTimer_Tick;
-
-            _switchTimer.Interval = TimeSpan.FromMilliseconds(40);
-            _switchTimer.Tick += SwitchTimer_Tick;
 
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
@@ -98,6 +97,9 @@ namespace AstraBrew_Launcher.Views
 
             ApplyTab();
             SyncFromCatalog();
+
+            // 有缓存就直接画出来，没有才去请求；失败只影响下拉框，不影响其它内容
+            _ = LoadReleasesAsync(force: false);
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -105,7 +107,6 @@ namespace AstraBrew_Launcher.Views
             TavernInstances.Changed -= Catalog_Changed;
 
             _scanTimer.Stop();
-            _switchTimer.Stop();
         }
 
         /// <summary>
@@ -200,7 +201,10 @@ namespace AstraBrew_Launcher.Views
         }
 
         /// <summary>
-        /// 内置卡头部的状态：使用中 / 已安装，并决定「使用内置实例」按钮是否出现。
+        /// 内置卡头部的状态：使用中 / 已安装 / 待装依赖 / 未安装，并决定「使用内置实例」按钮是否出现。
+        ///
+        /// 四种状态互斥：没装的时候既不能「使用」，也不该显示「已安装」——
+        /// 那会让用户以为点一下就能启动。缺依赖同理：代码在，但起不来。
         /// </summary>
         private void UpdateBuiltinActiveState()
         {
@@ -209,11 +213,22 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            bool builtinActive = TavernInstances.IsBuiltinActive;
+            bool installed = TavernInstances.BuiltinInstalled;
+            bool runnable = TavernInstances.BuiltinRunnable;
+
+            // 没装（或缺依赖）就没有「正在使用」可言：此时 Current 虽然还指着内置实例，
+            // 但磁盘上那份代码跑不起来，显示「使用中」会误导
+            bool builtinActive = TavernInstances.IsBuiltinActive && runnable;
 
             BuiltinActivePill.Visibility = builtinActive ? Visibility.Visible : Visibility.Collapsed;
-            BuiltinIdlePill.Visibility = builtinActive ? Visibility.Collapsed : Visibility.Visible;
-            UseBuiltinBtn.Visibility = builtinActive ? Visibility.Collapsed : Visibility.Visible;
+            BuiltinDepsPill.Visibility = installed && !TavernInstances.BuiltinDepsReady
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            BuiltinIdlePill.Visibility = runnable && !builtinActive ? Visibility.Visible : Visibility.Collapsed;
+            BuiltinMissingPill.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
+
+            // 缺依赖时不给「使用内置实例」：切过去也启动不了，先让它把依赖装上
+            UseBuiltinBtn.Visibility = runnable && !builtinActive ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void UseBuiltin_Click(object sender, RoutedEventArgs e)
@@ -225,10 +240,10 @@ namespace AstraBrew_Launcher.Views
 
             TavernInstances.Use(TavernInstances.Builtin);
 
-            ShowBar(
+            Notify(
                 "已切换实例",
                 $"后续启动将使用内置实例 {TavernInstances.Builtin.KernelLabel}。本地实例仍保留在列表中，随时可以切回。",
-                InfoBarSeverity.Success);
+                NotifySeverity.Success);
         }
 
         // ==================== 本地实例：列表 ====================
@@ -282,10 +297,10 @@ namespace AstraBrew_Launcher.Views
             // 只改共享状态；列表与页头由 Catalog_Changed 统一刷新
             TavernInstances.Use(target);
 
-            ShowBar(
+            Notify(
                 "已切换实例",
                 $"后续启动将使用本地 {target.KernelLabel}，目录：{target.Path}",
-                InfoBarSeverity.Success);
+                NotifySeverity.Success);
         }
 
         private void LocalFixDeps_Click(object sender, RoutedEventArgs e)
@@ -298,10 +313,10 @@ namespace AstraBrew_Launcher.Views
             var target = row.Instance;
             TavernInstances.SetDepsReady(target, true);
 
-            ShowBar(
+            Notify(
                 "依赖已安装",
                 $"已为 {target.KernelLabel} 安装 Node 依赖（{target.Node} · npm 10.5.2），现在可以切换使用。",
-                InfoBarSeverity.Success);
+                NotifySeverity.Success);
         }
 
         private async void LocalRemove_Click(object sender, RoutedEventArgs e)
@@ -335,12 +350,12 @@ namespace AstraBrew_Launcher.Views
 
             TavernInstances.RemoveLocal(target);
 
-            ShowBar(
+            Notify(
                 "已移除实例",
                 wasCurrent
                     ? $"{target.KernelLabel} 不再出现在列表中，目录 {target.Path} 仍然保留；当前已回落到内置实例 {TavernInstances.Builtin.KernelLabel}。"
                     : $"{target.KernelLabel} 不再出现在列表中，目录 {target.Path} 仍然保留。",
-                InfoBarSeverity.Informational);
+                NotifySeverity.Informational);
         }
 
         // ==================== 本地实例：扫描 / 导入 ====================
@@ -364,33 +379,33 @@ namespace AstraBrew_Launcher.Views
             _scanTimer.Stop();
             ScanPanel.Visibility = Visibility.Collapsed;
 
-            ShowBar(
+            Notify(
                 "扫描完成",
                 $"已检查 18,432 个文件夹，识别到 {TavernInstances.Locals.Count} 个实例（跳过 2 个缺少 config.yaml 的目录）。",
-                InfoBarSeverity.Informational);
+                NotifySeverity.Informational);
         }
 
         private void CancelScan_Click(object sender, RoutedEventArgs e)
         {
             _scanTimer.Stop();
             ScanPanel.Visibility = Visibility.Collapsed;
-            ShowBar("已取消扫描", "本次没有新增实例，已发现的列表保持不变。", InfoBarSeverity.Informational);
+            Notify("已取消扫描", "本次没有新增实例，已发现的列表保持不变。", NotifySeverity.Informational);
         }
 
         private void ScanLog_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar(
+            Notify(
                 "扫描日志",
                 "2026-10-28 00:52 · 命中 3 个目录 · 跳过 2 个无 config.yaml 的目录 · 耗时 4.1 秒。",
-                InfoBarSeverity.Informational);
+                NotifySeverity.Informational);
         }
 
         private void Import_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar(
+            Notify(
                 "请选择酒馆目录",
                 "选择包含 package.json 与 config.yaml 的目录，启动器会检查 Node 依赖后加入列表。",
-                InfoBarSeverity.Informational);
+                NotifySeverity.Informational);
         }
 
         // ==================== 内置实例：版本切换 ====================
@@ -403,6 +418,7 @@ namespace AstraBrew_Launcher.Views
             }
 
             string builtinVersion = TavernInstances.Builtin.Version;
+            bool installed = TavernInstances.BuiltinInstalled;
 
             _syncingPicker = true;
             VersionPicker.Items.Clear();
@@ -411,16 +427,22 @@ namespace AstraBrew_Launcher.Views
             {
                 VersionPicker.Items.Add(new ComboBoxItem
                 {
-                    Content = "staging · 4c1f9ab（开发分支最新）",
+                    Content = "staging · 开发分支最新",
                     Tag = TavernInstances.StagingTag,
                 });
             }
             else
             {
-                foreach (var release in TavernInstances.StableReleases)
+                foreach (TavernRelease release in TavernInstances.Releases)
                 {
-                    string label = $"v{release.Version} · {release.Date}";
-                    if (release.Version == builtinVersion)
+                    if (release.Prerelease)
+                    {
+                        // 稳定版通道只列正式版；预发布留给开发版，不混进同一个下拉框
+                        continue;
+                    }
+
+                    string label = $"v{release.Version} · {release.DateLabel}";
+                    if (installed && release.Version == builtinVersion)
                     {
                         // 当前版本不再重复标「最新」，避免「最新 · 当前」两个标签挤在一起。
                         label += " · 当前";
@@ -436,12 +458,39 @@ namespace AstraBrew_Launcher.Views
                         Tag = release.Version,
                     });
                 }
+
+                if (VersionPicker.Items.Count == 0)
+                {
+                    // 没缓存又没网时的兜底：不假装有版本可选，也不留一个空下拉框
+                    VersionPicker.Items.Add(new ComboBoxItem
+                    {
+                        Content = "版本列表尚未获取",
+                        Tag = null,
+                        IsEnabled = false,
+                    });
+                }
             }
 
-            VersionPicker.SelectedIndex = 0;
+            // 默认选中「已经装着的那个版本」：否则用户看到的是「切换」而不是
+            // 「安装依赖」，明明只差一步却以为要从头再装一遍
+            int selectIndex = 0;
+            if (installed)
+            {
+                for (int i = 0; i < VersionPicker.Items.Count; i++)
+                {
+                    if ((VersionPicker.Items[i] as ComboBoxItem)?.Tag as string == builtinVersion)
+                    {
+                        selectIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            VersionPicker.SelectedIndex = selectIndex;
             _syncingPicker = false;
 
             UpdateSwitchButton();
+            _ = RefreshSourceRouteAsync();
         }
 
         private void Channel_Checked(object sender, RoutedEventArgs e)
@@ -465,8 +514,13 @@ namespace AstraBrew_Launcher.Views
             }
 
             UpdateSwitchButton();
+            _ = RefreshSourceRouteAsync();
         }
 
+        /// <summary>
+        /// 一颗按钮承担「安装」「换版」「装依赖」：前两者在磁盘上是同一件事（把某个版本拉到安装目录），
+        /// 第三个只补 <c>node_modules</c>。没装时不显示「切换」——那会让用户以为已经有东西可以切。
+        /// </summary>
         private void UpdateSwitchButton()
         {
             if (SwitchVersionBtn is null || SwitchHintText is null || VersionPicker is null)
@@ -475,25 +529,136 @@ namespace AstraBrew_Launcher.Views
             }
 
             string target = (VersionPicker.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
-            bool same = target.Length > 0 && target == TavernInstances.Builtin.Version;
+            bool installed = TavernInstances.BuiltinInstalled;
+            bool depsReady = TavernInstances.BuiltinDepsReady;
+            bool same = installed && target.Length > 0 && target == TavernInstances.Builtin.Version;
 
-            SwitchVersionBtn.IsEnabled = !_switching && target.Length > 0 && !same;
+            // 代码就是这一份、只是缺依赖：按钮只干装依赖这一件事
+            bool depsOnly = same && !depsReady;
+
+            SwitchVersionBtn.IsEnabled = !_switching && target.Length > 0 && (!same || depsOnly);
             SwitchVersionBtn.Content = _switching
-                ? "正在切换…"
-                : same
-                    ? "已是当前版本"
-                    : target.Length > 0
-                        ? $"切换到 {DisplayVersion(target)}"
-                        : "选择要切换的版本";
+                ? depsOnly ? "正在安装依赖…" : installed ? "正在切换…" : "正在安装…"
+                : depsOnly
+                    ? "安装依赖"
+                    : same
+                        ? "已是当前版本"
+                        : target.Length > 0
+                            ? $"{(installed ? "切换到" : "安装")} {DisplayVersion(target)}"
+                            : installed ? "选择要切换的版本" : "选择要安装的版本";
 
-            // 当前在用本地实例时，「换版」只改内置代码，不改变使用来源，必须写清楚，
-            // 否则用户会以为换版就等于切回内置。
-            SwitchHintText.Text = !TavernInstances.IsBuiltinActive
-                ? "换版只更新内置实例的代码，不改变当前使用的实例；换版后点右上角「使用内置实例」即可启用。"
-                : IsStaging
-                    ? "开发版跟随 staging 分支，切换同样覆盖当前代码。"
-                    : "切换会覆盖当前版本，旧版本不会保留。";
+            SwitchHintText.Text = depsOnly
+                ? $"代码已就位，还差 Node 依赖；安装会临时使用「设置 → 下载」里的 {LauncherSettings.NpmRegistryName} 源，不改动全局 npm 配置。"
+                : !installed
+                    ? "将从「设置 → 下载」里选的通道拉取源码，并接着安装 Node 依赖；需要 Git 与 Node.js 已就绪。"
+                    : !TavernInstances.IsBuiltinActive
+                        ? "换版会覆盖代码并重装依赖，不改变当前使用的实例；换版后点右上角「使用内置实例」即可启用。"
+                        : IsStaging
+                            ? "开发版跟随 staging 分支，切换同样覆盖当前代码。"
+                            : "切换会覆盖当前版本并重装依赖，旧版本不会保留。";
         }
+
+        // ==================== 安装来源：镜像可用 / 直连 ====================
+
+        /// <summary>
+        /// 判断这次安装「能不能走镜像」并写进界面。
+        ///
+        /// 规则很直白：把镜像仓库的引用清单（一次取回、缓存半小时）与当前选的版本比一比，
+        /// 有同一个标签就显示「镜像可用」，没有就显示「直连安装」——直连就是官方 GitHub。
+        /// 选的是 GitHub 直连通道时不存在「镜像可用」，只显示「直连安装」。
+        /// </summary>
+        private async Task RefreshSourceRouteAsync()
+        {
+            if (SourceRouteRow is null || _switching)
+            {
+                return;
+            }
+
+            DownloadChannel channel = LauncherSettings.Channel;
+            string revision = (VersionPicker?.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
+
+            if (channel == DownloadChannel.Github)
+            {
+                ShowRoute(
+                    mirror: false,
+                    LauncherSettings.GithubAcceleration
+                        ? "从 github.com 拉取，已开启加速服务（失败自动直连）。"
+                        : "从 github.com 直接拉取，未经加速。");
+                return;
+            }
+
+            if (revision.Length == 0)
+            {
+                ShowRoute(mirror: false, "先在版本列表里选一个版本，再比对镜像。");
+                return;
+            }
+
+            // 已经有这台镜像的清单且通道没变：直接判定，不再请求
+            if (TavernMirrors.TryGetCached(channel, out MirrorRefs known))
+            {
+                ApplyRoute(channel, revision, known);
+                return;
+            }
+
+            if (_checkingMirror)
+            {
+                return;
+            }
+
+            _checkingMirror = true;
+            SourceRouteText.Text = $"正在比对 {LauncherSettings.ChannelName(channel)} 的版本…";
+
+            try
+            {
+                MirrorRefs refs = await TavernMirrors.GetAsync(channel, force: false, CancellationToken.None);
+                ApplyRoute(channel, revision, refs);
+            }
+            finally
+            {
+                _checkingMirror = false;
+            }
+        }
+
+        private void ApplyRoute(DownloadChannel channel, string revision, MirrorRefs refs)
+        {
+            if (refs.Channel != channel)
+            {
+                return;
+            }
+
+            bool staging = revision == TavernInstances.StagingTag;
+            bool usable = staging ? refs.HasBranch(TavernInstances.StagingTag) : refs.HasTag(revision);
+
+            if (refs.Error is { Length: > 0 } error)
+            {
+                ShowRoute(
+                    mirror: false,
+                    $"没能比对镜像（{error}），这次直接从 GitHub 拉取。");
+                return;
+            }
+
+            ShowRoute(
+                usable,
+                usable
+                    ? $"{LauncherSettings.ChannelName(channel)} 已同步 {DisplayVersion(revision)}，从镜像下载。"
+                    : LauncherSettings.GithubAcceleration
+                        ? $"{LauncherSettings.ChannelName(channel)} 没有 {DisplayVersion(revision)}，改用 GitHub；"
+                            + "加速服务已开启，git 拉取会自动经中转（全局配置生效）。"
+                        : $"{LauncherSettings.ChannelName(channel)} 没有 {DisplayVersion(revision)}，改用 GitHub 直连拉取。");
+        }
+
+        private void ShowRoute(bool mirror, string detail)
+        {
+            if (SourceRouteRow is null)
+            {
+                return;
+            }
+
+            MirrorOkChip.Visibility = mirror ? Visibility.Visible : Visibility.Collapsed;
+            DirectChip.Visibility = mirror ? Visibility.Collapsed : Visibility.Visible;
+            SourceRouteText.Text = detail;
+        }
+
 
         private void ApplyBuiltinCurrent()
         {
@@ -508,33 +673,49 @@ namespace AstraBrew_Launcher.Views
             // 安装目录来自共享清单，不再写死一份样例路径
             BuiltinPathText.Text = builtin.Path;
 
+            // 没装：不显示版本号，也不留三枚空胶囊——版本号是「当前装的这一份」的属性
+            if (!TavernInstances.BuiltinInstalled)
+            {
+                BuiltinVersionText.Text = "未安装";
+                MetaRow.Visibility = Visibility.Collapsed;
+                LatestPill.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            MetaRow.Visibility = Visibility.Visible;
+
             if (version == TavernInstances.StagingTag)
             {
                 BuiltinVersionText.Text = TavernInstances.StagingTag;
                 MetaChannelText.Text = "开发版";
-                MetaDateText.Text = "更新于 2026-10-27";
-                MetaSizeText.Text = builtin.Size;
-                MetaFilesText.Text = "1,312 个文件";
+                MetaDateText.Text = "跟随 staging 分支";
+                MetaTagText.Text = "分支 staging";
                 LatestPill.Visibility = Visibility.Collapsed;
                 return;
             }
 
             BuiltinVersionText.Text = "v" + version;
-            MetaChannelText.Text = "稳定版";
 
-            int index = Array.FindIndex(
-                TavernInstances.StableReleases,
-                item => item.Version == version);
-            MetaDateText.Text = index >= 0 ? "发布于 " + TavernInstances.StableReleases[index].Date : "发布日期未知";
-            MetaSizeText.Text = index >= 0 ? TavernInstances.StableReleases[index].Size : "—";
-            MetaFilesText.Text = index >= 0 ? TavernInstances.StableReleases[index].Files : "—";
+            // 元信息只写发布列表里真有的事实：不编体积、不编文件数
+            TavernRelease? release = TavernInstances.FindRelease(version);
+            MetaChannelText.Text = release?.ChannelLabel ?? "稳定版";
+            MetaDateText.Text = release is null
+                ? "发布日期未知"
+                : release.PublishedAt is null
+                    ? "发布日期未知"
+                    : "发布于 " + release.DateLabel;
+            MetaTagText.Text = release is null ? "未在发布列表中" : "标签 " + release.Tag;
 
             LatestPill.Visibility = version == TavernInstances.LatestStable
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
 
-        private void SwitchVersion_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// 安装 / 换版 / 补依赖：先确认 Git 与 Node.js 就位，再按「镜像可用性」决定从哪拉代码。
+        /// 缺环境时不硬装——装完了也启动不了，反而让人以为是代码的问题。
+        /// </summary>
+        private async void SwitchVersion_Click(object sender, RoutedEventArgs e)
         {
             if (_switching)
             {
@@ -546,71 +727,362 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            if (target == TavernInstances.Builtin.Version)
+            bool installed = TavernInstances.BuiltinInstalled;
+            bool same = installed && target == TavernInstances.Builtin.Version;
+
+            if (same && TavernInstances.BuiltinDepsReady)
             {
                 return;
             }
 
-            _switchTarget = target;
-            _switchProgress = 0;
-            _secondPhase = false;
+            // 代码已经是对的那一份，缺的只是 node_modules：不重下源码
+            if (same)
+            {
+                if (!await EnsureRuntimeAsync(needGit: false))
+                {
+                    return;
+                }
+
+                if (!await ConfirmDepsInstallAsync())
+                {
+                    return;
+                }
+
+                await RunDepsInstallAsync();
+                return;
+            }
+
+            if (!await EnsureRuntimeAsync(needGit: true))
+            {
+                return;
+            }
+
+            await RunInstallAsync(target, installed);
+        }
+
+        /// <summary>
+        /// 装之前的两道门：Git（拉源码）与 Node.js（跑酒馆，顺带提供 npm）。
+        /// 缺任意一个就弹窗说清楚缺什么，并给一个直接落到「运行环境」分组的按钮。
+        /// 只补依赖时不需要 Git，此时只查 Node.js。
+        /// </summary>
+        private async Task<bool> EnsureRuntimeAsync(bool needGit)
+        {
+            SwitchVersionBtn.IsEnabled = false;
+
+            RuntimeEnvironment env;
+            try
+            {
+                env = await RuntimeProbe.ProbeAsync(LauncherSettings.Runtime, force: true);
+            }
+            catch
+            {
+                env = RuntimeEnvironment.Empty;
+            }
+
+            var missing = new List<string>();
+            if (needGit && env.Git is null)
+            {
+                missing.Add("Git");
+            }
+
+            if (env.Node is null)
+            {
+                missing.Add("Node.js");
+            }
+
+            if (missing.Count == 0)
+            {
+                return true;
+            }
+
+            UpdateSwitchButton();
+
+            string what = string.Join(" 与 ", missing);
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = $"需要先安装 {what}",
+                Content = new TextBlock
+                {
+                    Text = $"{what} 还没装好，酒馆装完也启动不了。\n\n"
+                        + "在「设置 → 运行环境」里点对应的「安装」，装完回到这里再点一次即可。",
+                    TextWrapping = TextWrapping.Wrap,
+                    LineHeight = 22,
+                },
+                PrimaryButtonText = "前往设置",
+                CloseButtonText = "稍后再说",
+                DefaultButton = ContentDialogButton.Primary,
+            };
+
+            // 与页面按钮同一个圆角
+            dialog.Resources["ControlCornerRadius"] = new CornerRadius(8);
+
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                SettingsPage.OpenRuntimeSection();
+                App.MainWindow?.NavigateTo("settings");
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 补依赖前的确认：说清楚装在哪、走哪个源、装多久，
+        /// 以及「只对这一次生效」——用户最怕启动器偷偷改了 npm 的全局配置。
+        /// </summary>
+        private async Task<bool> ConfirmDepsInstallAsync()
+        {
+            string root = TavernInstances.BuiltinInstallRoot;
+
+            var body = new StackPanel { Spacing = 8 };
+            body.Children.Add(new TextBlock
+            {
+                Text = "代码已经在本地了，只缺 Node 依赖。依赖装完才算安装完成。",
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = 22,
+            });
+            body.Children.Add(new TextBlock
+            {
+                Text = $"安装位置　{root}",
+                FontSize = 12,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorTertiaryBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+            body.Children.Add(new TextBlock
+            {
+                Text = $"包　源　{LauncherSettings.NpmRegistryName}（{LauncherSettings.NpmRegistryUrl}）",
+                FontSize = 12,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorTertiaryBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+            body.Children.Add(new TextBlock
+            {
+                Text = "源以参数形式传给这一次 npm，不改动全局 .npmrc；大约需要下载 300 MB、一到三分钟。",
+                FontSize = 12,
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorTertiaryBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = "安装 Node 依赖",
+                Content = body,
+                PrimaryButtonText = "开始安装",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+            };
+
+            dialog.Resources["ControlCornerRadius"] = new CornerRadius(8);
+
+            return await dialog.ShowAsync() == ContentDialogResult.Primary;
+        }
+
+        /// <summary>
+        /// 把安装进度画到卡片里。依赖阶段没有可信百分比，改用不确定态 + 「已处理 N 个包」，
+        /// 比编一个匀速涨的数字诚实。
+        /// </summary>
+        private Progress<TavernInstallProgress> CreateProgress()
+        {
+            return new Progress<TavernInstallProgress>(p =>
+            {
+                SwitchPhaseText.Text = p.Message;
+
+                bool waiting = p.Stage == TavernInstallStage.InstallingDeps;
+                SwitchBar.IsIndeterminate = waiting;
+
+                if (waiting)
+                {
+                    SwitchPercentText.Text = "安装中";
+                }
+                else
+                {
+                    SwitchBar.Value = p.Percent;
+                    SwitchPercentText.Text = $"{(int)p.Percent}%";
+                }
+
+                // 百分比细节已经画在进度条上了，日志只留阶段性的那几句
+                if (p.Detail is { Length: > 0 } detail && !detail.EndsWith('%'))
+                {
+                    AppendSwitchLog(detail);
+                }
+            });
+        }
+
+        /// <summary>
+        /// 真正落盘的一步：<see cref="TavernInstaller"/> 克隆 → 校验 → 换名 → 装依赖，
+        /// 本方法只负责把进度画到卡片里、把结果翻成一句话。
+        /// </summary>
+        private async Task RunInstallAsync(string revision, bool installed)
+        {
+            _switching = true;
+
+            DownloadChannel channel = LauncherSettings.Channel;
+            bool mirrorUsable = TavernMirrors.TryGetCached(channel, out MirrorRefs refs)
+                && refs.Error is null
+                && (revision == TavernInstances.StagingTag ? refs.HasBranch(revision) : refs.HasTag(revision));
+
+            IReadOnlyList<SourceTarget> targets = TavernSource.InstallTargets(channel, mirrorUsable);
+
+            SwitchLog.Text = string.Empty;
+            AppendSwitchLog($"$ git clone --depth 1 --branch {revision} {targets[0].Url}");
+            SwitchBar.IsIndeterminate = false;
+            SwitchBar.Value = 0;
+            SwitchPercentText.Text = "0%";
+            SwitchPhaseText.Text = $"第 1/3 步 · 正在从{targets[0].Name}拉取 {DisplayVersion(revision)}";
+            SwitchProgressPanel.Visibility = Visibility.Visible;
+
+            // 安装过程有十来分钟，日志默认摊开：让人看得见在下载什么、卡在哪
+            SwitchLogExpander.IsExpanded = true;
+            UpdateSwitchButton();
+
+            TavernInstallResult result;
+            try
+            {
+                result = await TavernInstaller.InstallAsync(revision, targets, CreateProgress(), CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                result = new TavernInstallResult(false, "安装时出错，请重试。", ex.Message, null, null, null);
+            }
+
+            FinishInstall(result, installed, depsOnly: false);
+        }
+
+        /// <summary>只补依赖：不碰代码，装的是 <c>node_modules</c>。</summary>
+        private async Task RunDepsInstallAsync()
+        {
             _switching = true;
 
             SwitchLog.Text = string.Empty;
+            AppendSwitchLog($"$ npm install --omit=dev --registry={LauncherSettings.NpmRegistryUrl}");
+            SwitchBar.IsIndeterminate = false;
             SwitchBar.Value = 0;
             SwitchPercentText.Text = "0%";
-            SwitchPhaseText.Text = $"第 1/2 步 · 正在下载 {DisplayVersion(target)} 源码";
-            AppendSwitchLog($"$ git -C sillytavern fetch --depth 1 origin {target}");
-            AppendSwitchLog($"正在从镜像下载 {DisplayVersion(target)}，已存在的旧版本目录将被覆盖…");
-
+            SwitchPhaseText.Text = $"正在用{LauncherSettings.NpmRegistryName}源安装依赖…";
             SwitchProgressPanel.Visibility = Visibility.Visible;
+            SwitchLogExpander.IsExpanded = true;
             UpdateSwitchButton();
-            _switchTimer.Start();
+
+            TavernInstallResult result;
+            try
+            {
+                result = await TavernInstaller.InstallDependenciesAsync(CreateProgress(), CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                result = new TavernInstallResult(false, "安装依赖时出错，请重试。", ex.Message, null, null, null);
+            }
+
+            FinishInstall(result, installed: true, depsOnly: true);
         }
 
-        private void SwitchTimer_Tick(object? sender, object e)
+        /// <summary>
+        /// 把安装结果收尾到界面：失败按磁盘现状重画，成功刷新实例状态。
+        /// <paramref name="depsOnly"/> 区分「补依赖」与「装代码」——两者成功后的说法不一样，
+        /// 补依赖说成「版本已切换」会让人以为代码被换过。
+        /// </summary>
+        private void FinishInstall(TavernInstallResult result, bool installed, bool depsOnly)
         {
-            _switchProgress += 2.5;
+            _switching = false;
+            SwitchBar.IsIndeterminate = false;
 
-            if (_switchProgress >= 100)
+            if (!result.Success)
             {
-                _switchTimer.Stop();
-                FinishSwitch();
+                // 失败也可能动过磁盘（回滚过、清过暂存、装了一半依赖），界面一律按磁盘现状重画
+                TavernInstances.ReloadBuiltin();
+
+                SwitchPhaseText.Text = TavernInstances.BuiltinInstalled ? "安装未完成" : "安装失败";
+                AppendSwitchLog(result.Message);
+                if (result.Hint is { Length: > 0 } hint)
+                {
+                    AppendSwitchLog(hint);
+                }
+
+                if (result.LogPath is { Length: > 0 } path)
+                {
+                    AppendSwitchLog("日志 " + path);
+                }
+
+                UpdateSwitchButton();
+
+                // 代码在、只缺依赖：这不是「装不上」，换个说法与颜色，别让人以为得从头再来
+                bool needsDeps = TavernInstances.BuiltinInstalled && !TavernInstances.BuiltinDepsReady;
+
+                string failTitle = needsDeps ? "依赖没有装好" : installed ? "换版失败" : "安装失败";
+                string failBody = result.Message
+                    + (result.Hint is { Length: > 0 } failHint ? " " + failHint : string.Empty);
+
+                // 结果走全局消息：安装要跑一两分钟，用户很可能已经翻到别的页面，
+                // 写在页面里的提示会跟着页面一起消失。
+                string? failActionText = null;
+                Action? failAction = null;
+                if (result.LogPath is { Length: > 0 } logPath)
+                {
+                    failActionText = "查看日志";
+                    failAction = () => OpenPath(logPath);
+                }
+
+                AppNotify.Post(
+                    needsDeps ? NotifySeverity.Warning : NotifySeverity.Error,
+                    failTitle,
+                    failBody,
+                    failActionText,
+                    failAction);
                 return;
             }
 
-            SwitchBar.Value = _switchProgress;
-            SwitchPercentText.Text = $"{(int)_switchProgress}%";
+            // 装完了以磁盘为准：版本号现读 package.json，依赖状态现看 node_modules
+            TavernInstances.ReloadBuiltin();
 
-            if (_switchProgress >= 55 && !_secondPhase)
-            {
-                _secondPhase = true;
-                SwitchPhaseText.Text = "第 2/2 步 · 正在安装依赖（npm install）";
-                AppendSwitchLog("检出完成，开始执行 npm install --omit=dev");
-            }
-        }
-
-        private void FinishSwitch()
-        {
-            _switching = false;
             SwitchBar.Value = 100;
             SwitchPercentText.Text = "100%";
-            SwitchPhaseText.Text = "第 2/2 步 · 依赖安装完成";
-            AppendSwitchLog($"完成：代码已检出 {DisplayVersion(_switchTarget)}，npm install 结束。");
+            SwitchPhaseText.Text = depsOnly ? "依赖已装好" : installed ? "版本已切换" : "安装完成";
+            AppendSwitchLog(result.Message);
 
             bool builtinActive = TavernInstances.IsBuiltinActive;
 
-            // 只改共享状态：卡片、通道单选项与下拉框由 Catalog_Changed 统一重画
-            TavernInstances.SetBuiltinVersion(_switchTarget);
+            string title = depsOnly ? "依赖已安装" : installed ? "版本已切换" : "内置实例已安装";
 
-            SwitchProgressPanel.Visibility = Visibility.Collapsed;
+            // 正文按「一眼读完」写：耗时、路径这类细节留在页面日志里，
+            // 全局消息只负责告诉用户「成了、下一步点哪儿」。
+            string body;
+            if (depsOnly)
+            {
+                body = builtinActive
+                    ? $"内置实例 {TavernInstances.Builtin.KernelLabel} 的 Node 依赖已就位，可以在仪表盘启动。"
+                    : $"内置实例 {TavernInstances.Builtin.KernelLabel} 的依赖已就位；切到内置实例即可启用。";
+            }
+            else if (installed)
+            {
+                body = builtinActive
+                    ? $"内置实例现在使用 {TavernInstances.Builtin.KernelLabel}，代码与依赖都已更新。"
+                    : $"内置实例的代码已更新为 {TavernInstances.Builtin.KernelLabel}；切到内置实例即可启用。";
+            }
+            else
+            {
+                body = builtinActive
+                    ? $"{result.Message}；依赖也已就位，可以在仪表盘启动。"
+                    : $"{result.Message}；切到内置实例即可启用。";
+            }
 
-            ShowBar(
-                "版本已切换",
-                builtinActive
-                    ? $"内置实例现在使用 {TavernInstances.Builtin.KernelLabel}，旧版本代码已被覆盖，需要时可重新下载。"
-                    : $"内置实例的代码已更新为 {TavernInstances.Builtin.KernelLabel}；当前仍在使用本地 {TavernInstances.Current.KernelLabel}，点右上角「使用内置实例」即可启用新版本。",
-                InfoBarSeverity.Success);
+            AppNotify.Success(title, body);
+        }
+
+        /// <summary>
+        /// 用系统默认程序打开文件（日志通常是 .log，装了编辑器就交给编辑器）。
+        /// 打不开也不提示：这只是个便利入口，日志路径本来也写在页面日志里。
+        /// </summary>
+        private static void OpenPath(string path)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            }
+            catch (Exception)
+            {
+                // 便利动作失败不影响安装结果本身
+            }
         }
 
         private void AppendSwitchLog(string line)
@@ -618,32 +1090,191 @@ namespace AstraBrew_Launcher.Views
             SwitchLog.Text = string.IsNullOrEmpty(SwitchLog.Text)
                 ? line
                 : SwitchLog.Text + Environment.NewLine + line;
+
+            // 面板只有 120 像素高：留最后 60 行够看清失败原因，也不让 TextBlock 无限膨胀
+            string[] lines = SwitchLog.Text.Split(Environment.NewLine);
+            if (lines.Length > 60)
+            {
+                SwitchLog.Text = string.Join(Environment.NewLine, lines[^60..]);
+            }
+
+            // 日志是往前滚的：不跟到底部，用户看到的永远是最早那几行
+            // （ChangeView 自己会把超大偏移夹到内容的实际高度）
+            SwitchLogScroll?.ChangeView(null, double.MaxValue, null);
         }
 
         private static string DisplayVersion(string version)
             => version == TavernInstances.StagingTag ? "开发版" : "v" + version;
 
+        // ==================== 内置实例：版本列表缓存 ====================
+
+        /// <summary>
+        /// 取版本列表：有缓存就直接用，没有才请求；<paramref name="force"/> 由用户点刷新触发。
+        /// 整个方法不抛异常到 UI 线程，失败折成一句话。
+        /// </summary>
+        private async Task LoadReleasesAsync(bool force)
+        {
+            if (_loadingReleases || RefreshReleasesBtn is null)
+            {
+                return;
+            }
+
+            _loadingReleases = true;
+            RefreshReleasesBtn.IsEnabled = false;
+            RefreshReleasesText.Text = force ? "正在刷新…" : "正在获取…";
+
+            if (force)
+            {
+                ReleaseCacheText.Text = "正在向 GitHub 请求最新列表…";
+            }
+
+            try
+            {
+                ReleaseResult result = await TavernReleases.GetAsync(force, CancellationToken.None);
+
+                // 只在拿到列表时写共享状态；空结果说明连缓存都没有，保持「尚未获取」
+                TavernInstances.SetReleases(result.Releases);
+                ShowReleaseCache(result);
+
+                if (result.Error is { Length: > 0 })
+                {
+                    Notify(force ? "刷新失败" : "版本列表不可用", result.Error, NotifySeverity.Warning);
+                }
+                else if (force)
+                {
+                    Notify(
+                        "版本列表已刷新",
+                        $"共 {result.StableCount} 个稳定版，来源 {result.Source}，已写入缓存。",
+                        NotifySeverity.Success);
+                }
+            }
+            catch (Exception)
+            {
+                ReleaseCacheText.Text = "读取版本列表失败";
+                Notify("版本列表不可用", "读取版本列表时出错，请稍后重试。", NotifySeverity.Error);
+            }
+            finally
+            {
+                _loadingReleases = false;
+                RefreshReleasesBtn.IsEnabled = true;
+                RefreshReleasesText.Text = "刷新";
+            }
+        }
+
+        private void ShowReleaseCache(ReleaseResult result)
+        {
+            if (result.Releases.Count == 0 || result.FetchedAt == DateTimeOffset.MinValue)
+            {
+                ReleaseCacheText.Text = "尚未获取版本列表";
+                return;
+            }
+
+            string when = result.FromCache
+                ? $"缓存于 {result.FetchedAt.ToLocalTime():MM-dd HH:mm}"
+                : $"已更新于 {result.FetchedAt.ToLocalTime():HH:mm}";
+
+            ReleaseCacheText.Text = $"{when} · {result.Source} · {result.StableCount} 个稳定版";
+        }
+
+        private async void RefreshReleases_Click(object sender, RoutedEventArgs e) =>
+            await LoadReleasesAsync(force: true);
+
+        /// <summary>
+        /// 发布说明是 Markdown，这里只做最小整理：标题去掉 <c>#</c>、列表换成圆点、压掉连续空行。
+        /// 不引 Markdown 渲染器——为一段更新日志加一个渲染库不划算，纯文本也算能读。
+        /// </summary>
+        private static string FormatNotes(string? notes)
+        {
+            if (string.IsNullOrWhiteSpace(notes))
+            {
+                return "这条发布没有填写说明。";
+            }
+
+            var lines = new System.Collections.Generic.List<string>();
+            foreach (string raw in notes.Replace("\r\n", "\n").Split('\n'))
+            {
+                string line = raw.TrimEnd();
+                string trimmed = line.TrimStart();
+
+                if (trimmed.StartsWith('#'))
+                {
+                    line = trimmed.TrimStart('#').Trim();
+                }
+                else if (trimmed.StartsWith("* ") || trimmed.StartsWith("- "))
+                {
+                    line = "• " + trimmed[2..].TrimStart();
+                }
+
+                if (line.Length == 0 && lines.Count > 0 && lines[^1].Length == 0)
+                {
+                    continue;
+                }
+
+                lines.Add(line);
+            }
+
+            return string.Join(Environment.NewLine, lines).Trim();
+        }
+
         // ==================== 内置实例：其它操作 ====================
 
         private void CheckUpdate_Click(object sender, RoutedEventArgs e)
         {
-            if (TavernInstances.Builtin.Version == TavernInstances.LatestStable)
+            if (TavernInstances.Releases.Count == 0)
             {
-                ShowBar(
-                    "已是最新版本",
-                    $"内置实例 v{TavernInstances.LatestStable} 是当前最新的稳定版。",
-                    InfoBarSeverity.Success);
+                Notify(
+                    "还没有版本列表",
+                    "先点底部的「刷新」从 GitHub 获取发布记录，再检查更新。",
+                    NotifySeverity.Informational);
                 return;
             }
 
-            ShowBar(
-                $"发现新版本 v{TavernInstances.LatestStable}",
-                $"在右侧「切换版本」中选择 v{TavernInstances.LatestStable} 即可更新，旧版本会被覆盖。",
-                InfoBarSeverity.Informational);
+            TavernRelease? latest = TavernInstances.LatestRelease;
+            if (latest is null)
+            {
+                Notify("没有稳定版", "发布列表里暂时没有标记为稳定版的版本。", NotifySeverity.Warning);
+                return;
+            }
+
+            if (TavernInstances.Builtin.Version == TavernInstances.StagingTag)
+            {
+                Notify(
+                    $"最新稳定版 v{latest.Version}",
+                    $"内置实例当前跟随 staging 开发分支；要切回稳定版，在上方「切换版本」里选 v{latest.Version}。",
+                    NotifySeverity.Informational);
+                return;
+            }
+
+            int delta = TavernReleases.Compare(latest.Version, TavernInstances.Builtin.Version);
+
+            if (delta == 0)
+            {
+                Notify(
+                    "已是最新版本",
+                    $"内置实例 v{TavernInstances.Builtin.Version} 是发布列表里最新的稳定版。",
+                    NotifySeverity.Success);
+                return;
+            }
+
+            if (delta > 0)
+            {
+                Notify(
+                    $"发现新版本 v{latest.Version}",
+                    $"在右侧「切换版本」中选择 v{latest.Version} 即可更新，旧版本会被覆盖。",
+                    NotifySeverity.Informational);
+                return;
+            }
+
+            // 内置版本比列表还新：可能是本地改过 package.json 或用了未发布的构建，如实说明
+            Notify(
+                "当前版本比发布列表更新",
+                $"内置实例是 v{TavernInstances.Builtin.Version}，发布列表里最新的稳定版是 v{latest.Version}；"
+                    + "可能来自本地修改或未发布的构建。",
+                NotifySeverity.Informational);
         }
 
         private void OpenBuiltinDir_Click(object sender, RoutedEventArgs e)
-            => ShowBar("安装目录", TavernInstances.Builtin.Path, InfoBarSeverity.Informational);
+            => Notify("安装目录", TavernInstances.Builtin.Path, NotifySeverity.Informational);
 
         private void CopyBuiltinPath_Click(object sender, RoutedEventArgs e)
         {
@@ -651,15 +1282,60 @@ namespace AstraBrew_Launcher.Views
             package.SetText(TavernInstances.Builtin.Path);
             Clipboard.SetContent(package);
 
-            ShowBar("路径已复制", TavernInstances.Builtin.Path, InfoBarSeverity.Success);
+            Notify("路径已复制", TavernInstances.Builtin.Path, NotifySeverity.Success);
         }
 
-        private void ViewChangelog_Click(object sender, RoutedEventArgs e)
+        private async void ViewChangelog_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar(
-                $"v{TavernInstances.LatestStable} 更新日志",
-                "稳定性改进 · 修复扩展加载顺序 · 依赖升级；完整日志见发布页。",
-                InfoBarSeverity.Informational);
+            string target = (VersionPicker.SelectedItem as ComboBoxItem)?.Tag as string
+                ?? TavernInstances.LatestStable;
+
+            if (target == TavernInstances.StagingTag)
+            {
+                Notify(
+                    "开发版没有单独的更新日志",
+                    "开发版直接跟随 staging 分支，改动都记在提交历史里；稳定版的说明见各个版本的发布记录。",
+                    NotifySeverity.Informational);
+                return;
+            }
+
+            TavernRelease? release = TavernInstances.FindRelease(target) ?? TavernInstances.LatestRelease;
+            if (release is null)
+            {
+                Notify(
+                    "还没有更新日志",
+                    "先点底部的「刷新」从 GitHub 获取发布记录。",
+                    NotifySeverity.Informational);
+                return;
+            }
+
+            var body = new ScrollViewer
+            {
+                MaxHeight = 420,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = new TextBlock
+                {
+                    Text = FormatNotes(release.Notes),
+                    TextWrapping = TextWrapping.Wrap,
+                    IsTextSelectionEnabled = true,
+                    FontSize = 13,
+                    LineHeight = 21,
+                },
+            };
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = $"v{release.Version} 更新日志",
+                Content = body,
+                CloseButtonText = "关闭",
+            };
+
+            // 与页面按钮同一个圆角；发布说明较长，弹窗放宽一点
+            dialog.Resources["ControlCornerRadius"] = new CornerRadius(8);
+            dialog.Resources["ContentDialogMaxWidth"] = 720.0;
+
+            await dialog.ShowAsync();
         }
 
         private void Refresh_Click(object sender, RoutedEventArgs e)
@@ -668,20 +1344,16 @@ namespace AstraBrew_Launcher.Views
 
             var current = TavernInstances.Current;
 
-            ShowBar(
+            Notify(
                 "实例状态已刷新",
                 $"本地 {TavernInstances.Locals.Count} 个实例 · 内置 1 个实例 · 当前使用 {(current.IsBuiltin ? "内置" : "本地")} {current.KernelLabel}。",
-                InfoBarSeverity.Informational);
+                NotifySeverity.Informational);
         }
 
         // ==================== 反馈 ====================
 
-        private void ShowBar(string title, string message, InfoBarSeverity severity)
-        {
-            ActionInfoBar.Title = title;
-            ActionInfoBar.Message = message;
-            ActionInfoBar.Severity = severity;
-            ActionInfoBar.IsOpen = true;
-        }
+        /// <summary>页面播报统一走全局消息（窗口右下角），页面里不再挂 InfoBar。</summary>
+        private static void Notify(string title, string message, NotifySeverity severity)
+            => AppNotify.Post(severity, title, message);
     }
 }

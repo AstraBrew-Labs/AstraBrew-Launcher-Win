@@ -515,7 +515,7 @@
                                     <StackPanel>
                                         <controls:CheckRow
                                             x:Name="RowNode"
-                                            Detail="运行时 · v24.14.0"
+                                            Detail="运行时 · v22.20.0"
                                             Glyph="&#xE756;"
                                             Title="NodeJS" />
                                         <Rectangle

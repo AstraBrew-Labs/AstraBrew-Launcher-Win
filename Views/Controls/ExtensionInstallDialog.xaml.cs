@@ -1,4 +1,5 @@
 using System;
+using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -158,9 +159,20 @@ namespace AstraBrew_Launcher.Views.Controls
             bool git = GitTab.IsChecked == true;
             PhaseText.Text = git ? "正在克隆仓库…" : "正在解压离线包…";
             PhaseHintText.Text = "第 1/2 步 · 下载扩展代码";
+
+            // GitHub 地址在加速开关打开时改走中转——扩展克隆和其它 GitHub 访问同一套规则，
+            // 不看下载源选的是镜像还是直连
+            string cloneUrl = GithubAccel.Apply(UrlBox.Text.Trim());
+            bool accelerated = !string.Equals(cloneUrl, UrlBox.Text.Trim(), StringComparison.Ordinal);
+
             LogText.Text = git
-                ? $"$ git clone --depth 1 -b {BranchBox.SelectedItem} {UrlBox.Text.Trim()}"
+                ? $"$ git clone --depth 1 -b {BranchBox.SelectedItem} {cloneUrl}"
                 : "$ unzip long-term-memory-2.2.0.zip -d third-party";
+
+            if (accelerated)
+            {
+                LogText.Text += Environment.NewLine + $"# 已开启加速服务，经 {GithubAccel.Prefix} 中转到 github.com";
+            }
 
             _installTimer.Start();
         }

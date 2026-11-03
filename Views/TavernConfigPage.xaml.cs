@@ -352,10 +352,10 @@ namespace AstraBrew_Launcher.Views
             int port = double.IsNaN(raw) ? (int)DefaultPort : (int)raw;
             string scope = SimpleLanToggle.IsOn ? "局域网可访问" : "仅本机可访问";
 
-            ShowBar(
+            Notify(
                 "配置已保存",
                 $"端口 {port} · {scope} · 白名单 {TavernSettings.Whitelist.Count} 条 · 默认浏览器 {TavernSettings.BrowserName}。",
-                InfoBarSeverity.Success);
+                NotifySeverity.Success);
         }
 
         private void Reset_Click(object sender, RoutedEventArgs e)
@@ -372,23 +372,23 @@ namespace AstraBrew_Launcher.Views
             TavernSettings.Browser = BrowserKind.Chrome;
 
             MarkClean();
-            ShowBar("已恢复默认配置", "端口 8000、仅本机访问、白名单恢复为默认两项锁定地址。", InfoBarSeverity.Informational);
+            Notify("已恢复默认配置", "端口 8000、仅本机访问、白名单恢复为默认两项锁定地址。", NotifySeverity.Informational);
         }
 
         private void OpenConfigFile_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar(
+            Notify(
                 "已定位配置文件",
                 System.IO.Path.Combine(AppPaths.RoamingRoot, "data", "config.yaml"),
-                InfoBarSeverity.Informational);
+                NotifySeverity.Informational);
         }
 
         private void ImportConfig_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar(
+            Notify(
                 "请选择要导入的配置文件",
                 "支持 config.yaml 与旧版 settings.json，导入后会覆盖当前表单。",
-                InfoBarSeverity.Informational);
+                NotifySeverity.Informational);
         }
 
         private void CopyEndpoint_Click(object sender, RoutedEventArgs e)
@@ -397,7 +397,7 @@ namespace AstraBrew_Launcher.Views
             package.SetText(SimpleEndpointText.Text);
             Clipboard.SetContent(package);
 
-            ShowBar("地址已复制", SimpleEndpointText.Text, InfoBarSeverity.Success);
+            Notify("地址已复制", SimpleEndpointText.Text, NotifySeverity.Success);
         }
 
         // ==================== 保存状态 ====================
@@ -431,12 +431,8 @@ namespace AstraBrew_Launcher.Views
             DirtyHint.Text = "修改会在下次启动服务时生效";
         }
 
-        private void ShowBar(string title, string message, InfoBarSeverity severity)
-        {
-            ActionInfoBar.Title = title;
-            ActionInfoBar.Message = message;
-            ActionInfoBar.Severity = severity;
-            ActionInfoBar.IsOpen = true;
-        }
+        /// <summary>页面播报统一走全局消息（窗口右下角），页面里不再挂 InfoBar。</summary>
+        private static void Notify(string title, string message, NotifySeverity severity)
+            => AppNotify.Post(severity, title, message);
     }
 }

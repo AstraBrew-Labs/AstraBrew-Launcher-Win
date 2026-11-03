@@ -30,20 +30,14 @@ namespace AstraBrew_Launcher.Views
     /// </summary>
     public sealed partial class SettingsPage : Page
     {
-        /// <summary>一套环境里各依赖的版本；null 表示未安装。</summary>
-        private sealed record EnvProfile(
-            string? Git,
-            string? Node,
-            bool NodeOutdated,
-            string? Caddy,
-            string? Pm2,
-            string? WebView2);
+        /// <summary>
+        /// 两套运行环境的真实检测结果，由 <see cref="RuntimeProbe"/> 异步填入。
+        /// 里没有某个来源的键＝还没探测完，界面显示「检测中…」而不是「未安装」。
+        /// </summary>
+        private readonly Dictionary<RuntimeSource, RuntimeEnvironment> _envs = new();
 
-        private static readonly Dictionary<RuntimeSource, EnvProfile> Environments = new()
-        {
-            [RuntimeSource.Builtin] = new("2.55.0", "v24.14.0", false, "v2.10.0", "6.0.5", "128.0.6613.119"),
-            [RuntimeSource.System] = new("2.43.0", null, false, null, null, "120.0.2210.91"),
-        };
+        /// <summary>探测进行中：避免切页签／连点「重新检测」时重复拉子进程。</summary>
+        private bool _probingEnvironment;
 
         /// <summary>GitHub 连通性探测的节点，顺序即探测顺序。</summary>
         private static readonly (string Name, string Host, int Latency, bool Ok)[] GithubProbes =
@@ -51,21 +45,8 @@ namespace AstraBrew_Launcher.Views
             ("github.com", "网页与克隆入口", 412, true),
             ("api.github.com", "Release 元数据", 268, true),
             ("codeload.github.com", "源码压缩包", 0, false),
-            ("gh-proxy.org", "公益反代通道", 168, true),
-            ("ghfast.top", "备用反代通道", 245, true),
-            ("gt.astrabrew.cn", "自建反代通道", 312, true),
+            ("gh-proxy.org", "GitHub 加速服务", 168, true),
         };
-
-        /// <summary>下载通道测速结果，与 <see cref="DownloadChannel"/> 顺序一致。</summary>
-        private static readonly (DownloadChannel Channel, double Speed, bool Ok)[] ChannelProbes =
-        {
-            (DownloadChannel.Auto, 4.8, true),
-            (DownloadChannel.GhProxy, 4.8, true),
-            (DownloadChannel.GhFast, 2.6, true),
-            (DownloadChannel.Official, 0, false),
-        };
-
-        private readonly DispatcherQueueTimer _saveTimer;
 
         /// <summary>
         /// 初始为 true：XAML 解析阶段控件还没全部就位，此时任何 ValueChanged / Toggled
@@ -74,23 +55,45 @@ namespace AstraBrew_Launcher.Views
         /// </summary>
         private bool _sync = true;
 
+        /// <summary>
+        /// 正在把「加速开关」的开关状态从配置回填到控件。
+        /// 直接赋 <c>IsOn</c> 会触发 Toggled，不挡住就会把回填当成用户操作再写回配置。
+        /// </summary>
+        private bool _syncingAccel;
+
+        /// <summary>
+        /// 全局 git 配置里当前有没有加速规则。null = 还没核对，或没有 Git 无法判断。
+        /// 只用来写加速行的说明，开关状态始终以配置里的加速开关为准。
+        /// </summary>
+        private bool? _gitRewriteApplied;
+
         public SettingsPage()
         {
             InitializeComponent();
 
-            _saveTimer = DispatcherQueue.CreateTimer();
-            _saveTimer.Interval = TimeSpan.FromMilliseconds(650);
-            _saveTimer.IsRepeating = false;
-            _saveTimer.Tick += (_, _) =>
-            {
-                SaveStateText.Text = "已生效";
-                SaveDot.Fill = Success();
-            };
-
+            // 字体列表必须在回填状态之前建好，否则 SelectedItem 找不到对应条目会落空
+            BuildFontList();
             LoadStateToUi();
 
+            // 换字体后整棵树会被重刷，已展开过的下拉项可能还在树上：每次打开重钉一遍预览字体
+            FontCombo.DropDownOpened += (_, _) => ApplyFontPreviews();
+
             LauncherSettings.Changed += OnSettingsChanged;
-            Unloaded += (_, _) => LauncherSettings.Changed -= OnSettingsChanged;
+
+            // 保存态徽章反映的是「真的写进 settings.toml 了没有」，由 SettingsStore 通知
+            SettingsStore.Saved += OnSettingsSaved;
+
+            Unloaded += (_, _) =>
+            {
+                LauncherSettings.Changed -= OnSettingsChanged;
+                SettingsStore.Saved -= OnSettingsSaved;
+            };
+
+            // 每次进页面重新探测一遍：可能刚在别的页面装完东西，也可能是后台装完回来的
+            Loaded += OnPageLoaded;
+
+            // 徽章的悬浮提示兼做「配置文件在哪」的入口：路径必须是展开后的真实路径
+            ToolTipService.SetToolTip(SavePill, $"设置文件{Environment.NewLine}{SettingsStore.FilePath}");
 
             ShowPath(OnboardingPathText, OnboardingState.FilePath);
             VersionChipText.Text = ReadAppVersion();
@@ -128,11 +131,15 @@ namespace AstraBrew_Launcher.Views
             _sync = true;
             try
             {
+                SimpleLevelRadio.IsChecked = LauncherSettings.Level == SettingsLevel.Simple;
+                AdvancedLevelRadio.IsChecked = LauncherSettings.Level == SettingsLevel.Advanced;
+
                 LanguagePicker.SelectedIndex = (int)LauncherSettings.Language;
                 ThemePicker.SelectedIndex = (int)LauncherSettings.Theme;
                 ScaleSlider.Value = LauncherSettings.UiScale * 100;
                 ScaleValueText.Text = $"{ScaleSlider.Value:0}%";
-                FontCombo.SelectedIndex = LauncherSettings.FontIndex;
+                FontCombo.SelectedItem = null;
+                SelectConfiguredFont();
                 RememberWindowSwitch.IsOn = LauncherSettings.RememberWindow;
 
                 AutoLaunchSwitch.IsOn = LauncherSettings.AutoLaunch;
@@ -175,11 +182,13 @@ namespace AstraBrew_Launcher.Views
         /// </summary>
         private void RefreshDerived()
         {
+            ApplyLevel();
             ApplyConditions();
             ApplyEnvironment();
             UpdateChannelUi();
             UpdateProxyUi();
             UpdateGithubTestUi();
+            UpdateFontHint();
         }
 
         private void OnSettingsChanged(object? sender, EventArgs e)
@@ -190,50 +199,253 @@ namespace AstraBrew_Launcher.Views
             }
         }
 
+        // ==================== 版本切换 ====================
+
+        private void LevelRadio_Checked(object sender, RoutedEventArgs e)
+        {
+            // XAML 解析早期控件还没就位；LoadStateToUi 回填状态期间也不该把「界面动作」写成配置
+            if (SimpleLevelRadio is null || AdvancedLevelRadio is null || _sync)
+            {
+                return;
+            }
+
+            var level = SimpleLevelRadio.IsChecked == true ? SettingsLevel.Simple : SettingsLevel.Advanced;
+            if (LauncherSettings.Level == level)
+            {
+                return;
+            }
+
+            LauncherSettings.SetLevel(level);
+            MarkDirty();
+        }
+
+        /// <summary>
+        /// 按当前版本决定哪几行/哪几组可见。
+        ///
+        /// 只改可见性，不改任何设置值：小白版里藏起来的分组仍按原设定生效，
+        /// 切回高手版能原样看到，不会因为「看不见」就被重置。
+        /// 条件行（服务器模式、自定义代理）另由 <see cref="ApplyConditions"/> 夹一层，
+        /// 免得旧配置里的开关在小白版下把子行顶出来。
+        /// </summary>
+        private void ApplyLevel()
+        {
+            var simple = LauncherSettings.IsSimpleLevel;
+
+            // 分段器与状态保持一致：外部（恢复默认、配置文件）改了状态时靠这里拉回
+            if (SimpleLevelRadio.IsChecked != simple)
+            {
+                SimpleLevelRadio.IsChecked = simple;
+            }
+
+            if (AdvancedLevelRadio.IsChecked == simple)
+            {
+                AdvancedLevelRadio.IsChecked = !simple;
+            }
+
+            LevelTitle.Text = simple ? "小白版 · 常用设置" : "高手版 · 全部选项";
+            LevelHint.Text = simple
+                ? "只保留日常会用到的分组：界面、基础、运行环境、下载、网络与更新；其余按推荐值运行。"
+                : "完整展开 8 个分组，含控制台、代理、服务器模式与原型工具等排障与进阶选项。";
+            LevelCount.Text = simple ? "6 组" : "8 组";
+
+            UiSectionHint.Text = simple
+                ? "语言与主题；这些选项只影响启动器本身。"
+                : "语言、主题、缩放与字体；这些选项只影响启动器本身。";
+            BasicSectionHint.Text = simple
+                ? "启动时机与酒馆的默认启动方式。"
+                : "启动时机、资源分配与酒馆的默认启动方式。";
+            RuntimeSectionHint.Text = simple
+                ? "只需确认 Git、Node.js 与 WebView2 三项就位；缺什么点「修复」补齐。"
+                : "酒馆依赖的 Git、Node.js、PM2 等组件；下面显示的是本机实际检测到的版本，没装就是「未安装」。";
+            NetworkSectionHint.Text = simple
+                ? "检查与 GitHub 的连通情况；下载走哪条通道请到「下载」分组调整。"
+                : "访问 GitHub 与 npm 时使用的代理；系统代理跟随 Windows 的 Internet 选项。";
+
+            // 界面：留语言、主题、记住窗口位置
+            SetShown(DividerBeforeScale, !simple);
+            SetShown(ScaleRow, !simple);
+            SetShown(DividerBeforeFont, !simple);
+            SetShown(FontRow, !simple);
+
+            // 基础：留开机自启、启动方式、关窗停服与资源目录
+            SetShown(CpuRow, !simple);
+            SetShown(DividerAfterCpu, !simple);
+            SetShown(DividerBeforeServerMode, !simple);
+            SetShown(ServerModeRow, !simple);
+            SetShown(DividerBeforeDataLocation, !simple);
+            SetShown(DataLocationRow, !simple);
+            SetShown(DividerBeforeGlobalData, !simple);
+            SetShown(GlobalDataRow, !simple);
+
+            // 整组收起
+            SetShown(ConsoleSection, !simple);
+            SetShown(PrototypeSection, !simple);
+
+            // 运行环境：小白版一行结论，高手版保留明细
+            SetShown(RuntimeSummaryRow, simple);
+            SetShown(AdvancedRuntimeRows, !simple);
+
+            // 网络：代理整组收起，GitHub 连通性保留（它上面那条分隔线要跟着一起走）
+            SetShown(ProxyGroup, !simple);
+            SetShown(DividerBeforeGithub, !simple);
+
+            ApplyRuntimeSummary();
+        }
+
+        private static void SetShown(UIElement element, bool shown) =>
+            element.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
+
         /// <summary>按当前状态决定哪些条件行可见、哪些控件因依赖缺失而禁用。</summary>
         private void ApplyConditions()
         {
+            var simple = LauncherSettings.IsSimpleLevel;
+
             DesktopRows.Visibility = LauncherSettings.StartMode == QuickStartMode.Desktop
                 ? Visibility.Visible
                 : Visibility.Collapsed;
 
-            ServerRows.Visibility = LauncherSettings.ServerMode
+            // 小白版没有服务器模式入口：旧配置里开着它也不能把子行顶出来
+            ServerRows.Visibility = !simple && LauncherSettings.ServerMode
                 ? Visibility.Visible
                 : Visibility.Collapsed;
 
-            InternetRows.Visibility = LauncherSettings.ServerMode
+            InternetRows.Visibility = !simple
+                && LauncherSettings.ServerMode
                 && LauncherSettings.ServiceScope == ServiceScopeSetting.Internet
                     ? Visibility.Visible
                     : Visibility.Collapsed;
 
-            CustomProxyRows.Visibility = LauncherSettings.Proxy == ProxyModeSetting.Custom
+            CustomProxyRows.Visibility = !simple && LauncherSettings.Proxy == ProxyModeSetting.Custom
                 ? Visibility.Visible
                 : Visibility.Collapsed;
 
             // 后台常驻依赖 PM2；PM2 又依赖 Node.js。缺一环就禁用开关并说明原因。
-            var env = Environments[LauncherSettings.Runtime];
-            var pm2Ready = env.Pm2 is not null;
+            // 探测结果还没回来时不动开关，避免「刚进页面开关先灰一下」的闪烁。
+            var env = CurrentEnvironment;
+            var pm2Ready = env is null || env.Pm2 is not null;
             BackgroundSwitch.IsEnabled = pm2Ready;
             BackgroundSwitch.Opacity = pm2Ready ? 1 : 0.45;
             BackgroundBlockedPill.Visibility = pm2Ready ? Visibility.Collapsed : Visibility.Visible;
         }
 
+        /// <summary>当前环境来源的检测结果；null 表示这一套还没探测完。</summary>
+        private RuntimeEnvironment? CurrentEnvironment =>
+            _envs.TryGetValue(LauncherSettings.Runtime, out var env) ? env : null;
+
+        /// <summary>
+        /// 重新探测两套运行环境（内置 / 系统）并刷新界面。
+        ///
+        /// 探测走 <see cref="RuntimeProbe"/>，只读、带超时；结果没回来之前行上显示「检测中…」，
+        /// 不会拿上一轮的旧版本或「未安装」糊弄用户。
+        /// </summary>
+        private async Task RefreshEnvironmentAsync(bool force)
+        {
+            if (_probingEnvironment)
+            {
+                return;
+            }
+
+            _probingEnvironment = true;
+            try
+            {
+                RuntimeEnvironment[] results = await Task.WhenAll(
+                    RuntimeProbe.ProbeAsync(RuntimeSource.Builtin, force),
+                    RuntimeProbe.ProbeAsync(RuntimeSource.System, force));
+
+                _envs[RuntimeSource.Builtin] = results[0];
+                _envs[RuntimeSource.System] = results[1];
+            }
+            catch
+            {
+                // 探测整体失手（极少数情况）：按「未安装」呈现，绝不谎报已安装
+                _envs.TryAdd(RuntimeSource.Builtin, RuntimeEnvironment.Empty);
+                _envs.TryAdd(RuntimeSource.System, RuntimeEnvironment.Empty);
+            }
+            finally
+            {
+                _probingEnvironment = false;
+            }
+
+            ApplyEnvironment();
+            ApplyConditions();
+        }
+
+        private async void OnPageLoaded(object sender, RoutedEventArgs e)
+        {
+            await RefreshEnvironmentAsync(force: true);
+            ApplyPendingAnchor();
+
+            // 全局 git 配置才是真相源：用户可能在终端里用 --unset 改过，界面得跟上
+            // 全局 git 配置跟着开关走：用户可能在终端里 --unset 过、或换过机器，这里补一次
+            await SyncGlobalGitAsync(announce: false);
+        }
+
+        /// <summary>
+        /// 从别的页面跳过来时要落在哪一段。设置页是滚动长页，只说「去设置」等于把用户
+        /// 丢在页首自己找；导航之前先把锚点记下来，页面到位后再滚过去。
+        /// </summary>
+        private static string? _pendingAnchor;
+
+        /// <summary>导航到设置页的「运行环境」分组——版本页发现缺 Git / Node.js 时用。</summary>
+        public static void OpenRuntimeSection() => _pendingAnchor = "runtime";
+
+        private void ApplyPendingAnchor()
+        {
+            if (_pendingAnchor is null || RuntimeSection is null)
+            {
+                return;
+            }
+
+            bool runtime = _pendingAnchor == "runtime";
+            _pendingAnchor = null;
+
+            if (runtime)
+            {
+                RuntimeSection.StartBringIntoView(new BringIntoViewOptions
+                {
+                    AnimationDesired = true,
+                    VerticalAlignmentRatio = 0.1,
+                });
+            }
+        }
+
+        private async void RecheckEnvironment_Click(object sender, RoutedEventArgs e)
+        {
+            RecheckEnvironmentButton.IsEnabled = false;
+            try
+            {
+                await RefreshEnvironmentAsync(force: true);
+            }
+            finally
+            {
+                RecheckEnvironmentButton.IsEnabled = true;
+            }
+        }
+
         /// <summary>把当前环境来源的版本写进依赖行：有版本显示版本，没有就给安装入口。</summary>
         private void ApplyEnvironment()
         {
-            var env = Environments[LauncherSettings.Runtime];
+            var env = CurrentEnvironment;
+            var probed = env is not null;
             var isSystem = LauncherSettings.Runtime == RuntimeSource.System;
 
-            ApplyDependency(GitVersionText, GitInstallButton, null, env.Git, !isSystem);
-            ApplyDependency(NodeVersionText, NodeInstallButton, NodeOutdatedPill, env.Node, !isSystem, env.NodeOutdated);
-            ApplyDependency(CaddyVersionText, CaddyInstallButton, null, env.Caddy, !isSystem);
+            ApplyDependency(GitVersionText, GitInstallButton, null, env?.Git, probed, !isSystem);
+            ApplyDependency(
+                NodeVersionText,
+                NodeInstallButton,
+                NodeOutdatedPill,
+                env?.Node,
+                probed,
+                !isSystem,
+                RuntimeProbe.IsNodeOutdated(env?.Node));
+            ApplyDependency(CaddyVersionText, CaddyInstallButton, null, env?.Caddy, probed, !isSystem);
 
             // 系统环境里不提供安装入口；内置环境里 PM2 还要等 Node.js 先就位
-            var pm2Blocked = env.Node is null;
-            ApplyDependency(Pm2VersionText, Pm2InstallButton, null, env.Pm2, !isSystem && !pm2Blocked);
+            var pm2Blocked = probed && env!.Node is null;
+            ApplyDependency(Pm2VersionText, Pm2InstallButton, null, env?.Pm2, probed, !isSystem && !pm2Blocked);
             Pm2NoteText.Visibility = pm2Blocked && !isSystem ? Visibility.Visible : Visibility.Collapsed;
 
-            ApplyDependency(WebView2VersionText, WebView2InstallButton, null, env.WebView2, !isSystem);
+            ApplyDependency(WebView2VersionText, WebView2InstallButton, null, env?.WebView2, probed, !isSystem);
 
             GitRow.Description = isSystem
                 ? "读取系统 PATH 里的 Git，启动器不负责安装与升级。"
@@ -244,17 +456,117 @@ namespace AstraBrew_Launcher.Views
             CaddyRow.Description = LauncherSettings.ServerMode
                 ? "服务器模式必需：负责反向代理与 HTTPS。"
                 : "服务器模式下才需要：负责反向代理与 HTTPS。";
-            NpmRow.Description = $"安装扩展与 PM2 时的包源，当前 {LauncherSettings.NpmRegistryName}。";
+            // npm 挂在 Node.js 下面：Node 没装（含还在探测）时这两行都没有意义，
+            // 连同分隔线一起收起，免得留个「给不存在的运行时选包源」的空档
+            var nodeReady = env?.Node is not null;
+            SetShown(DividerBeforeNpm, nodeReady);
+            SetShown(NpmRow, nodeReady);
+            SetShown(DividerBeforeNpmRegistry, nodeReady);
+            SetShown(NpmRegistryRow, nodeReady);
+            NpmRegistryRow.Description = $"安装扩展与 PM2 时的包源，当前 {LauncherSettings.NpmRegistryName}。";
+
+            // npm 版本取自 <nodejs>\node_modules\npm\package.json：Node 在却读不到，
+            // 说明这份 Node 不完整（或 npm 装在别处），直接说「未检测到」，别空着让人等
+            NpmVersionText.Text = env?.Npm ?? "未检测到";
+            NpmVersionText.Foreground = env?.Npm is null ? Tertiary() : Primary();
+
+            ApplyRuntimeSummary();
         }
+
+        /// <summary>小白版的运行环境结论：三项必要组件齐了就「正常」，缺任意一项就「环境缺失」。</summary>
+        private void ApplyRuntimeSummary()
+        {
+            if (!LauncherSettings.IsSimpleLevel)
+            {
+                return;
+            }
+
+            var env = CurrentEnvironment;
+            if (env is null)
+            {
+                // 还没探测完：既不说正常也不说缺失，避免先闪一下假的结论
+                RuntimeStateText.Text = "检测中…";
+                RuntimeStateText.Foreground = Tertiary();
+                RuntimeStatePill.Background = Tint(0x8A, 0x8A, 0x8A);
+                RepairRuntimeButton.Visibility = Visibility.Collapsed;
+                RuntimeSummaryRow.Description = "Git、Node.js 与 WebView2 三项齐全即可正常启动。";
+                return;
+            }
+
+            List<string> missing = MissingComponents(env);
+            if (missing.Count == 0)
+            {
+                RuntimeStateText.Text = "正常";
+                RuntimeStateText.Foreground = Success();
+                RuntimeStatePill.Background = Tint(0x16, 0xA3, 0x4A);
+                RepairRuntimeButton.Visibility = Visibility.Collapsed;
+                RuntimeSummaryRow.Description = "Git、Node.js 与 WebView2 三项齐全，酒馆可以正常启动。";
+                return;
+            }
+
+            RuntimeStateText.Text = "环境缺失";
+            RuntimeStateText.Foreground = Caution();
+            RuntimeStatePill.Background = Tint(0x9D, 0x5D, 0x00);
+
+            // 「修复」只往内置目录里装：系统环境的 Git / Node.js 动的是用户的 PATH，
+            // 启动器不该插手。系统环境缺组件时给出去哪装的说明，不给一个点了没反应的按钮。
+            var builtin = LauncherSettings.Runtime == RuntimeSource.Builtin;
+            RepairRuntimeButton.Visibility = builtin ? Visibility.Visible : Visibility.Collapsed;
+            RuntimeSummaryRow.Description = builtin
+                ? $"缺少 {string.Join("、", missing)}；点「修复」自动下载并安装。"
+                : $"系统环境缺少 {string.Join("、", missing)}，请自行安装；或把运行环境切到「内置」由启动器代装。";
+        }
+
+        /// <summary>小白版只认这三项：Git 拉源码、Node.js 跑酒馆、WebView2 撑桌面窗口。</summary>
+        private static List<string> MissingComponents(RuntimeEnvironment env)
+        {
+            var missing = new List<string>();
+
+            if (env.Git is null)
+            {
+                missing.Add("Git");
+            }
+
+            if (env.Node is null)
+            {
+                missing.Add("Node.js");
+            }
+
+            if (env.WebView2 is null)
+            {
+                missing.Add("WebView2");
+            }
+
+            return missing;
+        }
+
+        /// <summary>状态胶囊的底色：强调色压到 14% 透明度，深浅主题共用一套值。</summary>
+        private static Brush Tint(byte r, byte g, byte b) =>
+            new SolidColorBrush(Color.FromArgb(0x24, r, g, b));
 
         private void ApplyDependency(
             TextBlock versionText,
             Button installButton,
             Border? outdatedPill,
             string? version,
+            bool probed,
             bool canInstall,
             bool outdated = false)
         {
+            if (!probed)
+            {
+                // 还没探测完：不写「未安装」，否则会先闪一下假的缺失状态
+                versionText.Text = "检测中…";
+                versionText.Foreground = Tertiary();
+                installButton.Visibility = Visibility.Collapsed;
+                if (outdatedPill is not null)
+                {
+                    outdatedPill.Visibility = Visibility.Collapsed;
+                }
+
+                return;
+            }
+
             versionText.Text = version ?? "未安装";
             versionText.Foreground = version is null ? Tertiary() : Primary();
 
@@ -269,26 +581,113 @@ namespace AstraBrew_Launcher.Views
         private void UpdateChannelUi()
         {
             var channel = LauncherSettings.Channel;
-            var effective = LauncherSettings.EffectiveChannel;
+            var accelerated = LauncherSettings.GithubAcceleration;
 
-            ChannelRow.Description = channel == DownloadChannel.Auto
-                ? $"先测速再挑最快的通道；当前解析为 {LauncherSettings.ChannelName(effective)}。"
-                : $"{LauncherSettings.ChannelName(channel)}：{LauncherSettings.ChannelHint(channel)}";
+            ChannelRow.Description = LauncherSettings.ChannelHint(channel);
+            ChannelUrlText.Text = LauncherSettings.SourceUrl;
 
-            if (!LauncherSettings.ChannelTested)
+            // 加速行常显：它是全应用的总开关，作用于所有 GitHub 链接，
+            // 与当前选的是镜像还是直连无关；收起只会让人以为选镜像时加速就失效了
+            AccelRow.Description = BuildAccelDescription(accelerated);
+
+            // 外部改过状态（恢复默认、配置文件被换掉）时把开关拉回来；
+            // 直接赋 IsOn 会触发 Toggled，用 _syncingAccel 挡住，免得又把状态写回去绕成环
+            if (AccelSwitch.IsOn != LauncherSettings.GithubAcceleration)
             {
-                ChannelCacheText.Text = "未测速";
-                ChannelCacheText.Foreground = Secondary();
-                ChannelCacheHintText.Text = "自动通道依赖这条结果";
+                _syncingAccel = true;
+                AccelSwitch.IsOn = LauncherSettings.GithubAcceleration;
+                _syncingAccel = false;
+            }
+        }
+
+        /// <summary>
+        /// 加速行的说明。一个开关管两条路，说明里两条都要提到：
+        /// · 应用内请求 —— 由 <see cref="GithubAccel"/> 在地址前拼中转域名；
+        /// · 命令行 git —— 靠 <c>~/.gitconfig</c> 里的 insteadOf 规则，酒馆自动更新、
+        ///   酒馆里装扩展都用得上。
+        /// 只讲前者的话，用户会以为「开了加速，命令行里还是直连」是 bug。
+        /// </summary>
+        private string BuildAccelDescription(bool accelerated)
+        {
+            if (!accelerated)
+            {
+                return "GitHub 请求一律直连；镜像与 npm 源本来就不走加速。"
+                    + "全局 git 配置里的加速规则也已移除，终端与酒馆更新同样直连。";
+            }
+
+            // 没有 Git 就没有 insteadOf 可写，先说清这一点，否则「正在核对」会一直挂着
+            if (RuntimeProbe.LocateGit() is not { Length: > 0 })
+            {
+                return $"应用内 GitHub 请求（版本列表、安装包、扩展克隆）经 {GithubAccel.Prefix} 中转；"
+                    + "没找到 Git，命令行与酒馆更新里的 GitHub 拉取无法加速（装好 Git 后重开这个开关即可写入）。"
+                    + "镜像与 npm 源一律直连。";
+            }
+
+            string globalGit = _gitRewriteApplied switch
+            {
+                true => "全局 git 配置已写入 insteadOf，终端、酒馆自动更新与扩展安装里的 github.com 拉取也走加速。",
+                false => "全局 git 规则还没写进配置（写入失败），命令行里的 GitHub 拉取仍是直连。",
+                _ => "正在核对全局 git 配置…",
+            };
+
+            return $"应用内 GitHub 请求（版本列表、安装包、扩展克隆）经 {GithubAccel.Prefix} 中转；"
+                + globalGit
+                + "镜像与 npm 源一律直连。";
+        }
+
+        // ==================== 全局 git 规则 ====================
+
+        /// <summary>
+        /// 让全局 git 配置跟上加速开关，再刷新说明。
+        ///
+        /// 进设置页时也跑一次：用户可能在终端里手动 <c>--unset</c> 过，或者换过机器——
+        /// 开关说「开着」而配置里没有规则，命令行那条路就断了。
+        /// </summary>
+        /// <param name="announce">用户刚拨动开关时为 true（播报结果）；进页面静默对齐时为 false。</param>
+        private async Task SyncGlobalGitAsync(bool announce)
+        {
+            bool enabled = LauncherSettings.GithubAcceleration;
+            GitConfigResult? result = await GitGlobalConfig.SyncAsync(enabled);
+
+            _gitRewriteApplied = await GitGlobalConfig.IsAppliedAsync();
+            UpdateChannelUi();
+
+            if (result is { Ok: false } failed)
+            {
+                // 开关不回滚：加速服务对应用内请求仍然有效，只是命令行那条路没铺好。
+                // 进页面时的静默对齐不弹消息——没装 Git 的话每次进设置页都会失败一次，太吵。
+                if (!announce)
+                {
+                    return;
+                }
+
+                // 关闭失败更严重——规则还在，git 会继续走加速，所以按错误报。
+                if (enabled)
+                {
+                    AppNotify.Warning(
+                        "全局 git 规则没写上",
+                        failed.Message + " 应用内下载仍然走加速，只有命令行里的 git 拉取还是直连。");
+                }
+                else
+                {
+                    AppNotify.Error(
+                        "全局 git 规则没能移除",
+                        failed.Message + " 应用内已恢复直连，但终端里的 git 仍会被这条规则带去加速。");
+                }
+
                 return;
             }
 
-            var valid = LauncherSettings.IsChannelCacheValid;
-            ChannelCacheText.Text = valid ? "有效" : "已过期";
-            ChannelCacheText.Foreground = valid ? Success() : Caution();
-            ChannelCacheHintText.Text = LauncherSettings.ChannelTestedAt is { } tested
-                ? $"{tested:HH:mm} 测速 · 最快 {LauncherSettings.ChannelName(effective)}"
-                : string.Empty;
+            if (!announce)
+            {
+                return;
+            }
+
+            AppNotify.Success(
+                enabled ? "GitHub 加速服务已开启" : "GitHub 加速服务已关闭",
+                enabled
+                    ? "应用内请求已走中转；全局 git 配置也写好了，终端与酒馆更新里的 GitHub 拉取同样加速。"
+                    : "应用内请求恢复直连，全局 git 配置里的加速规则也已移除。");
         }
 
         private void UpdateProxyUi()
@@ -314,13 +713,47 @@ namespace AstraBrew_Launcher.Views
                 : "未测试";
         }
 
-        /// <summary>改动后先显示「保存中…」，落定后再回到「已生效」。</summary>
+        /// <summary>字体行说明。</summary>
+        /// <remarks>
+        /// 选中的字体在本机找不到时必须写出来：WinUI 会静默回退，不说清楚用户只会以为「设置没生效」。
+        /// </remarks>
+        private void UpdateFontHint()
+        {
+            var total = FontCatalog.Families.Count;
+            var choice = FontCatalog.Resolve(LauncherSettings.FontFamily);
+
+            if (choice.Missing is { Length: > 0 } missing)
+            {
+                FontRow.Description = $"「{missing}」不在本机，已回退到{FontCatalog.EmbeddedLabel}字体；本机可选 {total} 种。";
+                return;
+            }
+
+            FontRow.Description = choice.Kind switch
+            {
+                FontChoiceKind.Embedded =>
+                    $"{FontCatalog.EmbeddedLabel}：随包内置的 {FontCatalog.EmbeddedFamily}，不依赖本机安装；另有 {total} 种可选。",
+                FontChoiceKind.SystemFamily =>
+                    $"当前：{choice.Family}；缺字时自动回退，仅影响观感。",
+                _ =>
+                    $"跟随 Windows 系统字体；本机可选 {total} 种。",
+            };
+        }
+
+        /// <summary>改动后先显示「保存中…」，真正落盘后由 <see cref="OnSettingsSaved"/> 收回。</summary>
         private void MarkDirty()
         {
             SaveStateText.Text = "保存中…";
             SaveDot.Fill = Caution();
-            _saveTimer.Stop();
-            _saveTimer.Start();
+        }
+
+        /// <summary>写盘成功。可能在定时器线程上回调，必须切回 UI 线程再动控件。</summary>
+        private void OnSettingsSaved(object? sender, EventArgs e)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                SaveStateText.Text = "已保存";
+                SaveDot.Fill = Success();
+            });
         }
 
         // ==================== 界面 ====================
@@ -366,8 +799,123 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            LauncherSettings.SetFontIndex(FontCombo.SelectedIndex);
+            LauncherSettings.SetFontFamily((FontCombo.SelectedItem as ComboBoxItem)?.Tag as string);
+            UpdateFontHint();
             MarkDirty();
+        }
+
+        // ==================== 字体列表 ====================
+
+        /// <summary>
+        /// 把「软件默认」+ 本机所有可用字体族填进下拉框。
+        ///
+        /// 排序：内置字体钉在最前（它是出厂默认，也是唯一保证可用的那项），
+        /// 之后按 <see cref="FontCatalog.Families"/> 的顺序（中文优先、其余按名称）。
+        /// 每项用自己那套字渲染，选之前就能看到观感。写法上直接塞 ComboBoxItem
+        /// 而不是绑 ItemsSource：条目数量是几百，一次建完没有虚拟化开销问题，
+        /// 但省掉一套 DataTemplate + 转换器。
+        /// </summary>
+        private void BuildFontList()
+        {
+            FontCombo.Items.Clear();
+
+            // Tag 用 embedded 这个哨兵值而不是字体族名：本机要是正好也装了同款，
+            // 按族名选会走系统那一份，两者不该混为一谈。
+            FontCombo.Items.Add(CreateFontItem(
+                FontCatalog.EmbeddedLabel,
+                FontCatalog.EmbeddedId,
+                FontCatalog.IsEmbeddedAvailable ? FontCatalog.CreateEmbeddedFont() : null));
+
+            foreach (var family in FontCatalog.Families)
+            {
+                // 本机也装了同款时标出来，用户才知道这一项和「软件默认」是同一套字
+                var display = FontCatalog.IsEmbeddedFamily(family)
+                    ? $"{family}（{FontCatalog.EmbeddedLabel}）"
+                    : family;
+
+                FontCombo.Items.Add(CreateFontItem(display, family, new FontFamily(family)));
+            }
+
+            // 配置里记着、但本机已删掉的字体：补一条占位项，否则下拉框会空着
+            if (LauncherSettings.FontFamily is { Length: > 0 } configured
+                && !FontCatalog.IsEmbeddedId(configured)
+                && !FontCatalog.IsInstalled(configured))
+            {
+                FontCombo.Items.Add(CreateFontItem($"{configured}（未安装）", configured, null));
+            }
+        }
+
+        /// <param name="display">列表里显示的文字。</param>
+        /// <param name="tag">选中后写进配置的值（字体族名，或 <c>embedded</c>）。</param>
+        /// <param name="preview">用于渲染该项自身文字的字形；null 表示跟随界面字体。</param>
+        private static ComboBoxItem CreateFontItem(string display, string? tag, FontFamily? preview)
+        {
+            var item = new ComboBoxItem
+            {
+                Content = display,
+                Tag = tag,
+            };
+
+            if (preview is not null)
+            {
+                item.FontFamily = preview;
+            }
+
+            ToolTipService.SetToolTip(item, tag switch
+            {
+                null => "不覆盖界面字体",
+                _ when FontCatalog.IsEmbeddedId(tag) =>
+                    $"随包内置的 {FontCatalog.EmbeddedFamily}，本机装没装都不影响",
+                _ => tag,
+            });
+
+            return item;
+        }
+
+        /// <summary>按当前状态选中对应条目；没有任何匹配时退回「软件默认」。</summary>
+        private void SelectConfiguredFont()
+        {
+            var configured = LauncherSettings.FontFamily;
+
+            foreach (var entry in FontCombo.Items)
+            {
+                if (entry is ComboBoxItem item
+                    && string.Equals(item.Tag as string, configured, StringComparison.OrdinalIgnoreCase))
+                {
+                    FontCombo.SelectedItem = item;
+                    return;
+                }
+            }
+
+            FontCombo.SelectedIndex = 0;
+        }
+
+        /// <summary>让每个下拉项用它自己的字形渲染（字体预览）。</summary>
+        private void ApplyFontPreviews()
+        {
+            foreach (var entry in FontCombo.Items)
+            {
+                if (entry is not ComboBoxItem item || item.Tag is not string tag)
+                {
+                    continue;
+                }
+
+                if (FontCatalog.IsEmbeddedId(tag))
+                {
+                    if (FontCatalog.IsEmbeddedAvailable)
+                    {
+                        item.FontFamily = FontCatalog.CreateEmbeddedFont();
+                    }
+
+                    continue;
+                }
+
+                // 「未安装」的占位项没有字形可预览，保持界面字体
+                if (FontCatalog.IsInstalled(tag))
+                {
+                    item.FontFamily = new FontFamily(tag);
+                }
+            }
         }
 
         private void RememberWindowSwitch_Toggled(object sender, RoutedEventArgs e)
@@ -517,36 +1065,58 @@ namespace AstraBrew_Launcher.Views
         }
 
         private async void InstallGit_Click(object sender, RoutedEventArgs e) =>
-            await InstallAsync("Git", "MinGit 2.55.0.windows.2", "Git", "2.55.0");
+            await InstallGitAsync();
 
         private async void InstallNode_Click(object sender, RoutedEventArgs e) =>
-            await InstallAsync("Node.js", "v24.14.0", "Node", "v24.14.0");
+            await InstallNodeAsync();
 
         private async void InstallCaddy_Click(object sender, RoutedEventArgs e) =>
-            await InstallAsync("Caddy", "v2.10.0", "Caddy", "v2.10.0");
+            await InstallAsync("Caddy", "v2.10.0", "Caddy");
 
         private async void InstallPm2_Click(object sender, RoutedEventArgs e) =>
-            await InstallAsync("PM2", "6.0.5", "Pm2", "6.0.5");
+            await InstallAsync("PM2", "6.0.5", "Pm2");
 
         private async void InstallWebView2_Click(object sender, RoutedEventArgs e) =>
-            await InstallAsync("WebView2 运行时", "Evergreen Standalone", "WebView2", "128.0.6613.119");
+            await InstallAsync("WebView2 运行时", "Evergreen Standalone", "WebView2");
 
-        /// <summary>装完之后把版本写进当前环境，行上的「安装」按钮随之换成版本号。</summary>
-        private void MarkInstalled(string field, string version)
+        /// <summary>
+        /// 小白版的「修复」：把缺失的必要组件逐个补齐。
+        /// 顺序上先 Node.js —— PM2、npm 包都挂在它下面；每装完一步都重新探测，
+        /// 上一步被取消或失败时，别再拿旧快照继续往下装。
+        /// </summary>
+        private async void RepairRuntime_Click(object sender, RoutedEventArgs e)
         {
-            var source = LauncherSettings.Runtime;
-            var env = Environments[source];
-            Environments[source] = field switch
+            if (CurrentEnvironment is null)
             {
-                "Git" => env with { Git = version },
-                "Node" => env with { Node = version },
-                "Caddy" => env with { Caddy = version },
-                "Pm2" => env with { Pm2 = version },
-                _ => env with { WebView2 = version },
-            };
+                return;
+            }
 
-            ApplyEnvironment();
-            ApplyConditions();
+            RepairRuntimeButton.IsEnabled = false;
+            try
+            {
+                if (CurrentEnvironment?.Node is null)
+                {
+                    await InstallNodeAsync();
+                    await RefreshEnvironmentAsync(force: true);
+                }
+
+                if (CurrentEnvironment?.Git is null)
+                {
+                    await InstallGitAsync();
+                    await RefreshEnvironmentAsync(force: true);
+                }
+
+                if (CurrentEnvironment?.WebView2 is null)
+                {
+                    await InstallAsync("WebView2 运行时", "Evergreen Standalone", "WebView2");
+                }
+
+                await RefreshEnvironmentAsync(force: true);
+            }
+            finally
+            {
+                RepairRuntimeButton.IsEnabled = true;
+            }
         }
 
         // ==================== 下载 ====================
@@ -563,8 +1133,34 @@ namespace AstraBrew_Launcher.Views
             MarkDirty();
         }
 
-        private async void RetestChannel_Click(object sender, RoutedEventArgs e) =>
-            await ShowChannelTestAsync();
+        /// <summary>
+        /// 加速服务总开关。一次拨动要同时改两处：
+        /// · 应用内请求 —— 立刻按新值拼地址（版本列表、安装包、扩展克隆）；
+        /// · 全局 git 配置 —— 写 / 删 insteadOf，让命令行里的 git 也跟着走。
+        /// 后者要起子进程，拨完再异步补齐；期间先禁用开关，连点会攒出两条互相覆盖的命令。
+        /// </summary>
+        private async void AccelSwitch_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_sync || _syncingAccel)
+            {
+                return;
+            }
+
+            LauncherSettings.SetGithubAcceleration(AccelSwitch.IsOn);
+            _gitRewriteApplied = null;   // 说明里先显示「正在核对」，别拿上一次的结果冒充
+            UpdateChannelUi();
+            MarkDirty();
+
+            AccelSwitch.IsEnabled = false;
+            try
+            {
+                await SyncGlobalGitAsync(announce: true);
+            }
+            finally
+            {
+                AccelSwitch.IsEnabled = true;
+            }
+        }
 
         // ==================== 网络 ====================
 
@@ -865,8 +1461,15 @@ namespace AstraBrew_Launcher.Views
 
         // ==================== 安装任务弹窗 ====================
 
-        private async Task InstallAsync(string name, string version, string field, string newVersion)
+        private async Task InstallAsync(string name, string version, string field)
         {
+            // Git 已经接了真实安装链路（镜像 → 直连 → 日志落盘），不再走下面的模拟弹窗
+            if (field == "Git")
+            {
+                await InstallGitAsync();
+                return;
+            }
+
             var accent = Color.FromArgb(0xFF, 0x2B, 0x88, 0xD8);
             var (dialog, body, footer) = CreateShell(
                 "\uE896",
@@ -927,7 +1530,7 @@ namespace AstraBrew_Launcher.Views
             var lines = new List<string>();
             var steps = new[]
             {
-                $"GET https://github.com/…/{name} · 12.4 MB",
+                $"GET {GithubAccel.Apply("https://github.com/")}…/{name} · 12.4 MB",
                 "校验 SHA-256 与发布清单一致",
                 $"解压到 {Path.Combine(AppPaths.RoamingRoot, "lib")}",
                 "写入版本标记，注册到 PATH 前置目录",
@@ -964,16 +1567,342 @@ namespace AstraBrew_Launcher.Views
 
                 bar.Value = 100;
                 percentText.Text = "100%";
-                phaseText.Text = "安装完成";
-                lines.Add($"[{DateTime.Now:HH:mm:ss}] {name} {newVersion} 已就绪");
+                phaseText.Text = "安装完成，正在重新检测…";
                 logText.Text = string.Join(Environment.NewLine, lines);
                 logScroll.ChangeView(null, logScroll.ScrollableHeight, null);
 
+                // 装完不做任何「假装已安装」的写入：重新探测一次，行上显示什么由真实磁盘状态决定
+                await RefreshEnvironmentAsync(force: true);
+
+                string? detected = CurrentEnvironment?.VersionOf(field);
+                phaseText.Text = detected is null ? "安装完成，但未能检测到" : "安装完成";
+                lines.Add(detected is null
+                    ? $"[{DateTime.Now:HH:mm:ss}] 未检测到 {name}，请检查安装目录与上方下载日志"
+                    : $"[{DateTime.Now:HH:mm:ss}] 检测到 {name} {detected}");
+
+                logText.Text = string.Join(Environment.NewLine, lines);
+                logScroll.ChangeView(null, logScroll.ScrollableHeight, null);
                 close.Content = "完成";
-                MarkInstalled(field, newVersion);
             };
 
             await dialog.ShowAsync();
+        }
+
+        // ==================== 内置环境真实安装 ====================
+
+        private Task InstallGitAsync() => InstallComponentAsync(MingitInstaller.Spec, "\uE896");
+
+        private Task InstallNodeAsync() => InstallComponentAsync(NodejsInstaller.Spec, "\uE943");
+
+        /// <summary>
+        /// 内置环境的真实安装弹窗：下载（镜像优先、直连兜底）→ 解压 → 换成正式目录。
+        /// Git / Node.js 共用这一套，组件之间的差异全部在 <see cref="InstallSpec"/> 里。
+        ///
+        /// 界面只做两件事：把 <see cref="InstallProgress"/> 画成进度，把 <see cref="InstallResult"/>
+        /// 翻成一句能操作的话。换源细节、HTTP 状态、异常堆栈全部进日志文件——
+        /// 弹窗里糊三百行日志，用户看不懂，反馈时也没法整段贴出来。
+        /// </summary>
+        private async Task InstallComponentAsync(InstallSpec spec, string glyph)
+        {
+            var accent = Color.FromArgb(0xFF, 0x2B, 0x88, 0xD8);
+            var (dialog, body, footer) = CreateShell(
+                glyph,
+                accent,
+                $"安装 {spec.DisplayName}",
+                $"{spec.VersionLabel} · 镜像优先，失败回退直连",
+                580);
+
+            var phaseText = new TextBlock
+            {
+                Text = "准备中…",
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+            };
+            var percentText = new TextBlock
+            {
+                Text = string.Empty,
+                FontSize = 12,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = Secondary(),
+            };
+
+            var progressHead = new Grid { ColumnSpacing = 12 };
+            progressHead.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            progressHead.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            progressHead.Children.Add(phaseText);
+            Grid.SetColumn(percentText, 1);
+            progressHead.Children.Add(percentText);
+
+            var bar = new ProgressBar { Minimum = 0, Maximum = 100, Height = 4, Value = 0 };
+
+            var detailText = new TextBlock
+            {
+                Text = "正在检查安装目录…",
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Tertiary(),
+            };
+
+            // 失败时的一句话结论 + 日志路径；成功时整块收起
+            var hintText = new TextBlock
+            {
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Secondary(),
+                Visibility = Visibility.Collapsed,
+            };
+
+            var logText = new TextBlock
+            {
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Secondary(),
+            };
+            var logScroll = new ScrollViewer
+            {
+                MaxHeight = 112,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = logText,
+            };
+
+            body.Children.Add(progressHead);
+            body.Children.Add(bar);
+            body.Children.Add(detailText);
+            body.Children.Add(hintText);
+            body.Children.Add(ShellPanel(logScroll));
+
+            var logButton = ShellButton("查看日志");
+            logButton.Visibility = Visibility.Collapsed;
+            var retryButton = ShellButton("重试", accent: true);
+            retryButton.Visibility = Visibility.Collapsed;
+            var close = ShellButton("取消");
+
+            // 右对齐底栏里「查看日志」放最左：它不是主操作，不该挨着关闭
+            footer.Children.Add(logButton);
+            footer.Children.Add(retryButton);
+            footer.Children.Add(close);
+
+            var lines = new List<string>();
+            var attempt = new CancellationTokenSource();
+            var closed = false;
+            string? lastMessage = null;
+            string? logPath = null;
+
+            void Append(string text)
+            {
+                if (lines.Count > 0 && lines[^1].Contains(text, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                lines.Add($"[{DateTime.Now:HH:mm:ss}] {text}");
+                if (lines.Count > 60)
+                {
+                    lines.RemoveAt(0);
+                }
+
+                logText.Text = string.Join(Environment.NewLine, lines);
+                logScroll.ChangeView(null, logScroll.ScrollableHeight, null);
+            }
+
+            var progress = new Progress<InstallProgress>(p =>
+            {
+                if (closed)
+                {
+                    return;
+                }
+
+                phaseText.Text = p.Message;
+                phaseText.Foreground = Primary();
+                bar.Value = p.Percent;
+                percentText.Text = $"{p.Percent:0}%";
+
+                switch (p.Stage)
+                {
+                    case InstallStage.Downloading:
+                        // 服务器没给 Content-Length 时不假装知道进度，改成滚动条
+                        bar.IsIndeterminate = p.Total <= 0;
+                        detailText.Text = DescribeDownload(p);
+                        break;
+                    case InstallStage.Extracting:
+                        bar.IsIndeterminate = false;
+                        detailText.Text = "解压到内置环境…";
+                        break;
+                    case InstallStage.Done:
+                        bar.IsIndeterminate = false;
+                        bar.Value = 100;
+                        percentText.Text = "100%";
+                        detailText.Text = $"正在重新检测 {spec.DisplayName}…";
+                        break;
+                    default:
+                        bar.IsIndeterminate = false;
+                        break;
+                }
+
+                if (!string.Equals(p.Message, lastMessage, StringComparison.Ordinal))
+                {
+                    lastMessage = p.Message;
+                    Append(p.Message);
+                }
+            });
+
+            async Task RunAsync()
+            {
+                attempt.Dispose();
+                attempt = new CancellationTokenSource();
+
+                bar.IsIndeterminate = false;
+                bar.Value = 0;
+                percentText.Text = "0%";
+                phaseText.Text = "准备中…";
+                phaseText.Foreground = Primary();
+                detailText.Text = "正在检查安装目录…";
+                hintText.Visibility = Visibility.Collapsed;
+                logButton.Visibility = Visibility.Collapsed;
+                retryButton.Visibility = Visibility.Collapsed;
+                close.Content = "取消";
+                lines.Clear();
+                logText.Text = string.Empty;
+                lastMessage = null;
+
+                InstallResult result = await ComponentInstaller.InstallAsync(spec, progress, attempt.Token);
+                logPath = result.LogPath;
+
+                if (result.Error == InstallError.Cancelled)
+                {
+                    return;
+                }
+
+                if (closed)
+                {
+                    // 弹窗已被关掉：只把探测结果刷新掉，别再碰已卸载的控件
+                    await RefreshEnvironmentAsync(force: true);
+                    return;
+                }
+
+                if (result.Success)
+                {
+                    bar.IsIndeterminate = false;
+                    bar.Value = 100;
+                    percentText.Text = "100%";
+                    phaseText.Text = "安装完成";
+                    detailText.Text = $"正在重新检测 {spec.DisplayName}…";
+
+                    await RefreshEnvironmentAsync(force: true);
+
+                    string? detected = CurrentEnvironment?.VersionOf(spec.ProbeKey);
+                    detailText.Text = detected is null
+                        ? $"已解压到 {spec.InstallRoot}，但没检测到可执行文件，请查看日志。"
+                        : spec.SuccessDetail(detected);
+                    Append(detected is null
+                        ? "安装完成，但没检测到可执行文件"
+                        : $"检测到 {spec.DisplayName} {detected}");
+                }
+                else
+                {
+                    bar.IsIndeterminate = false;
+                    bar.Value = 0;
+                    percentText.Text = string.Empty;
+                    phaseText.Text = result.Message;   // 一句话，不带堆栈
+                    phaseText.Foreground = Caution();
+                    detailText.Text = string.Empty;
+
+                    var hints = new List<string>();
+                    if (!string.IsNullOrWhiteSpace(result.Hint))
+                    {
+                        hints.Add(result.Hint!);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(result.LogPath))
+                    {
+                        hints.Add($"详细信息见日志 {result.LogPath}");
+                    }
+
+                    hintText.Text = string.Join(Environment.NewLine, hints);
+                    hintText.Visibility = hints.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+                    logButton.Visibility = result.LogPath is null ? Visibility.Collapsed : Visibility.Visible;
+                    retryButton.Visibility = Visibility.Visible;
+                }
+
+                close.Content = "关闭";
+            }
+
+            close.Click += (_, _) => dialog.Hide();
+
+            retryButton.Click += async (_, _) => await RunAsync();
+
+            logButton.Click += (_, _) => RevealFile(logPath);
+
+            // Hide() / Esc / 关窗统一走这里：安装线程收到取消信号后自己清理暂存目录
+            dialog.Closing += (_, _) =>
+            {
+                closed = true;
+                try
+                {
+                    attempt.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // 重试时旧令牌已被释放，此时本来也没有在跑的任务
+                }
+            };
+
+            dialog.Opened += async (_, _) => await RunAsync();
+
+            await dialog.ShowAsync();
+        }
+
+        /// <summary>下载阶段的副标题：大小 + 实时速度；不知道总长就只说已下载多少。</summary>
+        private static string DescribeDownload(InstallProgress progress)
+        {
+            if (progress.Total > 0)
+            {
+                string head = $"{SizeText(progress.Received)} / {SizeText(progress.Total)}";
+                return progress.BytesPerSecond > 0
+                    ? $"{head} · {SizeText((long)progress.BytesPerSecond)}/s"
+                    : head;
+            }
+
+            return progress.Received > 0
+                ? $"已下载 {SizeText(progress.Received)}"
+                : "正在等待服务器响应…";
+        }
+
+        private static string SizeText(long bytes) => bytes switch
+        {
+            >= 1024L * 1024 * 1024 => $"{bytes / 1024.0 / 1024 / 1024:0.0} GB",
+            >= 1024 * 1024 => $"{bytes / 1024.0 / 1024:0.0} MB",
+            >= 1024 => $"{bytes / 1024.0:0} KB",
+            _ => $"{bytes} B",
+        };
+
+        /// <summary>用默认程序打开日志；.log 没有关联程序时退回到在资源管理器里定位。</summary>
+        private static void RevealFile(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            try
+            {
+                if (File.Exists(path))
+                {
+                    Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                    return;
+                }
+            }
+            catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException)
+            {
+                // 没有默认打开方式：退到目录里让用户自己挑
+            }
+
+            RevealInExplorer(Path.GetDirectoryName(path));
         }
 
         // ==================== 连通性测速弹窗 ====================
@@ -1003,6 +1932,20 @@ namespace AstraBrew_Launcher.Views
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Secondary(),
             };
+
+            // 加速开关是全应用的总开关：开着就说明一句，免得有人以为只有下载源选直连才生效
+            if (GithubAccel.Enabled)
+            {
+                body.Children.Add(new TextBlock
+                {
+                    Text = "已开启加速服务：只有 GitHub 域名（github.com / api.github.com 等）经 "
+                        + $"{GithubAccel.Prefix} 中转，失败再退回直连；镜像与 npm 源不受影响。",
+                    FontSize = 11,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = Tertiary(),
+                });
+            }
+
             body.Children.Add(summary);
 
             var close = ShellButton("关闭");
@@ -1046,72 +1989,11 @@ namespace AstraBrew_Launcher.Views
             }
 
             var fastest = GithubProbes.Where(p => p.Ok).OrderBy(p => p.Latency).First();
-            summary.Text = $"最快 {fastest.Latency} ms（{fastest.Name}）。codeload 直连超时，下载源码必须走反代。";
+            summary.Text = $"最快 {fastest.Latency} ms（{fastest.Name}）。codeload 直连超时：取源码请走镜像；内置实例要加速，需把下载源切成「GitHub 直连」。";
 
             LauncherSettings.SetGithubTestResult(fastest.Latency);
             UpdateGithubTestUi();
             retest.IsEnabled = true;
-        }
-
-        private async Task ShowChannelTestAsync()
-        {
-            var accent = Color.FromArgb(0xFF, 0x2B, 0x88, 0xD8);
-            var (dialog, body, footer) = CreateShell(
-                "\uE72C",
-                accent,
-                "下载通道测速",
-                "各通道各取一个 512 KB 分片，按平均速度排序；结果用于「自动」通道。",
-                620);
-
-            var statuses = new List<TextBlock>();
-            foreach (var probe in ChannelProbes)
-            {
-                var status = CreateStatus("等待");
-                statuses.Add(status);
-                body.Children.Add(ProbeRow(
-                    LauncherSettings.ChannelName(probe.Channel),
-                    LauncherSettings.ChannelHint(probe.Channel),
-                    status));
-            }
-
-            var summary = new TextBlock
-            {
-                Text = string.Empty,
-                FontSize = 12,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = Secondary(),
-            };
-            body.Children.Add(summary);
-
-            var close = ShellButton("关闭");
-            footer.Children.Add(close);
-            close.Click += (_, _) => dialog.Hide();
-
-            dialog.Opened += async (_, _) =>
-            {
-                for (var i = 0; i < ChannelProbes.Length; i++)
-                {
-                    statuses[i].Text = "测速中…";
-                    await Task.Delay(320);
-
-                    var probe = ChannelProbes[i];
-                    if (!probe.Ok)
-                    {
-                        statuses[i].Text = "不可用";
-                        statuses[i].Foreground = Critical();
-                        continue;
-                    }
-
-                    statuses[i].Text = $"{probe.Speed:0.0} MB/s";
-                    statuses[i].Foreground = probe.Speed >= 4 ? Success() : Caution();
-                }
-
-                summary.Text = "自动通道已解析为 gh-proxy.org（4.8 MB/s）；GitHub 直连不可用，需先配代理。";
-                LauncherSettings.SetChannelTestResult(DownloadChannel.GhProxy);
-                UpdateChannelUi();
-            };
-
-            await dialog.ShowAsync();
         }
 
         // ==================== 更新弹窗 ====================
@@ -1203,6 +2085,9 @@ namespace AstraBrew_Launcher.Views
                 LauncherSettings.Reset();
                 LoadStateToUi();
                 MarkDirty();
+
+                // 「恢复默认」是一次性决策，不等防抖：万一用户立刻关窗口也要落盘
+                SettingsStore.Flush();
             };
 
             await dialog.ShowAsync();

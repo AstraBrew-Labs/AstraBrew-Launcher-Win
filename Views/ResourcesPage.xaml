@@ -533,10 +533,6 @@
 
         <!--  ==================== 页头 ====================  -->
         <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
@@ -577,15 +573,6 @@
                 </Button>
             </StackPanel>
 
-            <!--  操作反馈：收起时行高归零，不占位  -->
-            <InfoBar
-                x:Name="ActionInfoBar"
-                Grid.Row="1"
-                Grid.ColumnSpan="2"
-                Margin="0,10,0,0"
-                IsClosable="True"
-                IsOpen="False"
-                Severity="Informational" />
         </Grid>
 
         <!--  ==================== 数据目录 ====================  -->
@@ -619,7 +606,7 @@
                     <StackPanel Orientation="Horizontal" Spacing="7">
                         <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="数据目录" />
                         <Border Style="{StaticResource MetaChipStyle}">
-                            <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="内置 · v1.19.2" />
+                            <TextBlock x:Name="TargetInstanceChipText" Style="{StaticResource MetaChipTextStyle}" Text="内置 · v1.19.0" />
                         </Border>
                         <Border Style="{StaticResource MetaChipStyle}">
                             <TextBlock

@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="AstraBrew_Launcher.Views.Controls.NotifyToast"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    AutomationProperties.LiveSetting="Polite"
+    IsTabStop="False">
+
+    <!--
+        一条全局消息：左边图标定调（成功 / 提示 / 警告 / 失败），右边两行文字 + 可选操作。
+        底色不透明 + 1px 描边，浮在内容之上时不与下层卡片糊在一起（沿用全局「以描边分层」）。
+    -->
+    <Border
+        x:Name="Card"
+        Width="352"
+        Background="{ThemeResource NotifySurfaceBrush}"
+        BorderBrush="{ThemeResource NotifyStrokeBrush}"
+        BorderThickness="1"
+        CornerRadius="8">
+        <Grid
+            Padding="14,12,12,10"
+            ColumnSpacing="10"
+            RowSpacing="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <FontIcon
+                x:Name="SeverityIcon"
+                Grid.Row="0"
+                Grid.Column="0"
+                Margin="0,2,0,0"
+                VerticalAlignment="Top"
+                FontSize="16"
+                Glyph="&#xE946;" />
+
+            <TextBlock
+                x:Name="TitleText"
+                Grid.Row="0"
+                Grid.Column="1"
+                FontSize="13"
+                FontWeight="SemiBold"
+                Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                TextWrapping="Wrap" />
+
+            <Button
+                x:Name="CloseButton"
+                Grid.Row="0"
+                Grid.Column="2"
+                Margin="0,-6,-4,0"
+                VerticalAlignment="Top"
+                AutomationProperties.Name="关闭提示"
+                Click="Close_Click"
+                Style="{StaticResource SubtleIconButtonStyle}"
+                ToolTipService.ToolTip="关闭">
+                <FontIcon FontSize="11" Glyph="&#xE711;" />
+            </Button>
+
+            <TextBlock
+                x:Name="MessageText"
+                Grid.Row="1"
+                Grid.Column="1"
+                Grid.ColumnSpan="2"
+                FontSize="12.5"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                LineHeight="18"
+                MaxLines="4"
+                TextTrimming="CharacterEllipsis"
+                TextWrapping="Wrap" />
+
+            <HyperlinkButton
+                x:Name="ActionButton"
+                Grid.Row="2"
+                Grid.Column="1"
+                Grid.ColumnSpan="2"
+                Margin="0,4,0,0"
+                Padding="0"
+                HorizontalAlignment="Left"
+                Click="Action_Click"
+                FontSize="12.5" />
+
+            <!--  倒计时条：让「这条待会儿会自己消失」看得见，读不完可以点叉  -->
+            <Border
+                x:Name="CountdownTrack"
+                Grid.Row="3"
+                Grid.Column="1"
+                Grid.ColumnSpan="2"
+                Height="2"
+                Margin="0,9,0,0"
+                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                CornerRadius="1">
+                <Border
+                    x:Name="CountdownBar"
+                    HorizontalAlignment="Stretch"
+                    CornerRadius="1"
+                    RenderTransformOrigin="0,0.5" />
+            </Border>
+        </Grid>
+    </Border>
+</UserControl>

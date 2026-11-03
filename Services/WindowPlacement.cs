@@ -200,6 +200,12 @@ namespace AstraBrew_Launcher.Services
                     _presenter.Restore();
                 }
 
+                // 上次退出时的位置优先；校验不通过就落回默认的居中定位
+                if (TryApplySavedPlacement())
+                {
+                    return;
+                }
+
                 if (!TryGetWorkArea(_hwnd, out var work))
                 {
                     return;
@@ -227,6 +233,102 @@ namespace AstraBrew_Launcher.Services
             {
                 LogOnce(ex);
             }
+        }
+
+        // ==================== 窗口位置记忆 ====================
+
+        /// <summary>
+        /// 退出前记录当前窗口几何（物理像素 + DPI）。由 MainWindow.OnClosed 调用，
+        /// 必须早于 Dispose、也早于配置落盘 —— 顺序反了记下来的就是默认位置。
+        /// </summary>
+        public void PersistBounds()
+        {
+            if (_disposed || !LauncherSettings.RememberWindow)
+            {
+                return;
+            }
+
+            try
+            {
+                // 最小化 / 最大化状态下的矩形不代表用户的选择
+                if (_presenter is not null && _presenter.State != OverlappedPresenterState.Restored)
+                {
+                    return;
+                }
+
+                var rect = WindowRect();
+                if (rect.Width <= 0 || rect.Height <= 0)
+                {
+                    return;
+                }
+
+                LauncherSettings.SetWindowRect(new WindowBounds(
+                    rect.X,
+                    rect.Y,
+                    rect.Width,
+                    rect.Height,
+                    (int)GetDpiForWindow(_hwnd)));
+            }
+            catch (Exception ex)
+            {
+                LogOnce(ex);
+            }
+        }
+
+        /// <summary>
+        /// 还原上次的窗口位置，三重校验后才采用：
+        ///   · 尺寸有效；
+        ///   · 与某块显示器的工作区有交集（副屏拔掉后不能继续套用旧坐标）；
+        ///   · 收进工作区后标题栏仍然抓得到（见 <see cref="FitInside"/>）。
+        /// 任一条不满足就返回 false，交回默认的居中定位。
+        /// </summary>
+        private bool TryApplySavedPlacement()
+        {
+            if (!LauncherSettings.RememberWindow || LauncherSettings.WindowRect is not { } saved)
+            {
+                return false;
+            }
+
+            if (saved.Width <= 0 || saved.Height <= 0)
+            {
+                return false;
+            }
+
+            var areas = CollectWorkAreas();
+            if (areas.Count == 0)
+            {
+                return false;
+            }
+
+            // 显示器缩放改了（125% → 150%）之后，同样的像素宽高在视觉上会变小，
+            // 按 DPI 比例折算，保持「看起来一样大」。
+            double currentScale = CurrentScale();
+            double savedScale = saved.Dpi > 0 ? saved.Dpi / 96.0 : currentScale;
+            int width = (int)Math.Round(saved.Width * currentScale / savedScale);
+            int height = (int)Math.Round(saved.Height * currentScale / savedScale);
+
+            var rect = new RectInt32(saved.X, saved.Y, width, height);
+
+            RectInt32 host = default;
+            long bestOverlap = 0;
+            foreach (var area in areas)
+            {
+                var hit = Intersect(rect, area);
+                long overlap = (long)hit.Width * hit.Height;
+                if (overlap > bestOverlap)
+                {
+                    bestOverlap = overlap;
+                    host = area;
+                }
+            }
+
+            if (bestOverlap == 0)
+            {
+                return false;
+            }
+
+            ApplyRect(FitInside(rect, host));
+            return true;
         }
 
         // ==================== 事件 ====================

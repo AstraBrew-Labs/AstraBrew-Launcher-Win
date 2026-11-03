@@ -27,6 +27,15 @@ namespace AstraBrew_Launcher.Services
         public static string TempRoot { get; } =
             Path.Combine(Path.GetTempPath(), "astrabrew-launcher");
 
+        /// <summary>
+        /// 可重建的缓存目录：<c>%Temp%\astrabrew-launcher\caches</c>。
+        ///
+        /// 放发布列表这类「删了只会多请求一次」的数据，属于中间产物而不是用户资产：
+        /// 和临时下载放在一起，被磁盘清理或重启清掉也只是下次重新请求一次，
+        /// 不让它在 AppData 里占着用户的备份与同步体积。
+        /// </summary>
+        public static string CacheRoot { get; } = Path.Combine(TempRoot, "caches");
+
         /// <summary>把 <c>%APPDATA%</c> 之类的变量换成实际目录，供显示与文件操作使用。</summary>
         public static string Expand(string path) => Environment.ExpandEnvironmentVariables(path);
 

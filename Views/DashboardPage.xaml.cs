@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
@@ -132,7 +132,7 @@ namespace AstraBrew_Launcher.Views
         private void Refresh_Click(object sender, RoutedEventArgs e)
         {
             LastSyncText.Text = $"最后同步 {DateTime.Now:HH:mm:ss}";
-            ShowBar("指标已刷新", "服务状态、资源占用与运行环境已重新采集。", InfoBarSeverity.Success);
+            Notify("指标已刷新", "服务状态、资源占用与运行环境已重新采集。", NotifySeverity.Success);
         }
 
         private void CopyEndpoint_Click(object sender, RoutedEventArgs e)
@@ -142,7 +142,7 @@ namespace AstraBrew_Launcher.Views
             Clipboard.SetContent(package);
 
             FlashCopiedFeedback();
-            ShowBar("地址已复制", EndpointText.Text, InfoBarSeverity.Success);
+            Notify("地址已复制", EndpointText.Text, NotifySeverity.Success);
         }
 
         private void FlashCopiedFeedback()
@@ -166,7 +166,7 @@ namespace AstraBrew_Launcher.Views
         private void Restart_Click(object sender, RoutedEventArgs e)
         {
             SetServiceRunning(true);
-            ShowBar("已发送重启指令", "SiliconTavern 将在数秒内重启，进度可在控制台查看。", InfoBarSeverity.Informational);
+            Notify("已发送重启指令", "SiliconTavern 将在数秒内重启，进度可在控制台查看。", NotifySeverity.Informational);
         }
 
         private async void Stop_Click(object sender, RoutedEventArgs e)
@@ -191,7 +191,7 @@ namespace AstraBrew_Launcher.Views
             }
 
             SetServiceRunning(false);
-            ShowBar("服务已停止", "端口 8000 已释放，可随时重新启动。", InfoBarSeverity.Warning);
+            Notify("服务已停止", "端口 8000 已释放，可随时重新启动。", NotifySeverity.Warning);
         }
 
         private void OpenConsole_Click(object sender, RoutedEventArgs e)
@@ -302,6 +302,17 @@ namespace AstraBrew_Launcher.Views
         {
             if (instance.IsBuiltin)
             {
+                if (!instance.IsInstalled)
+                {
+                    return "内置酒馆还没有安装代码，去「版本管理」装一个版本";
+                }
+
+                // 依赖没装好的那份代码起不来，先让用户去补依赖，别显示「可更新」误导
+                if (!TavernInstances.BuiltinDepsReady)
+                {
+                    return $"{instance.DisplayName} · 缺少依赖，去「版本管理」点「安装依赖」";
+                }
+
                 return instance.Version == TavernInstances.LatestStable
                     ? $"{instance.DisplayName} · 已是最新"
                     : instance.Version == TavernInstances.StagingTag
@@ -326,13 +337,14 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            // 缺少依赖的本地实例不允许成为当前实例：把选择弹回原处并说明原因
-            if (!instance.IsBuiltin && !instance.DepsReady)
+            // 缺少依赖的实例不允许成为当前实例（内置的也一样）：
+            // 把选择弹回原处并说明原因
+            if (!instance.DepsReady)
             {
-                ShowBar(
+                Notify(
                     "该实例缺少依赖",
                     $"{instance.DisplayName} 需要先在「版本管理」安装 Node 依赖才能启动，当前仍使用 {TavernInstances.Current.DisplayName}。",
-                    InfoBarSeverity.Warning);
+                    NotifySeverity.Warning);
 
                 SelectCurrentInCombo();
                 return;
@@ -345,12 +357,12 @@ namespace AstraBrew_Launcher.Views
 
             TavernInstances.Use(instance);
 
-            ShowBar(
+            Notify(
                 "已切换版本",
                 instance.IsBuiltin
                     ? $"后续启动将使用内置实例 {instance.KernelLabel}。"
                     : $"后续启动将使用本地 {instance.KernelLabel}，目录：{instance.Path}",
-                InfoBarSeverity.Success);
+                NotifySeverity.Success);
         }
 
         private void RescanVersions_Click(object sender, RoutedEventArgs e)
@@ -366,12 +378,12 @@ namespace AstraBrew_Launcher.Views
                 }
             }
 
-            ShowBar(
+            Notify(
                 "已重新扫描本地版本",
                 missing == 0
                     ? $"发现 {TavernInstances.Locals.Count} 个本地版本，均可正常启动。"
                     : $"发现 {TavernInstances.Locals.Count} 个本地版本，其中 {missing} 个缺少 Node 依赖。",
-                InfoBarSeverity.Success);
+                NotifySeverity.Success);
         }
 
         private void ManageVersions_Click(object sender, RoutedEventArgs e)
@@ -501,21 +513,21 @@ namespace AstraBrew_Launcher.Views
 
         private void OpenTavern_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar("已在浏览器中打开酒馆", $"使用「{SelectedBrowserName}」访问 {EndpointText.Text}。", InfoBarSeverity.Informational);
+            Notify("已在浏览器中打开酒馆", $"使用「{SelectedBrowserName}」访问 {EndpointText.Text}。", NotifySeverity.Informational);
         }
 
         private void OpenDataDir_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar(
+            Notify(
                 "已打开数据目录",
                 Path.Combine(AppPaths.RoamingRoot, "data"),
-                InfoBarSeverity.Informational);
+                NotifySeverity.Informational);
             App.MainWindow?.NavigateTo("resources");
         }
 
         private void ImportCard_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar("请选择角色卡文件", "支持 PNG 与 JSON 两种格式，可一次选择多张。", InfoBarSeverity.Informational);
+            Notify("请选择角色卡文件", "支持 PNG 与 JSON 两种格式，可一次选择多张。", NotifySeverity.Informational);
             App.MainWindow?.NavigateTo("resources");
         }
 
@@ -546,12 +558,8 @@ namespace AstraBrew_Launcher.Views
             }
         }
 
-        private void ShowBar(string title, string message, InfoBarSeverity severity)
-        {
-            ActionInfoBar.Title = title;
-            ActionInfoBar.Message = message;
-            ActionInfoBar.Severity = severity;
-            ActionInfoBar.IsOpen = true;
-        }
+        /// <summary>页面播报统一走全局消息（窗口右下角），页面里不再挂 InfoBar。</summary>
+        private static void Notify(string title, string message, NotifySeverity severity)
+            => AppNotify.Post(severity, title, message);
     }
 }

@@ -416,7 +416,6 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -592,17 +591,9 @@
             Height="1"
             Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
-        <InfoBar
-            x:Name="ActionInfoBar"
-            Grid.Row="2"
-            Margin="32,10,32,0"
-            IsClosable="True"
-            IsOpen="False"
-            Severity="Informational" />
-
         <!--  ==================== 正文 ====================  -->
         <ScrollViewer
-            Grid.Row="3"
+            Grid.Row="2"
             HorizontalScrollBarVisibility="Disabled"
             VerticalScrollBarVisibility="Auto">
             <Grid

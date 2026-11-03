@@ -24,6 +24,41 @@
 
 > 不要把 `ControlCornerRadius` 全局改成 8 —— 那会连带改掉输入框、下拉框、滑块等一大片控件。
 
+## 全局消息提示
+
+**所有「说一声」的提示都走全局消息**（装好了、复制了、删掉了、失败了、刷新完了……），
+页面里**不再挂 `InfoBar`**，也不再弹 ContentDialog 播报结果：装一次内置实例要一两分钟，
+这期间用户很可能已经翻到别的页面，写在页面里的提示会跟着页面一起消失。
+
+- 唯一出口 `Services/AppNotify.cs`：`AppNotify.Success / Info / Warning / Error(title, body,
+  actionText?, action?)`。页面侧每个页面留一个 `private static void Notify(title, message,
+  severity)` 转发到 `AppNotify.Post`，**不要**自己弹 ContentDialog 播报，也不要直接引用消息控件。
+- 展示在 `Views/Controls/NotifyHost`，由 `MainWindow` 挂在内容区右下角、`ContentRoot` 之外
+  —— 那层带界面缩放，消息卡跟着缩放会和窗口边缘错开（同弹窗，按 100% 呈现）。
+  同屏最多三条，超出时先撤掉最早的一条，保证新消息立刻可见。
+- 文案按「一眼读完」写：标题是结论（「内置实例已安装」），正文一句细节 + 下一步点哪儿。
+  耗时、路径、退出码留在页面日志里；消息卡正文最多 4 行，超了省略。
+- 停留时长按严重程度分：成功 / 提示 5 秒、警告 8 秒、**失败常驻**（必须点关闭）——
+  安装失败来不及读就滑走等于没播报。卡片底部那条细线是倒计时，没有线的就是常驻消息。
+- 需要用户落地的动作放进消息卡的操作按钮（如失败时的「查看日志」），点按钮先收卡片再执行动作。
+
+### 什么才配用 Alert（ContentDialog）
+
+只有「不打断就会做错事」的才弹窗，其余一律全局消息：
+
+| 用途 | 例子 | 位置 |
+|---|---|---|
+| 确认不可逆操作 | 停止服务、删除扩展 / 资源、移除实例、恢复默认设置 | 各页面 `ContentDialog` |
+| 让用户做选择 | 缺 Git / Node.js → 「前往设置」；安装依赖前的长任务确认 | `VersionPage` |
+| 长任务进度面板 | Git / Node.js 安装、GitHub 连通性测试 | `SettingsPage` 的 `CreateShell` |
+| 表单 / 长文阅读 | 扩展安装（输入 Git 地址）、版本更新日志、访问地址详情 | 各页面弹窗 |
+
+- 页面里只留两种 **内联** `InfoBar`，它们是「状态说明」而不是播报：版本页的开发版风险提示
+  （`StagingNote`）、酒馆配置页的非普通模式提示（`BrowserModeHint`）——跟着选项常驻，
+  用消息卡播报会把「一直成立」说成「刚刚发生」。
+- 按钮圆角、主题色等细节见「按钮圆角」一节；弹窗里由 `DefaultButton` 自动套的强调按钮
+  仍需在 dialog 上覆写 `ControlCornerRadius`。
+
 ## 实例状态
 
 酒馆实例清单与「当前使用哪一份」只有一份数据：`Services/TavernInstances.cs`。
@@ -33,6 +68,242 @@
 > 不要在页面里另存一份实例列表或当前选择——历史实现中版本管理页与仪表盘各存一份，
 > 结果一边切换另一边毫无反应。新增涉及实例的界面请直接读 `TavernInstances`。
 > 清单目前是内存原型数据，落盘位置见下方 `data/local_instances.json`。
+
+## 设置持久化
+
+偏好只有一份状态：`Services/LauncherSettings.cs`（内存），落盘只有一个出口：
+`Services/SettingsStore.cs` → `%AppData%\AstraBrew Launcher\settings.toml`。
+
+- 页面改设置只调 `LauncherSettings.SetXxx(...)`，**不要自己读写文件**；
+  写盘由 `SettingsStore` 监听 `Changed` 完成（400ms 防抖，先写 `.tmp` 再改名，掉电不留半截文件）。
+- TOML 由 `Services/Toml.cs` 自己读写，不引入第三方库：Release 开了 `PublishTrimmed`，
+  反射式反序列化会被裁掉；而且自己写才能保留分组注释。读写只覆盖「`[section]` + `key = value`」
+  这一层，够用就好，加复杂结构前先想清楚是否值得。
+- 值一律存人能读懂的字符串（`theme = "dark"`、`font = "Microsoft YaHei UI"`），**不要存枚举数字或下标**——
+  枚举顺序一变、候选表一变，老配置就全错位。枚举 ↔ 文本的映射表在 `SettingsStore` 顶部。
+  字体是唯一例外：它存的是字体族名本身（`"system"` 表示跟随系统，`"embedded"` 表示随包内置字体），
+  本机没装的字体会在设置页标成「（未安装）」并回退，见 `FontCatalog`。
+- 退出前 `MainWindow.OnClosed` 必须先 `_placement.PersistBounds()` 再 `SettingsStore.SaveNow()`：
+  窗口几何是静默写入的（不发 `Changed`），漏了这一步「记住窗口位置」永远存不下来。
+- 设置页右上角的「已保存」徽章读 `SettingsStore.Saved` 事件，不要再用定时器假装保存成功。
+
+## 设置版本（小白版 / 高手版）
+
+设置页有两种呈现，和酒馆配置页同一套交互：`Services/LauncherSettings.cs` 的 `Level`
+（落盘 `[ui] level = "simple" | "advanced"`，默认 `simple`）。
+
+- 两版共用同一份状态，**切换只改可见性，不改任何值**：小白版里藏起来的项仍按原设定生效。
+  页面侧逻辑集中在 `Views/SettingsPage.xaml.cs` 的 `ApplyLevel()`，新增可隐藏的行/组时
+  给元素起个名字并在这里登记，不要另写一份「小白版页面」。
+- 小白版去掉：界面里的缩放与字体、基础里的 CPU 核心/服务器模式/数据存放/全局数据目录、
+  整个控制台与原型工具、网络里的代理；运行环境收成一行结论（Git / Node.js / WebView2
+  齐全 = 正常，缺任意一项 = 环境缺失 + 「修复」按钮逐个补齐）。
+- 条件行（服务器模式的子行、自定义代理）由 `ApplyConditions()` 再夹一层 `!simple`：
+  旧配置里开着它们，也不能在小白版下把子行顶出来。分隔线跟着所属行一起收起，
+  否则卡片里会留下孤立的一条线。
+- 依赖行跟着前置条件收放（`ApplyEnvironment()`）：npm 包源只在 Node.js 已就位时出现，
+  Node 未装或还在探测时连同分隔线一起收起，别让人给不存在的运行时挑包源。
+
+## 外观三项（主题 / 字体 / 缩放）
+
+统一由 `Services/AppearanceController.cs` 在窗口就位后应用，任何页面都不要自己改。
+
+- **主题**：设内容根的 `RequestedTheme`（`Application.RequestedTheme` 只能启动前设一次）。
+  改完要回调 `MainWindow.ApplyTitleBarColors()`，否则系统绘制的窗口按钮停留在旧主题的悬停色。
+- **字体**：改 `ThemeDictionaries` 里的 `ContentControlThemeFontFamily` 只管「之后新建」的元素；
+  已建好的元素必须遍历可视化树补一遍，两者缺一个就有一半界面不跟着变。
+  写 `Application.Resources` 顶层无效（主题字典优先级更高），字体也**不能**在 `App` 构造函数里改
+  ——那会让启动直接 fail-fast（无托管异常、无日志）。图标字体与 `Consolas` 保持不动。
+  下拉项（`ComboBoxItem`）跳过不刷：字体选择器用每项自己的字做预览，覆盖了就看不出观感。
+  候选表由 `Services/FontCatalog.cs` 用 GDI `EnumFontFamiliesEx` 枚举——**不要**改成翻字体目录猜文件名，
+  文件名（msyh.ttc）和 XAML 要的族名（Microsoft YaHei UI）不是一回事；也**不要**写死几个方案。
+- **内置字体**：`Assets/Fonts/` 里的 4 个 ttf 随包分发，是出厂默认（配置值 `embedded`），
+  用 `new FontFamily("ms-appx:///Assets/Fonts/<file>.ttf#<族名>")` 引用，
+  **不要求本机安装**（实测 Debug 非打包构建也能加载，靠的是 csproj 里 `Content` 复制到输出目录）。
+  三个坑：
+  1. URI 里 `#` 后面必须是 ttf **name 表里的族名**，不是文件名。这款字体登记了两个名字，
+     zh-CN 是「有爱魔兽圆体 CN」、zh-TW/HK 是「有愛魔獸圓體 CN」，两个都要认。
+  2. 文件名保持 ASCII（用 PostScript 名）。中文文件名要 URI 转义，出错时没有任何报错信息。
+  3. 族名对不上时 XAML **静默回退**到系统字体，不抛异常、不留日志。判断有没有生效：
+     看 `FontFamily.Source` 是保留了 URI 原串（没解析）还是变成了族名，或者直接和
+     `font = "system"` 的截图对比字形。
+  多字重：XAML 一个 URI 只认一个文件，SemiBold/Bold 由框架合成。打包 Light/Medium/Bold
+  是为将来加字重控制留的，当前不参与渲染。
+- **缩放**：内容层 `ScaleTransform` + 宽高按 `1/scale` 反向补偿；标题栏不参与缩放，
+  否则会和系统窗口按钮错位。弹窗挂在 XamlRoot 上，不随缩放变化（按 100% 呈现）。
+
+## 内置环境安装
+
+第三方组件的下载、解压、落位统一走 `Services/ComponentInstaller.cs`，
+每个组件在 `Services/*Installer.cs` 里只声明差异项（`InstallSpec`：版本、源、安装目录、
+校验函数、被占用时的说辞），**不要**再复制一份安装流程。
+当前已接入 `MingitInstaller`（`bin\mingit`）与 `NodejsInstaller`（`bin\nodejs`）。
+界面只做两件事：把进度画出来、把结果翻成一句话。
+
+- **镜像优先、直连兜底**：Git 走 华为云 → npmmirror → GitHub 直连；
+  Node.js 走 华为云 → npmmirror → 阿里云 → 官方直连。单个源失败静默换下一个，
+  只有全部失败才对用户说话——国内直连 GitHub / nodejs.org 十次有八次超时，别让它排第一。
+- **官方 Node.js 包多一层顶层目录**（`node-v22.20.0-win-x64\`），解压时按
+  `ComponentInstaller.DetectRootPrefix` 剥掉；MinGit 是平铺的，前缀为空走同一条路。
+  剥完 `node.exe` 必须落在 `bin\nodejs\node.exe`，`RuntimeProbe` 就查这个位置。
+- **日志统一走** `Services/InstallLog.cs` → `%AppData%\AstraBrew Launcher\logs\<task>-<时间戳>.log`。
+  换源细节、HTTP 状态、异常堆栈全进文件；界面只留一句能操作的话
+  （「连不上下载源，请检查网络后重试。」），**不要**把日志正文糊进弹窗或 InfoBar。
+- **解压先落暂存目录** `bin\.<name>-staging`，校验关键文件（如 `cmd\git.exe`）存在后再
+  `Directory.Move` 到正式目录。中途失败只清暂存目录，绝不在正式目录留下半个环境——
+  半成品比没装更糟：探测能过，一跑就报错。
+- **超时分两段**：不用 `HttpClient.Timeout`（大包会把正常慢速判死），用「连接 20s + 连续 25s
+  无数据」；每次读到数据就重置。进度回调必须限流（约 120ms / 每 1%），
+  81920 字节一个 chunk 不节流会压满 UI 线程。
+- **代理跟随设置页**（`LauncherSettings.Proxy`：无 / 系统 / 自定义），统一由
+  `Services/ProxyHttpClient.cs` 创建 `HttpClient`；自定义地址解析失败时退回系统代理。
+- 失败原因用 `InstallError` 枚举表达，界面按枚举挑文案，**不要**去解析异常字符串。
+- **npm 版本读 `package.json`**，不跑 `npm --version`：内置环境读
+  `bin\nodejs\node_modules\npm\package.json`，系统环境读 `<node 目录>\node_modules\npm\package.json`
+  与 `%ProgramFiles%\nodejs\node_modules\npm\package.json`。`.cmd` 得起 `cmd.exe`，
+  为一个版本号拉子进程不值。设置页里「npm」行显示版本，「npm 包源」是另一行（选源），
+  两行都跟着 Node.js 是否存在一起收放。
+
+## 源码下载通道
+
+酒馆源码只能有一个来源入口：`Services/TavernSource.cs`。仓库地址、加速前缀、
+回退顺序都在这里拼，设置页显示、后续的拉取与更新一律从它取，**不要**在别处再写一遍 URL。
+
+- 三个通道按固定顺序出现在分段切换器里（枚举顺序＝界面顺序，别乱调）：
+  `Gitee`（`AstraBrew-Labs/SillyTavern`）、`GitCode`（`GitHub_Trending/si/SillyTavern`）、
+  `Github`（`SillyTavern/SillyTavern`）。默认 `GitCode`。
+- **加速开关是全局能力，不是某条通道的附属品**：判断与拼地址只在 `Services/GithubAccel.cs`
+  一处（`Apply` / `Targets` / `ExpandSources`）。凡是 GitHub 链接——版本列表接口、Git 安装包、
+  扩展克隆、将来的 Raw 资源——都先过它，**只看开关，不看下载源选了什么**。
+  因此加速行**常显**，选镜像时也不收起。
+- **一个开关管两条路，别拆成两个开关**：
+  - 应用内 HTTP / 下载 —— `GithubAccel` 在地址前拼 `gh-proxy.org`；
+  - 命令行 git —— `Services/GitGlobalConfig.cs` 把 `insteadOf` 写进 `~/.gitconfig`。
+  命令行拿到的是干净的 `https://github.com/…`，拼不了前缀，只能让 git 自己改写；
+  酒馆自动更新、酒馆里装扩展都靠这条。两者**必须同开同关**，否则会出现「界面显示已加速、
+  酒馆更新却还是直连」的错位。**不要再给全局 git 规则单独做一个开关。**
+- **用法照官方文档**（gh-proxy.com/docs/github-accelerator）：把完整 GitHub 资源 URL
+  **原样**拼在中转域名后面，路径与查询串都不改，例如
+  `https://gh-proxy.org/https://github.com/o/r/releases/download/v1/x.zip`。
+- **只加速 GitHub 自己的域名，别的站拼前缀必报错**：`AccelerableHosts` 是一张**白名单**，
+  按文档「支持的资源格式」逐条对应，**不要**改回后缀匹配——后缀匹配早晚把长得像 GitHub 的
+  域名放进来，而这个错误的表现是「用户装不上」。名单分四组：
+  - 主站与接口：`github.com`（仓库页、Releases、archive、raw 路径、blob、Actions 产物、
+    clone、patch/diff、atom）、`api.github.com`、`codeload.github.com`；
+  - 文本资源：`raw.githubusercontent.com`、`raw.github.com`（历史域名）、
+    `gist.githubusercontent.com`、`gist.github.com`；
+  - 短链：`gh.io`（http / https 都算）；
+  - 静态资产：`avatars.githubusercontent.com`、`opengraph.githubassets.com`、
+    `github.githubassets.com`、`desktop.githubusercontent.com`，以及下载 302 的落点
+    `objects.githubusercontent.com`、`release-assets.githubusercontent.com`。
+  不在名单里的地址一律原样返回、零改动——Gitee / GitCode 镜像、npmmirror、华为云、
+  nodejs.org、npm 源、本地地址都是这一类。
+- **两个中转域名分工不同，别混**：`gh-proxy.org` 是资源代理（文件、API、git 协议），
+  `gh-proxy.com` 是主站 Web 转换器，只在「用浏览器打开仓库主页 / Releases 页面、由它列出
+  资产」时才用。本项目只做程序化下载与克隆，统一走 `GithubAccel.Prefix`；
+  `WebPrefix` 只用于识别「这条链接已经加速过」，不要拿它拼下载地址。
+- **不自己重写路径**：`/blob/` 转 raw、`raw.github.com` 与 `gist.github.com` 的规范化、
+  下载 302 的跟随都由中转端做（文档第 3、7 节）。我们只拼前缀，改路径会和它打架。
+- **唯一例外是内置实例克隆仓库**：`TavernSource.InstallTargets()` 里只有下载源选
+  `Github` 才给「加速 → 直连」两个候选；选镜像且镜像里有该版本就只走镜像，镜像里没有则退回
+  GitHub **直连、不加速**（用户没选过直连，不替他决定要不要中转）。想用加速就把下载源切过去。
+  注意：加速开关打开时全局 `insteadOf` 已经生效，**即使这里给的是直连地址，git 也会把它改写成
+  加速地址**——这是开关打开后的预期行为，不要当成 bug 去「修」。
+- 一律「加速在前、直连在后」：中转挂了静默退直连，不能因为开了开关反而装不上。镜像失败不自动
+  跳别的仓库，否则用户会拿到一个不是自己选的版本。
+- 别在别处再写一次 `gh-proxy.org`：前缀是 `GithubAccel.Prefix`，已带前缀的地址不会再套一层；
+  任何「自己拼前缀」的写法都绕过白名单，等于把报错机会留给用户。
+- 配置文件里的 `download_channel` 只有 `gitee / gitcode / github` 三个合法值，
+  **不留旧值兼容**：读不到就按默认 `GitCode` 处理，不写迁移分支。
+
+### 全局 git 规则（insteadOf）
+
+加速开关打开时，除了应用内拼前缀，还要让**命令行里的 git** 也走加速，否则酒馆自动更新、
+酒馆里装扩展这类「不在我们手里发请求」的场景会漏掉。做法照 GH-Proxy 文档的
+「Git 全局自动替换 (insteadOf)」：
+
+```
+git config --global url."https://gh-proxy.org/https://github.com/".insteadOf "https://github.com/"
+git config --global --unset url."https://gh-proxy.org/https://github.com/".insteadOf
+```
+
+- 全部逻辑只在 `Services/GitGlobalConfig.cs`：`ApplyAsync` / `RevertAsync` / `IsAppliedAsync` /
+  `SyncAsync(enabled)`。**不要直接读改 `~/.gitconfig` 文本**，让 git 自己去写。
+- 键名里带完整 URL（`url.<前缀>https://github.com/.insteadOf`），所以它天然只命中 github.com，
+  相当于一张白名单；Gitee / GitCode / 自建服务、`git@github.com:` 这类 scp 写法都不会被改写。
+- 写入用 `--replace-all`：反复开关不会攒出一串重复项。移除用 `--unset-all`——
+  用 `--unset` 在存在多值时会失败并**把规则留在配置里**，那时用户以为已恢复直连、实际还在加速。
+- `git config --unset` 在键不存在时返回 5，等价于「已经是目标状态」，按成功处理；其余非 0 才算失败。
+- 以 **git 实际配置为真相源**：进设置页跑一次 `SyncAsync` 对齐（用户可能在终端里手动 `--unset`
+  过、或换过机器），开关状态始终取加速开关本身，不用另一个布尔值记录。
+- 失败不回滚开关：加速服务对应用内请求仍然有效，只是命令行那条路没铺好，用 Warning 说明；
+  关闭时删不掉规则更严重——git 会继续走加速，用 Error。
+- 没有 Git 时不报错也不阻断：规则写不上，说明里写清「命令行仍是直连」。
+
+## 内置实例安装
+
+`Services/TavernInstaller.cs` 是唯一的安装入口：`git clone --depth 1 --single-branch
+--branch <tag|staging>` 到暂存目录 → 校验 `package.json` → 改名落位到
+`%AppData%\AstraBrew Launcher\sillytavern` → `npm install`。**依赖装完才算安装成功**：
+代码在、依赖缺时 `TavernInstances.BuiltinDepsReady == false`，按钮变成「安装依赖」。
+
+一颗按钮三种身份，由 `Views/VersionPage.xaml.cs` 的 `UpdateSwitchButton()` 决定：
+`安装 vX`（没代码）/ `切换到 vX`（有代码但不是这个版本）/ `安装依赖`（代码就是这个版本、
+只缺 `node_modules`）。「安装依赖」只跑 npm，不重下源码。
+
+- **先查环境再动手**：Git（拉源码）与 Node.js（跑酒馆 + 提供 npm）任一缺失就弹窗，
+  主按钮落到「设置 → 运行环境」（`SettingsPage.OpenRuntimeSection()` + `StartBringIntoView`）。
+  装完启动不了比装不上更气人，所以不硬装。只补依赖时（`needGit: false`）不查 Git。
+- **镜像比对决定从哪拉**：`Services/TavernMirrors.cs` 用一次 `git ls-remote --refs <镜像地址>`
+  取回镜像的全部分支与标签（内存缓存 30 分钟，失败缓存 60 秒），再和当前选的版本比；
+  有同一个标签 → 界面显示「镜像可用」并走镜像，没有 → 显示「直连安装」并退回 GitHub。
+  选的是 `Github` 通道时不显示「镜像可用」，只有「直连安装」。
+  不走「按版本逐个探测」——二三十个版本就是二三十次往返。
+- **换版不先删旧版**：旧目录先改名到 `.sillytavern-old`，新代码就位后才删它；
+  落位失败会把旧目录原样挪回。**删目录必须走 `DeleteTree`**：Git 把 `.git/objects/pack`
+  设成只读，直接 `Directory.Delete(recursive:true)` 会中途抛 `UnauthorizedAccessException`，
+  留下删了一半的目录（这条是实测踩出来的）。
+- **装完以磁盘为准**：`TavernInstances.ReloadBuiltin()` 重读 `package.json` 的 `version`，
+  失败路径也要调一次——回滚过的目录只能由磁盘说了算。
+- **日志**：`logs\sillytavern-<时间戳>.log`，含最终选用的源、`git` 原始输出与耗时；
+  远端 `Counting/Compressing objects` 的百分比行不进日志（一秒几十行，只会冲掉有用信息）。
+  界面进度按 `Receiving objects → Resolving deltas → Updating files` 三段映射，回调限流 1%。
+- **依赖装在哪、怎么装**：代码落位之后在安装目录里跑
+  `node <node 目录>\node_modules\npm\bin\npm-cli.js install --omit=dev --no-audit --no-fund
+  --loglevel=http --registry=<设置里的源>`。`node_modules` 有几万文件，放暂存目录再整体改名只会更慢；
+  而且依赖失败时留下的正是「有代码、缺依赖」，用户点一次「安装依赖」就能修好。
+- **不改全局 npm 配置**：源用 `--registry` 传参，只作用于这一次进程，绝不写 `~/.npmrc`。
+  也不要改成 `npm config set`——那会悄悄改掉用户自己的环境。
+- **npm 要跑 node 而不是 npm.cmd**：`.cmd` 是批处理，重定向时得先起 cmd.exe，
+  退出码与编码都会拐一道弯；直接用 node 跑 `npm-cli.js` 拿到干净的行流。
+- **依赖阶段的进度**：npm 没有可信百分比，界面用不确定态；文案按「解析依赖（packument 计数）→
+  安装依赖（tar 包计数）」推进，另有每秒一次的心跳把耗时写进文案——npm 解包时完全不出声，
+  没有心跳界面会像卡死。
+- **失败语义**：`TavernInstallResult.DepsReady` 区分「代码在、依赖缺」与「彻底没装」。
+  前者 InfoBar 用 Warning（依赖没有装好），后者才是 Error（安装失败）。
+
+## 版本列表（内置实例）
+
+`Services/TavernReleases.cs` 是版本列表的唯一入口，仓库页只调 `GetAsync`，不要自己拼 API 地址。
+
+- 接口固定为 `TavernReleases.ApiUrl`（`/releases?per_page=30`），地址经
+  `GithubAccel.Targets()` 展开：加速开着先 `gh-proxy.org` 再直连，关着只直连。
+  与下载源选的是镜像还是直连**无关**——版本列表始终在 `api.github.com`。
+- **缓存优先**：`%Temp%\astrabrew-launcher\caches\sillytavern-releases.json`，内存再缓存一层。
+  缓存是中间产物（删了只是多请求一次），所以放临时目录而不是 AppData；路径统一取
+  `AppPaths.CacheRoot`，不要在页面里自己拼。
+  有缓存就不请求网络（未登录的 GitHub API 每小时只有 60 次）；
+  只有用户点「刷新版本列表」才强制请求并覆盖缓存。
+- 强制刷新失败时继续显示旧缓存，并把原因折成一句话给 InfoBar；**不要**清空列表或弹堆栈。
+- 发布说明是 Markdown，展示前只做最小整理（去 `#`、`*` 换 `•`、压空行），不引渲染库。
+- 内置实例的版本优先读 `sillytavern\package.json` 的 `version`；读不到才用
+  `TavernInstances.DefaultVersion` 占位。元信息（日期 / 标签）只写发布列表里真有的事实，
+  **不要**编体积和文件数。
+- 没装（`TavernInstances.BuiltinInstalled == false`）时界面写「未安装」：不显示版本号、
+  不显示元信息胶囊、不出现「使用中」，下拉框也不给任何版本打「当前」。
+- 有代码、缺依赖（`BuiltinInstalled && !BuiltinDepsReady`）时卡片挂「待装依赖」胶囊，
+  隐藏「使用内置实例」（切过去也起不来），仪表盘版本说明写「缺少依赖」。
+  这类实例不能成为当前实例（`TavernInstances.Use` 与仪表盘下拉都会拦）。
 
 ## 路径显示
 
@@ -53,6 +324,8 @@
 ## 目录结构
 
 %AppData%/AstraBrew Launcher/   ← 根目录 (root)
+├── .sillytavern-staging/       ← 换版暂存目录，安装过程中才存在
+├── .sillytavern-old/          ← 被替换下来的旧版本，删除失败时才会残留
 ├── data/                       ← 软件数据目录
 │   ├── default/                ← 默认数据子目录
 │   │   └── sillytavern/        ← 酒馆默认数据子目录
@@ -66,12 +339,14 @@
 │   └── local_instances.json
 ├── logs/                    ← 软件日志目录
 ├── sillytavern/             ← 内置酒馆路径
-├── bin/                 ← 内置环境目录 (内置 NodeJS、MinGit 等)
+├── bin/                    ← 内置环境目录 (内置 NodeJS、MinGit 等)
 │   ├── nodejs/             ← 内置 NodeJS 目录
-│   ├── mingit/             ← 内置 MinGit 目录
+│   ├── git/                ← 内置 Git/MinGit 目录
 │   ├── pm2/                ← 内置 PM2 目录
 │   └── caddy/              ← 内置 Caddy 目录
-└── config.json              ← 启动器配置文件
+└── settings.toml              ← 启动器配置文件
 
-%Temp%/astrabrew-launcher/         ← 根目录·临时目录 (temp)
-%Temp%/astrabrew-launcher/caches   ← 缓存目录，存放API数据缓存等 (caches)
+%Temp%/astrabrew-launcher/          ← 根目录·临时目录 (temp)
+├── caches/                         ← 缓存目录，存放API数据缓存等 (caches)
+│   └── sillytavern-releases.json   ← 内置实例的版本列表缓存
+└── <组件安装包>.zip                 ← 下载中的安装包，落位/失败后即删

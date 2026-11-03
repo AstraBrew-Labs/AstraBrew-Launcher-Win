@@ -159,6 +159,7 @@ namespace AstraBrew_Launcher.Views
 
             // 界面上直接给出展开后的真实路径
             TargetPathText.Text = TargetPath;
+            TargetInstanceChipText.Text = $"内置 · {TavernInstances.Builtin.KernelLabel}";
 
             Seed();
             Loaded += (_, _) => RefreshRows();
@@ -377,10 +378,10 @@ namespace AstraBrew_Launcher.Views
 
             row.Enabled = toggle.IsOn;
             UpdateSummary();
-            ShowBar(
+            Notify(
                 toggle.IsOn ? "已启用扩展" : "已停用扩展",
                 toggle.IsOn ? $"{row.Name} 会在下次酒馆启动时加载。" : $"{row.Name} 的配置保留，下次启动不再加载。",
-                InfoBarSeverity.Informational);
+                NotifySeverity.Informational);
         }
 
         private async void RowDelete_Click(object sender, RoutedEventArgs e)
@@ -421,14 +422,14 @@ namespace AstraBrew_Launcher.Views
 
             _all.Remove(row);
             RefreshRows();
-            ShowBar("已删除扩展", $"{row.Name} 及其目录已被移除。", InfoBarSeverity.Success);
+            Notify("已删除扩展", $"{row.Name} 及其目录已被移除。", NotifySeverity.Success);
         }
 
         private void RowHomepage_Click(object sender, RoutedEventArgs e)
         {
             if (sender is HyperlinkButton { DataContext: ExtensionRow row })
             {
-                ShowBar("扩展主页", $"{row.Name} 的主页会在浏览器中打开。", InfoBarSeverity.Informational);
+                Notify("扩展主页", $"{row.Name} 的主页会在浏览器中打开。", NotifySeverity.Informational);
             }
         }
 
@@ -436,7 +437,7 @@ namespace AstraBrew_Launcher.Views
         {
             if (sender is HyperlinkButton { DataContext: ExtensionRow row })
             {
-                ShowBar("扩展目录", System.IO.Path.Combine(TargetPath, row.Folder), InfoBarSeverity.Informational);
+                Notify("扩展目录", System.IO.Path.Combine(TargetPath, row.Folder), NotifySeverity.Informational);
             }
         }
 
@@ -450,7 +451,7 @@ namespace AstraBrew_Launcher.Views
             row.GitRepairable = false;
             row.Broken = false;
             RefreshRows();
-            ShowBar("Git 仓库已修复", $"{row.Name} 的远端地址已重新写入，可以正常更新。", InfoBarSeverity.Success);
+            Notify("Git 仓库已修复", $"{row.Name} 的远端地址已重新写入，可以正常更新。", NotifySeverity.Success);
         }
 
         // ==================== 页级动作 ====================
@@ -474,7 +475,7 @@ namespace AstraBrew_Launcher.Views
                 _query = string.Empty;
                 SearchBox.Text = string.Empty;
                 RefreshRows();
-                ShowBar("安装完成", $"{name} 已启用，出现在列表最上方。", InfoBarSeverity.Success);
+                Notify("安装完成", $"{name} 已启用，出现在列表最上方。", NotifySeverity.Success);
             };
 
             await dialog.ShowAsync();
@@ -502,7 +503,7 @@ namespace AstraBrew_Launcher.Views
             }
 
             RefreshRows();
-            ShowBar("已重新扫描", $"third-party 下共发现 {_all.Count(row => !row.IsSystem)} 个扩展。", InfoBarSeverity.Informational);
+            Notify("已重新扫描", $"third-party 下共发现 {_all.Count(row => !row.IsSystem)} 个扩展。", NotifySeverity.Informational);
         }
 
         private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
@@ -533,10 +534,10 @@ namespace AstraBrew_Launcher.Views
 
             RefreshRows();
             int pending = _all.Count(row => row.HasUpdate && !row.IsSystem);
-            ShowBar(
+            Notify(
                 pending > 0 ? "检查完成" : "已是最新",
                 pending > 0 ? $"{pending} 个扩展有新版本，可逐个更新。" : "所有扩展都已是最新版本。",
-                InfoBarSeverity.Informational);
+                NotifySeverity.Informational);
         }
 
         private void CopyTargetPath_Click(object sender, RoutedEventArgs e)
@@ -544,20 +545,16 @@ namespace AstraBrew_Launcher.Views
             var package = new DataPackage();
             package.SetText(TargetPath);
             Clipboard.SetContent(package);
-            ShowBar("路径已复制", TargetPath, InfoBarSeverity.Success);
+            Notify("路径已复制", TargetPath, NotifySeverity.Success);
         }
 
         private void OpenRoot_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar("扩展目录", TargetPath, InfoBarSeverity.Informational);
+            Notify("扩展目录", TargetPath, NotifySeverity.Informational);
         }
 
-        private void ShowBar(string title, string message, InfoBarSeverity severity)
-        {
-            ActionInfoBar.Title = title;
-            ActionInfoBar.Message = message;
-            ActionInfoBar.Severity = severity;
-            ActionInfoBar.IsOpen = true;
-        }
+        /// <summary>页面播报统一走全局消息（窗口右下角），页面里不再挂 InfoBar。</summary>
+        private static void Notify(string title, string message, NotifySeverity severity)
+            => AppNotify.Post(severity, title, message);
     }
 }

@@ -75,51 +75,35 @@
         <StackPanel Style="{StaticResource PageRootStyle}">
 
             <!--  ==================== 页头 ====================  -->
-            <Grid RowSpacing="0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
 
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
+                <StackPanel Spacing="3">
+                    <TextBlock Style="{StaticResource PageTitleTextStyle}" Text="仪表盘" />
+                    <TextBlock Style="{StaticResource PageSubtitleTextStyle}" Text="服务状态、启动配置与常用操作" />
+                </StackPanel>
 
-                    <StackPanel Spacing="3">
-                        <TextBlock Style="{StaticResource PageTitleTextStyle}" Text="仪表盘" />
-                        <TextBlock Style="{StaticResource PageSubtitleTextStyle}" Text="服务状态、启动配置与常用操作" />
-                    </StackPanel>
-
-                    <StackPanel
-                        Grid.Column="1"
-                        Orientation="Horizontal"
-                        Spacing="8"
-                        VerticalAlignment="Bottom">
-                        <TextBlock
-                            x:Name="LastSyncText"
-                            VerticalAlignment="Center"
-                            Style="{StaticResource MetricLabelTextStyle}"
-                            Text="本地进程 · 2 秒采样" />
-                        <Button
-                            Click="Refresh_Click"
-                            Style="{StaticResource SubtleIconButtonStyle}"
-                            AutomationProperties.Name="刷新指标"
-                            ToolTipService.ToolTip="刷新指标">
-                            <FontIcon FontSize="14" Glyph="&#xE72C;" />
-                        </Button>
-                    </StackPanel>
-                </Grid>
-
-                <!--  操作反馈：收起时不占位，避免布局跳动  -->
-                <InfoBar
-                    x:Name="ActionInfoBar"
-                    Grid.Row="1"
-                    Margin="0,10,0,0"
-                    IsClosable="True"
-                    IsOpen="False"
-                    Severity="Informational" />
+                <StackPanel
+                    Grid.Column="1"
+                    Orientation="Horizontal"
+                    Spacing="8"
+                    VerticalAlignment="Bottom">
+                    <TextBlock
+                        x:Name="LastSyncText"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource MetricLabelTextStyle}"
+                        Text="本地进程 · 2 秒采样" />
+                    <Button
+                        Click="Refresh_Click"
+                        Style="{StaticResource SubtleIconButtonStyle}"
+                        AutomationProperties.Name="刷新指标"
+                        ToolTipService.ToolTip="刷新指标">
+                        <FontIcon FontSize="14" Glyph="&#xE72C;" />
+                    </Button>
+                </StackPanel>
             </Grid>
 
             <!--  ==================== 服务主卡 ====================  -->

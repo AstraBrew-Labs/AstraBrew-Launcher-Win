@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="AstraBrew_Launcher.Views.Controls.NotifyHost"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    IsTabStop="False">
+
+    <!--
+        消息栈：贴窗口右下角，新消息从底部进、旧消息往上顶。
+        自身尺寸只等于卡片宽度，宿主在 MainWindow 里靠 Right/Bottom 对齐，
+        不会挡住内容区的点击（Grid 只有卡片这么大一块）。
+    -->
+    <StackPanel
+        x:Name="ToastStack"
+        Width="352"
+        Spacing="8" />
+</UserControl>

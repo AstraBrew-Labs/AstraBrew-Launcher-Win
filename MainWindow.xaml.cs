@@ -39,6 +39,9 @@ namespace AstraBrew_Launcher
         /// <summary>窗口规范执行者：禁最大化 / DPI 尺寸 / 多屏归属 / 断屏回迁。</summary>
         private WindowPlacement? _placement;
 
+        /// <summary>外观执行者：主题 / 界面字体 / 界面缩放。</summary>
+        private AppearanceController? _appearance;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -49,9 +52,18 @@ namespace AstraBrew_Launcher
             SetupWindow();
             SetupTitleBar();
 
+            // 外观三项统一交给 AppearanceController：它监听 LauncherSettings.Changed，
+            // 设置页改完立刻生效，本窗口不再自己算 DPI / 字体 / 主题。
+            _appearance = new AppearanceController(Root, ContentHost, ContentRoot, ApplyTitleBarColors);
+
+            Closed += OnClosed;
+
             // 标题栏的实例徽章是全局状态，切换实例后立刻更新
             TavernInstances.Changed += (_, _) => ApplyInstanceChip();
             ApplyInstanceChip();
+
+            // 全局消息：页面只管投递「装好了 / 装失败了」，弹出的位置与样式由窗口统一决定
+            AppNotify.Raised += OnNotifyRaised;
 
             // 默认选中「仪表盘」
             if (NavView.MenuItems.Count > 0 && NavView.MenuItems[0] is NavigationViewItem first)
@@ -71,6 +83,21 @@ namespace AstraBrew_Launcher
             {
                 ShowOnboarding();
             }
+        }
+
+        /// <summary>
+        /// 展示一条全局消息。安装收尾是在后台任务的续体里跑的，
+        /// 这里统一回到 UI 线程再动视觉树（同线程时直接走，避免多一次排队）。
+        /// </summary>
+        private void OnNotifyRaised(object? sender, NotifyMessage message)
+        {
+            if (Root.DispatcherQueue.HasThreadAccess)
+            {
+                Notifications.Show(message);
+                return;
+            }
+
+            Root.DispatcherQueue.TryEnqueue(() => Notifications.Show(message));
         }
 
         /// <summary>展示首次引导浮层（设置页「重新演示」也会调用）。</summary>
@@ -160,19 +187,58 @@ namespace AstraBrew_Launcher
             titleBar.ButtonBackgroundColor = Colors.Transparent;
             titleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
 
-            // 让窗口按钮跟随 Fluent 的悬停/按下层次，而不是生硬的实色块
-            if (Application.Current.RequestedTheme == ApplicationTheme.Dark)
+            ApplyTitleBarColors();
+        }
+
+        /// <summary>
+        /// 窗口按钮（最小化 / 关闭）的悬停配色要跟着界面主题走：
+        /// 用应用启动时的主题会让「系统深色 + 界面浅色」这类组合露出黑块。
+        /// 主题一变由 <see cref="AppearanceController"/> 回来调一次。
+        /// </summary>
+        private void ApplyTitleBarColors()
+        {
+            try
             {
-                titleBar.ButtonHoverBackgroundColor = Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF);
-                titleBar.ButtonPressedBackgroundColor = Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF);
-                titleBar.ButtonHoverForegroundColor = Colors.White;
+                var dark = Root.ActualTheme == ElementTheme.Dark;
+                var titleBar = AppWindow.TitleBar;
+
+                if (dark)
+                {
+                    titleBar.ButtonHoverBackgroundColor = Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF);
+                    titleBar.ButtonPressedBackgroundColor = Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF);
+                    titleBar.ButtonHoverForegroundColor = Colors.White;
+                }
+                else
+                {
+                    titleBar.ButtonHoverBackgroundColor = Color.FromArgb(0x0F, 0x00, 0x00, 0x00);
+                    titleBar.ButtonPressedBackgroundColor = Color.FromArgb(0x0A, 0x00, 0x00, 0x00);
+                    titleBar.ButtonHoverForegroundColor = Colors.Black;
+                }
             }
-            else
+            catch (Exception)
             {
-                titleBar.ButtonHoverBackgroundColor = Color.FromArgb(0x0F, 0x00, 0x00, 0x00);
-                titleBar.ButtonPressedBackgroundColor = Color.FromArgb(0x0A, 0x00, 0x00, 0x00);
-                titleBar.ButtonHoverForegroundColor = Colors.Black;
+                // 标题栏装饰失败只降级，不影响启动
             }
+        }
+
+        /// <summary>
+        /// 关窗顺序有讲究：
+        ///   1. 先记录窗口位置 —— 此时 AppWindow 还是正常态，坐标才有意义；
+        ///   2. 再把待写的设置刷到磁盘 —— 进程结束后防抖定时器里的那次写入就没了。
+        /// </summary>
+        private void OnClosed(object sender, WindowEventArgs args)
+        {
+            AppNotify.Raised -= OnNotifyRaised;
+
+            _placement?.PersistBounds();
+
+            // 窗口位置是静默写入的（不进保存队列），必须整份写一次；
+            // 顺带把还在防抖里的改动一起落盘，进程结束后定时器不会再触发。
+            SettingsStore.SaveNow();
+            SettingsStore.Flush();
+
+            _placement?.Dispose();
+            _appearance?.Dispose();
         }
 
         /// <summary>
@@ -189,8 +255,7 @@ namespace AstraBrew_Launcher
             InstanceChipText.Text = TavernInstances.Current.DisplayLabel;
             ToolTipService.SetToolTip(
                 InstanceChip,
-                $"当前酒馆实例 · {TavernInstances.Current.KindLabel} {TavernInstances.Current.KernelLabel}　在「版本管理」中切换");
-        }
+                $"当前酒馆实例 · {TavernInstances.Current.KindLabel} {TavernInstances.Current.KernelLabel}　在「版本管理」中切换");        }
 
         private void SetupWindow()
         {
@@ -205,8 +270,8 @@ namespace AstraBrew_Launcher
 
             // 窗口规范统一交给 WindowPlacement：
             // 禁止最大化、按当前显示器 DPI 定尺寸并夹进工作区、跟随多屏切换、副屏断开自动回主屏。
+            // 释放与「记录窗口位置」放在 OnClosed 里，保证顺序（先记录再 Dispose）。
             _placement = new WindowPlacement(this);
-            Closed += (_, _) => _placement?.Dispose();
         }
 
         private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)

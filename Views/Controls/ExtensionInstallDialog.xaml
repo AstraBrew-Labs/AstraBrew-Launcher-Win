@@ -80,7 +80,7 @@
                 <TextBlock
                     Style="{StaticResource FieldHintTextStyle}"
                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                    Text="支持 GitHub、Gitee 的 HTTPS 地址；同名目录已存在时会被覆盖，扩展配置不保留。" />
+                    Text="支持 GitHub、Gitee 的 HTTPS 地址；只有 GitHub 域名会经 gh-proxy.org 中转，Gitee 等镜像直接连。同名目录已存在时会被覆盖，扩展配置不保留。" />
             </StackPanel>
 
             <!--  离线面板  -->

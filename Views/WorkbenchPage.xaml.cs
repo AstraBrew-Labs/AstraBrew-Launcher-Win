@@ -13,6 +13,7 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 using Windows.UI;
 using Microsoft.UI.Text;
+using AstraBrew_Launcher.Services;
 using AstraBrew_Launcher.Views.Controls;
 
 namespace AstraBrew_Launcher.Views
@@ -388,7 +389,7 @@ namespace AstraBrew_Launcher.Views
             if (error is not null)
             {
                 SetSaveState(SaveState.Failed);
-                ShowBar("保存失败", error, InfoBarSeverity.Error);
+                Notify("保存失败", error, NotifySeverity.Error);
                 return;
             }
 
@@ -637,7 +638,7 @@ namespace AstraBrew_Launcher.Views
             Character.HasWorld = true;
             ApplyWorldState();
             UpdateCounts();
-            ShowBar("已绑定世界书", $"{name} 已写入角色卡的内嵌世界书字段。", InfoBarSeverity.Success);
+            Notify("已绑定世界书", $"{name} 已写入角色卡的内嵌世界书字段。", NotifySeverity.Success);
             MarkDirty();
         }
 
@@ -675,7 +676,7 @@ namespace AstraBrew_Launcher.Views
 
             Character.HasWorld = false;
             ApplyWorldState();
-            ShowBar("已解绑", "内嵌世界书已从角色卡中移除。", InfoBarSeverity.Success);
+            Notify("已解绑", "内嵌世界书已从角色卡中移除。", NotifySeverity.Success);
             MarkDirty();
         }
 
@@ -712,20 +713,20 @@ namespace AstraBrew_Launcher.Views
                     UpdateCounts();
                 });
 
-            ShowBar("已新增条目", "补上关键词与正文后即可被命中。", InfoBarSeverity.Informational);
+            Notify("已新增条目", "补上关键词与正文后即可被命中。", NotifySeverity.Informational);
         }
 
         // ==================== 卡面 ====================
 
         private void ChangeCover_Click(object sender, RoutedEventArgs e)
         {
-            ShowBar("更换卡面", "原型未接入文件选择器：正式版会在这里挑 PNG 并裁成 400 × 600。", InfoBarSeverity.Informational);
+            Notify("更换卡面", "原型未接入文件选择器：正式版会在这里挑 PNG 并裁成 400 × 600。", NotifySeverity.Informational);
         }
 
         private void RemoveCover_Click(object sender, RoutedEventArgs e)
         {
             Character.HasCover = false;
-            ShowBar("已移除卡面", "角色卡会用名称首字占位，随时可以再换回来。", InfoBarSeverity.Success);
+            Notify("已移除卡面", "角色卡会用名称首字占位，随时可以再换回来。", NotifySeverity.Success);
         }
 
         // ==================== 预设 ====================
@@ -762,7 +763,7 @@ namespace AstraBrew_Launcher.Views
                     UpdateCounts();
                 });
 
-            ShowBar("已添加提示词", "顺序由 prompt_order 管理，新条目会先落在当前页末尾。", InfoBarSeverity.Informational);
+            Notify("已添加提示词", "顺序由 prompt_order 管理，新条目会先落在当前页末尾。", NotifySeverity.Informational);
         }
 
         private async void DeletePrompt_Click(object sender, RoutedEventArgs e)
@@ -822,7 +823,7 @@ namespace AstraBrew_Launcher.Views
                     UpdateCounts();
                 });
 
-            ShowBar("已删除提示词", $"{prompt.Name} 已从预设中移除。", InfoBarSeverity.Success);
+            Notify("已删除提示词", $"{prompt.Name} 已从预设中移除。", NotifySeverity.Success);
         }
 
         private void RefreshPresetPage()
@@ -977,13 +978,9 @@ namespace AstraBrew_Launcher.Views
 
         // ==================== 工具 ====================
 
-        private void ShowBar(string title, string message, InfoBarSeverity severity)
-        {
-            ActionInfoBar.Title = title;
-            ActionInfoBar.Message = message;
-            ActionInfoBar.Severity = severity;
-            ActionInfoBar.IsOpen = true;
-        }
+        /// <summary>页面播报统一走全局消息（窗口右下角），页面里不再挂 InfoBar。</summary>
+        private static void Notify(string title, string message, NotifySeverity severity)
+            => AppNotify.Post(severity, title, message);
 
         private static Brush Res(string key, Color fallback)
             => Application.Current.Resources.TryGetValue(key, out object value) && value is Brush brush

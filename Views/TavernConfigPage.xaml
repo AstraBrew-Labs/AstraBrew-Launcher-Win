@@ -67,13 +67,6 @@
                 </StackPanel>
             </Grid>
 
-            <!--  操作反馈  -->
-            <InfoBar
-                x:Name="ActionInfoBar"
-                IsClosable="True"
-                IsOpen="False"
-                Severity="Informational" />
-
             <!--  ==================== 版本切换 ====================  -->
             <Border Style="{StaticResource CardStyle}" Padding="16,12">
                 <Grid ColumnSpacing="16">

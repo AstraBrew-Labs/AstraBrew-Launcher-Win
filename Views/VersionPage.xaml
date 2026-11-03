@@ -41,12 +41,7 @@
         <StackPanel Style="{StaticResource PageRootStyle}">
 
             <!--  ==================== 页头 ====================  -->
-            <Grid RowSpacing="0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
+            <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -84,16 +79,6 @@
                         <FontIcon FontSize="14" Glyph="&#xE72C;" />
                     </Button>
                 </StackPanel>
-
-                <!--  操作反馈：收起时行高归零，不占位  -->
-                <InfoBar
-                    x:Name="ActionInfoBar"
-                    Grid.Row="1"
-                    Grid.ColumnSpan="2"
-                    Margin="0,10,0,0"
-                    IsClosable="True"
-                    IsOpen="False"
-                    Severity="Informational" />
             </Grid>
 
             <!--
@@ -518,6 +503,30 @@
                                     </StackPanel>
                                 </Border>
 
+                                <!--  未安装：磁盘上没有代码，只有一个空目录名可填  -->
+                                <Border x:Name="BuiltinMissingPill" Style="{StaticResource StatusPillStyle}" Visibility="Collapsed">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Ellipse
+                                            Width="6"
+                                            Height="6"
+                                            VerticalAlignment="Center"
+                                            Fill="{ThemeResource TextFillColorTertiaryBrush}" />
+                                        <TextBlock Style="{StaticResource StatusPillTextStyle}" Text="未安装" />
+                                    </StackPanel>
+                                </Border>
+
+                                <!--  有代码、缺依赖：这份代码起不来，先补 node_modules  -->
+                                <Border x:Name="BuiltinDepsPill" Style="{StaticResource StatusPillStyle}" Visibility="Collapsed">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Ellipse
+                                            Width="6"
+                                            Height="6"
+                                            VerticalAlignment="Center"
+                                            Fill="{ThemeResource SystemFillColorCautionBrush}" />
+                                        <TextBlock Style="{StaticResource StatusPillTextStyle}" Text="待装依赖" />
+                                    </StackPanel>
+                                </Border>
+
                                 <!--
                                     从本地实例切回内置实例的唯一入口。
                                     仅在当前使用本地实例时出现，与本地实例行内的「使用」按钮对称。
@@ -573,18 +582,18 @@
                                     </Border>
                                 </StackPanel>
 
-                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                <StackPanel
+                                    x:Name="MetaRow"
+                                    Orientation="Horizontal"
+                                    Spacing="6">
                                     <Border Style="{StaticResource MetaChipStyle}">
                                         <TextBlock x:Name="MetaChannelText" Style="{StaticResource MetaChipTextStyle}" Text="稳定版" />
                                     </Border>
                                     <Border Style="{StaticResource MetaChipStyle}">
-                                        <TextBlock x:Name="MetaDateText" Style="{StaticResource MetaChipTextStyle}" Text="发布于 2026-10-20" />
+                                        <TextBlock x:Name="MetaDateText" Style="{StaticResource MetaChipTextStyle}" Text="发布于 2026-09-14" />
                                     </Border>
                                     <Border Style="{StaticResource MetaChipStyle}">
-                                        <TextBlock x:Name="MetaSizeText" Style="{StaticResource MetaChipTextStyle}" Text="186 MB" />
-                                    </Border>
-                                    <Border Style="{StaticResource MetaChipStyle}">
-                                        <TextBlock x:Name="MetaFilesText" Style="{StaticResource MetaChipTextStyle}" Text="1,284 个文件" />
+                                        <TextBlock x:Name="MetaTagText" Style="{StaticResource MetaChipTextStyle}" Text="标签 1.19.0" />
                                     </Border>
                                 </StackPanel>
 
@@ -668,6 +677,53 @@
                                         PlaceholderText="选择版本"
                                         SelectionChanged="VersionPicker_SelectionChanged" />
 
+                                    <!--
+                                        装之前先说清楚「这份代码从哪来」：
+                                        镜像里有这个版本就走镜像，没有就直接从 GitHub 拉。
+                                    -->
+                                    <Border x:Name="SourceRouteRow" Padding="10,7" Style="{StaticResource SubPanelStyle}">
+                                        <StackPanel Spacing="4">
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <Border
+                                                    x:Name="MirrorOkChip"
+                                                    Padding="7,1,7,2"
+                                                    Background="{ThemeResource SystemFillColorSuccessBackgroundBrush}"
+                                                    CornerRadius="9"
+                                                    Visibility="Collapsed">
+                                                    <TextBlock
+                                                        FontSize="10"
+                                                        FontWeight="SemiBold"
+                                                        Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                                        Text="镜像可用" />
+                                                </Border>
+                                                <Border
+                                                    x:Name="DirectChip"
+                                                    Padding="7,1,7,2"
+                                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                                    CornerRadius="9"
+                                                    Visibility="Collapsed">
+                                                    <TextBlock
+                                                        FontSize="10"
+                                                        FontWeight="SemiBold"
+                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                        Text="直连安装" />
+                                                </Border>
+                                            </StackPanel>
+                                            <TextBlock
+                                                x:Name="SourceRouteText"
+                                                FontSize="11"
+                                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                                Text="正在比对镜像版本…"
+                                                TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <TextBlock
+                                        x:Name="ReleaseCacheText"
+                                        Style="{StaticResource FieldHintTextStyle}"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Text="正在读取版本列表…" />
+
                                     <Button
                                         x:Name="SwitchVersionBtn"
                                         HorizontalAlignment="Stretch"
@@ -727,8 +783,11 @@
                                     Minimum="0"
                                     Value="0" />
 
-                                <Expander HorizontalAlignment="Stretch" Header="查看日志">
-                                    <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto">
+                                <Expander x:Name="SwitchLogExpander" HorizontalAlignment="Stretch" Header="查看日志">
+                                    <ScrollViewer
+                                        x:Name="SwitchLogScroll"
+                                        MaxHeight="120"
+                                        VerticalScrollBarVisibility="Auto">
                                         <TextBlock
                                             x:Name="SwitchLog"
                                             FontFamily="Consolas"
@@ -762,6 +821,15 @@
                                     Orientation="Horizontal"
                                     Spacing="4"
                                     VerticalAlignment="Center">
+                                    <Button
+                                        x:Name="RefreshReleasesBtn"
+                                        Click="RefreshReleases_Click"
+                                        ToolTipService.ToolTip="忽略缓存，重新从 GitHub 获取版本列表">
+                                        <StackPanel Orientation="Horizontal" Spacing="7">
+                                            <FontIcon FontSize="13" Glyph="&#xE72C;" />
+                                            <TextBlock x:Name="RefreshReleasesText" Text="刷新" />
+                                        </StackPanel>
+                                    </Button>
                                     <HyperlinkButton
                                         Padding="12,4"
                                         Click="ViewChangelog_Click"
