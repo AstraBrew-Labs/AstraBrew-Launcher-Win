@@ -388,6 +388,79 @@ git config --global --unset url."https://gh-proxy.org/https://github.com/".inste
   不是每个目录各自带一个。探测一次后由 `SetRuntimeLabel` 铺到所有行，探不到就写「Node 未检测」，
   不要按目录名猜版本。
 
+## 全局酒馆配置（首次获取）
+
+**生效与操作的只有全局那一份**：`data/sillytavern/config.yaml`。读取、修改、覆盖、删除都针对它，
+由 `Services/GlobalTavernConfig.cs` 的 `ActivePath` 统一给出，其它地方不要自己拼路径，
+更不要因为全局缺失就退到默认路径去用。
+
+默认位置 `data/default/sillytavern/config.yaml` 只是**恢复默认用的底稿**，不是生效配置：
+全局缺失时先 `RestoreFromDefault()` 把它复制成全局（静默、不打扰用户），
+底稿也没有时才联网取一份——取回先落默认位置、做几项开箱优化，再复制成全局配置。
+此后用户改的都是全局那份，默认位置始终保持一份干净的底稿。
+
+全局不存在且底稿也恢复不出来时，酒馆配置页盖一层遮罩（`ConfigMask`），只能点「获取默认配置」：
+`FetchAsync` 按 `GithubAccel.Targets` 的顺序下载（**开着加速就先加速、失败回退直连**，
+关着就只有直连），取回后先 `ApplyLaunchDefaults` 做开箱优化，写默认位置，再复制成全局配置。
+优化只有四项，且**逐行改、不整份重写**（注释与其它选项原样保留）：
+`port: 11451`、`listen: true`（允许局域网）、`protocol.ipv6: true`、白名单只留
+`127.0.0.1` 与 `localhost`。只认顶格的 `port:` / `listen:` / `whitelist:`——
+`browserLaunch.port`、`whitelistMode`、`whitelistDockerHosts` 这些都不能误伤。
+拿到手要校验内容像 YAML（含 `whitelistMode` 与 `port:`），别把代理塞回来的错误页写进配置。
+成功后遮罩撤掉，表单同步成同一组值（端口、局域网开、白名单调 `TavernSettings.ResetToLocalOnly`）。
+
+「重置为默认」按钮走同一条回退链，但**不弹遮罩**：`ResetAsync` 有底稿就强制覆盖全局
+（与 `RestoreFromDefault` 的「只在全局缺失时恢复」不同，重置本来就是要抹掉改动），
+底稿不在就直接 `FetchAsync` 联网取。结果用 `GlobalConfigFetchResult.Downloaded`
+区分「本地恢复」还是「联网下载」，消息里据此写清来源；期间只禁用按钮、改状态文案。
+
+**导入配置**：选完 `config.yaml` 先问「覆盖还是合并」（`ContentDialog` 的
+Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那一份：
+
+- 覆盖 = `OverwriteGlobal`，整份替换，现有改动全丢；
+- 合并 = `GlobalTavernConfig.MergeIntoGlobal` + `Services/YamlMerge.cs`：**以当前配置为基座，
+  只补导入里「当前没有的项」**，当前已有的值一个不动。实现是整块搬运而不是解析成对象再序列化——
+  官方配置大半是注释说明，重新序列化会把它们全丢掉。插入位置取「段内最后一个内容行之后」，
+  不是段尾（段尾常是给下一个段做说明的注释）；缩进按父段现有子键对齐；
+  类型对不上（当前标量 vs 导入是块）就保留当前，宁可少合也不产出坏 YAML。
+- 导入前用 `LooksLikeConfig` 挡掉不像酒馆配置的 YAML（缺 `port` / `whitelistMode`）。
+
+**配置页读写的是真实文件**（`Services/YamlConfig.cs`）：进页面 `LoadFromConfig()` 从全局配置读，
+改动**自动保存**——没有保存按钮。用户在控件上动一下 → `MarkDirty()` 重启 700ms 防抖计时器 →
+停手后才 `SaveToConfig()` 落盘（边打字边写文件没有意义）；离开页面走 `OnNavigatedFrom` 立刻补一次，
+不能等 `Unloaded`（那之前窗口可能已经关了）。首次获取 / 恢复默认 / 导入之后都重新读一遍，
+不能只改界面不上盘——否则重进页面又变回原样。写盘走 `YamlConfig.SetScalar/SetList` 的定点改写
+（只改命中的那一行/那一段，注释与其它选项原样保留），路径是点分形式
+（`listenAddress.ipv4`、`browserLaunch.enabled`）。加载期间用 `_loading` 标记屏蔽保存触发，
+否则「把文件读进控件」会被当成用户改动又写回一遍。
+已接的字段：`port`、`listen`、`listenAddress.ipv4|ipv6`、`heartbeatInterval`、
+`browserLaunch.enabled|browser`、`whitelist`（整段替换，`localhost` / `127.0.0.1` 恒锁定）。
+
+**高手版字段靠命名约定自动接入**（`Field_` / `FieldArray_` / `FieldEnum_` 前缀）：
+
+| 名字 | 含义 |
+|---|---|
+| `Field_ssl__certPath` | 标量 → `ssl.certPath`，层级用 `__` 分隔 |
+| `FieldArray_cors__origin` | 多行文本 ↔ 数组（`cors.origin`），空列表写回 `key: []` |
+| `FieldEnum_thumbnails__format` | 下拉框 ↔ 关键字，`Tag="jpg,png,webp"` 提供索引到值的映射 |
+
+类型由控件决定：`CheckBox` / `ToggleSwitch` → 布尔，`NumberBox` → 数字（`NaN` 时跳过，不把 `null` 写成 0），
+`TextBox` / `PasswordBox` → 字符串。`EnumerateFields()` 从视觉树收集控件（折叠的分组也在树里），
+`HookFieldEvents()` 统一挂变更事件——这些控件原本没有任何事件，不挂就不会触发自动保存。
+新增高手版选项时**只要按约定起名**，读写与自动保存都会自动生效；没起名的控件不会被写回，
+所以接一个字段前先确认它在官方 config.yaml 里的路径（别拿界面文案猜）。
+
+**两套说明的写法不同，别混**：
+
+- 高手版：说明照官方 `default/config.yaml` 的注释写（中文转述，不丢信息），末尾标出对应字段，
+  例如「毫秒；同一用户两次聊天备份之间的最小间隔。对应 backups.chat.throttleInterval。」——
+  用户拿记事本打开配置时能一一对上。裸 CheckBox 的说明放进 `ToolTipService.ToolTip`，口径相同。
+  单位以官方为准：`heartbeatInterval` 是**秒**、`sessionTimeout` 是**秒**、`throttleInterval` 是**毫秒**。
+- 小白版：只放日常几项，说明要口语化、不出现字段名与协议术语，
+  例如「手机、平板访问酒馆时用的门牌号，一般不用改。」——两版的差别不只是数量，也是措辞。
+尚未接入：缩略图尺寸（`thumbnails.dimensions` 是对象数组，需要索引写入支持）、内存缓存容量
+（官方是 `'100mb'` 字符串，界面是数字框）。
+
 ## 路径显示
 
 界面上出现的路径一律是展开后的真实路径，不要直接显示 `%AppData%`、`%Temp%`、`%LOCALAPPDATA%`

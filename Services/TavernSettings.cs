@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Net;
@@ -186,6 +187,57 @@ namespace AstraBrew_Launcher.Services
             Whitelist.Add(new WhitelistEntry("localhost", true));
             Whitelist.Add(new WhitelistEntry("127.0.0.1", true));
             Whitelist.Add(new WhitelistEntry("192.168.1.24", false));
+            WhitelistChanged?.Invoke(null, EventArgs.Empty);
+        }
+
+        /// <summary>
+        /// 用配置文件里的白名单替换当前列表。localhost 与 127.0.0.1 永远保留且锁定，
+        /// 它们不在文件里也要补上——否则界面会出现「没有锁定项」这种说不通的状态。
+        /// </summary>
+        public static void SetWhitelist(IEnumerable<string> hosts)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var next = new List<WhitelistEntry>();
+
+            void Add(string value)
+            {
+                if (value.Length > 0 && seen.Add(value))
+                {
+                    next.Add(new WhitelistEntry(value, IsLockedHost(value)));
+                }
+            }
+
+            Add("localhost");
+            Add("127.0.0.1");
+
+            foreach (string host in hosts)
+            {
+                Add(host.Trim());
+            }
+
+            Whitelist.Clear();
+            foreach (WhitelistEntry entry in next)
+            {
+                Whitelist.Add(entry);
+            }
+
+            WhitelistChanged?.Invoke(null, EventArgs.Empty);
+        }
+
+        /// <summary>localhost 与 127.0.0.1 是内置项：界面上不可删除。</summary>
+        private static bool IsLockedHost(string value) =>
+            value.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || value == "127.0.0.1";
+
+        /// <summary>
+        /// 只留本机两项（localhost 与 127.0.0.1），不带示例内网地址。
+        /// 与首次获取默认配置时写进 config.yaml 的白名单保持一致。
+        /// </summary>
+        public static void ResetToLocalOnly()
+        {
+            Whitelist.Clear();
+            Whitelist.Add(new WhitelistEntry("localhost", true));
+            Whitelist.Add(new WhitelistEntry("127.0.0.1", true));
             WhitelistChanged?.Invoke(null, EventArgs.Empty);
         }
     }

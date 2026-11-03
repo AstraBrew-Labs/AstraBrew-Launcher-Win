@@ -8,7 +8,8 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <Grid>
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Style="{StaticResource PageRootStyle}">
 
             <!--  ==================== 页头 ====================  -->
@@ -31,7 +32,7 @@
                     Spacing="8"
                     VerticalAlignment="Bottom">
 
-                    <!--  保存状态：与底部「保存配置」呼应  -->
+                    <!--  保存状态：改动会自动落盘，这里只表示「有没有还没写进去的」  -->
                     <Border Style="{StaticResource StatusPillStyle}" VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <Grid VerticalAlignment="Center">
@@ -62,6 +63,16 @@
                         <StackPanel Orientation="Horizontal" Spacing="7">
                             <FontIcon FontSize="13" Glyph="&#xE8B5;" />
                             <TextBlock Text="导入配置" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button
+                        x:Name="ResetBtn"
+                        AutomationProperties.Name="恢复默认配置"
+                        Click="Reset_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <FontIcon FontSize="13" Glyph="&#xE777;" />
+                            <TextBlock Text="恢复默认" />
                         </StackPanel>
                     </Button>
                 </StackPanel>
@@ -115,7 +126,7 @@
                             <TextBlock
                                 x:Name="VersionHint"
                                 Style="{StaticResource FieldHintTextStyle}"
-                                Text="只保留端口、访问范围与浏览器等日常选项，其余按推荐值运行。" />
+                                Text="只放最常用的几项，其余按官方推荐值跑就好。" />
                         </StackPanel>
 
                         <TextBlock
@@ -159,7 +170,7 @@
                                     Text="常用设置" />
                                 <TextBlock
                                     Style="{StaticResource FieldHintTextStyle}"
-                                    Text="日常只需要改这几项；改完点底部「保存配置」即可。" />
+                                    Text="改完自动保存，下次启动酒馆时生效。" />
                             </StackPanel>
                         </Grid>
 
@@ -177,7 +188,7 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="端口" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="酒馆服务监听的端口号，可用范围 1024–65535" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="手机、平板访问酒馆时用的门牌号，一般不用改。" />
                                     </StackPanel>
 
                                     <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
@@ -214,7 +225,7 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="局域网访问" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="开启后同一网络下的手机、平板也能连上酒馆" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="打开后，同一个 Wi-Fi 下的手机、平板也能打开酒馆。" />
                                     </StackPanel>
 
                                     <ToggleSwitch
@@ -237,7 +248,7 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="自动打开浏览器" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="服务就绪后自动用默认浏览器打开酒馆" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="启动后自动帮你打开酒馆页面，不用手动点。" />
                                     </StackPanel>
 
                                     <ToggleSwitch
@@ -261,7 +272,7 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="默认浏览器" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="与仪表盘的快捷切换共用同一设置" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="自动打开时用哪个浏览器；和首页的快捷切换是同一个设置。" />
                                     </StackPanel>
 
                                     <ComboBox
@@ -285,33 +296,6 @@
                                 Message="当前不是普通模式，浏览器相关选项已隐藏。"
                                 Severity="Informational" />
 
-                            <!--  访问地址预览  -->
-                            <Border Padding="14,11" Style="{StaticResource SubPanelStyle}">
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-
-                                    <StackPanel Spacing="2">
-                                        <TextBlock Style="{StaticResource MetricLabelTextStyle}" Text="访问地址" />
-                                        <TextBlock
-                                            x:Name="SimpleEndpointText"
-                                            FontSize="13"
-                                            Style="{StaticResource MonoTextStyle}"
-                                            Text="http://127.0.0.1:8000" />
-                                    </StackPanel>
-
-                                    <Button
-                                        Grid.Column="1"
-                                        AutomationProperties.Name="复制访问地址"
-                                        Click="CopyEndpoint_Click"
-                                        Style="{StaticResource SubtleIconButtonStyle}"
-                                        ToolTipService.ToolTip="复制地址">
-                                        <FontIcon FontSize="12" Glyph="&#xE8C8;" />
-                                    </Button>
-                                </Grid>
-                            </Border>
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -341,7 +325,7 @@
                                     Text="IP 白名单" />
                                 <TextBlock
                                     Style="{StaticResource FieldHintTextStyle}"
-                                    Text="只有名单内的地址能连接服务；localhost 与 127.0.0.1 默认锁定。" />
+                                    Text="只有名单里的地址能连上酒馆；localhost 和 127.0.0.1 默认锁定、删不掉。" />
                             </StackPanel>
 
                             <TextBlock
@@ -434,7 +418,7 @@
 
                             <TextBlock
                                 Style="{StaticResource FieldHintTextStyle}"
-                                Text="支持 IPv4、IPv6 与主机名；重复或格式错误的地址不会被加入。" />
+                                Text="填 IP 或主机名，比如 192.168.1.20；重复或格式不对的不会被加入。" />
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -511,7 +495,7 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="端口" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="对应 port，1024–65535" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="服务监听端口。对应 port，可用范围 1024–65535。" />
                                     </StackPanel>
 
                                     <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
@@ -542,7 +526,7 @@
                                 <StackPanel Spacing="8">
                                     <StackPanel Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="监听地址" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="分别对应 listen_ipv4 与 listen_ipv6，默认监听全部网卡" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="监听的具体地址，支持 IPv4 与 IPv6。对应 listenAddress.ipv4 与 listenAddress.ipv6，默认监听所有网卡。" />
                                     </StackPanel>
 
                                     <Grid ColumnSpacing="8">
@@ -556,7 +540,8 @@
                                             AutomationProperties.Name="IPv4 监听地址"
                                             Header="IPv4"
                                             PlaceholderText="0.0.0.0"
-                                            Text="0.0.0.0" />
+                                            Text="0.0.0.0"
+                                            TextChanged="ListenAddress_Changed" />
 
                                         <TextBox
                                             x:Name="ListenIpv6Box"
@@ -564,7 +549,8 @@
                                             AutomationProperties.Name="IPv6 监听地址"
                                             Header="IPv6"
                                             PlaceholderText="[::]"
-                                            Text="[::]" />
+                                            Text="[::]"
+                                            TextChanged="ListenAddress_Changed" />
                                     </Grid>
                                 </StackPanel>
                             </Border>
@@ -580,12 +566,13 @@
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
 
-                                    <CheckBox Content="启用 IPv4" IsChecked="True" />
-                                    <CheckBox Grid.Column="1" Content="启用 IPv6" />
+                                    <CheckBox x:Name="Field_protocol__ipv4" Content="启用 IPv4" ToolTipService.ToolTip="至少要启用一个协议：IPv4 / IPv6。对应 protocol.ipv4。" IsChecked="True" />
+                                    <CheckBox x:Name="Field_protocol__ipv6" Grid.Column="1" Content="启用 IPv6" ToolTipService.ToolTip="至少要启用一个协议；auto 会按系统是否支持自动检测。对应 protocol.ipv6。" />
                                     <CheckBox
+                                        x:Name="Field_dnsPreferIPv6"
                                         Grid.Row="1"
                                         Content="DNS 优先 IPv6"
-                                        ToolTipService.ToolTip="解析域名时优先使用 IPv6 地址" />
+                                        ToolTipService.ToolTip="解析域名时优先用 IPv6；运营商 IPv6 有问题时别开。对应 dnsPreferIPv6。" />
                                 </Grid>
                             </Border>
 
@@ -598,7 +585,7 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="心跳间隔" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="毫秒；0 表示关闭心跳" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="秒；写心跳文件的间隔，0 表示关闭。对应 heartbeatInterval。" />
                                     </StackPanel>
 
                                     <NumberBox
@@ -610,7 +597,8 @@
                                         Minimum="0"
                                         SmallChange="500"
                                         SpinButtonPlacementMode="Compact"
-                                        Value="0" />
+                                        Value="0"
+                                        ValueChanged="Heartbeat_ValueChanged" />
                                 </Grid>
                             </Border>
 
@@ -623,7 +611,7 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="自动打开浏览器" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="对应 browser_launch_enabled" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="酒馆启动时自动打开浏览器。对应 browserLaunch.enabled。" />
                                     </StackPanel>
 
                                     <ToggleSwitch
@@ -646,7 +634,7 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="默认浏览器" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="对应 browser_type，与仪表盘共用" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="用哪个浏览器打开。对应 browserLaunch.browser：default / firefox / chrome / edge，Android 不支持。" />
                                     </StackPanel>
 
                                     <ComboBox
@@ -727,10 +715,11 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="基础认证" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="打开酒馆时需要输入用户名和密码" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="为接口开启基础认证，打开酒馆时要输用户名和密码。对应 basicAuthMode。" />
                                     </StackPanel>
 
                                     <ToggleSwitch
+                                        x:Name="Field_basicAuthMode"
                                         Grid.Column="1"
                                         AutomationProperties.Name="基础认证"
                                         OffContent=""
@@ -756,6 +745,7 @@
                                             Style="{StaticResource FieldTitleTextStyle}"
                                             Text="用户名" />
                                         <TextBox
+                                            x:Name="Field_basicAuthUser__username"
                                             Grid.Column="1"
                                             AutomationProperties.Name="认证用户名"
                                             Text="user" />
@@ -774,6 +764,7 @@
                                             Style="{StaticResource FieldTitleTextStyle}"
                                             Text="密码" />
                                         <PasswordBox
+                                            x:Name="Field_basicAuthUser__password"
                                             Grid.Column="1"
                                             AutomationProperties.Name="认证密码"
                                             Password="password" />
@@ -792,12 +783,13 @@
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
 
-                                    <CheckBox Content="启用用户账号" ToolTipService.ToolTip="允许多用户各自登录" />
-                                    <CheckBox Grid.Column="1" Content="隐蔽登录" ToolTipService.ToolTip="不显示用户列表，需手动输入用户名" />
+                                    <CheckBox x:Name="Field_enableUserAccounts" Content="启用用户账号" ToolTipService.ToolTip="多用户模式，每人各自登录。对应 enableUserAccounts。" />
+                                    <CheckBox x:Name="Field_enableDiscreetLogin" Grid.Column="1" Content="隐蔽登录" ToolTipService.ToolTip="登录页不显示用户列表，只能手动输用户名。对应 enableDiscreetLogin。" />
                                     <CheckBox
+                                        x:Name="Field_perUserBasicAuth"
                                         Grid.Row="1"
                                         Content="每用户独立认证"
-                                        ToolTipService.ToolTip="为每个用户单独下发认证凭据" />
+                                        ToolTipService.ToolTip="与基础认证同时开启时，认证用的用户名密码与各自账号一致。对应 perUserBasicAuth。" />
                                 </Grid>
                             </Border>
 
@@ -810,10 +802,11 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="IP 白名单" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="只允许名单内的地址连接服务" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="开启后只有白名单内的地址能连接。对应 whitelistMode。" />
                                     </StackPanel>
 
                                     <ToggleSwitch
+                                        x:Name="Field_whitelistMode"
                                         Grid.Column="1"
                                         AutomationProperties.Name="IP 白名单"
                                         IsOn="True"
@@ -913,10 +906,11 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="Host 白名单" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="校验请求头里的 Host，防止域名伪装" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="校验请求头里的 Host，防止域名伪装；建议在开启监听（局域网访问）时使用。对应 hostWhitelist.enabled。" />
                                     </StackPanel>
 
                                     <ToggleSwitch
+                                        x:Name="Field_hostWhitelist__enabled"
                                         Grid.Column="1"
                                         AutomationProperties.Name="Host 白名单"
                                         OffContent=""
@@ -932,12 +926,14 @@
                                 Visibility="Collapsed">
                                 <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
                                     <CheckBox
+                                        x:Name="Field_hostWhitelist__scan"
                                         Content="扫描 Host 头自动补充"
                                         IsChecked="True"
-                                        ToolTipService.ToolTip="启动时扫描请求并记录实际使用的域名" />
+                                        ToolTipService.ToolTip="扫描收到的请求，识别疑似 Host 头伪装。对应 hostWhitelist.scan。" />
                                 </Border>
 
                                 <TextBox
+                                    x:Name="FieldArray_hostWhitelist__hosts"
                                     AcceptsReturn="True"
                                     AutomationProperties.Name="Host 白名单列表"
                                     FontFamily="Consolas"
@@ -951,10 +947,11 @@
                                 <StackPanel Spacing="6">
                                     <StackPanel Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="导入域名" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="从这些域名导入角色卡时信任其图片地址" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="从这些域名导入角色卡时，信任它们提供的图片地址。对应 whitelistImportDomains。" />
                                     </StackPanel>
 
                                     <TextBox
+                                        x:Name="FieldArray_whitelistImportDomains"
                                         AcceptsReturn="True"
                                         AutomationProperties.Name="导入域名列表"
                                         FontFamily="Consolas"
@@ -1030,10 +1027,11 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="启用 HTTPS" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="需同时提供证书与私钥，否则服务无法启动" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="启用 SSL/TLS 加密；必须同时提供证书与私钥，否则服务起不来。对应 ssl.enabled。" />
                                     </StackPanel>
 
                                     <ToggleSwitch
+                                        x:Name="Field_ssl__enabled"
                                         Grid.Column="1"
                                         AutomationProperties.Name="启用 HTTPS"
                                         OffContent=""
@@ -1059,6 +1057,7 @@
                                             Style="{StaticResource FieldTitleTextStyle}"
                                             Text="证书路径" />
                                         <TextBox
+                                            x:Name="Field_ssl__certPath"
                                             Grid.Column="1"
                                             AutomationProperties.Name="证书路径"
                                             FontFamily="Consolas"
@@ -1078,6 +1077,7 @@
                                             Style="{StaticResource FieldTitleTextStyle}"
                                             Text="私钥路径" />
                                         <TextBox
+                                            x:Name="Field_ssl__keyPath"
                                             Grid.Column="1"
                                             AutomationProperties.Name="私钥路径"
                                             FontFamily="Consolas"
@@ -1094,9 +1094,10 @@
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
                                             <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="私钥口令" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="私钥未加密时留空" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="私钥口令，私钥没有加密就留空。对应 ssl.keyPassphrase；更安全的做法是用命令行参数或环境变量传入。" />
                                         </StackPanel>
                                         <PasswordBox
+                                            x:Name="Field_ssl__keyPassphrase"
                                             Grid.Column="1"
                                             AutomationProperties.Name="私钥口令"
                                             PlaceholderText="可选" />
@@ -1169,11 +1170,12 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="启用 CORS" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="关闭后跨域请求会被浏览器直接拦截" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="启用或关闭 CORS 中间件；关掉后跨域请求会被浏览器直接拦下。对应 cors.enabled。" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         Grid.Column="1"
+                                        x:Name="Field_cors__enabled"
                                         AutomationProperties.Name="启用 CORS"
                                         IsOn="True"
                                         OffContent=""
@@ -1188,10 +1190,11 @@
                                     <StackPanel Spacing="6">
                                         <StackPanel Spacing="2">
                                             <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="允许来源" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="每行一个，null 表示本地文件直接打开" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="允许的来源：null 表示浏览器直接打开本地文件，* 表示允许任意来源。对应 cors.origin，每行一个。" />
                                         </StackPanel>
                                         <TextBox
                                             AcceptsReturn="True"
+                                            x:Name="FieldArray_cors__origin"
                                             AutomationProperties.Name="CORS 允许来源"
                                             FontFamily="Consolas"
                                             FontSize="12"
@@ -1205,10 +1208,11 @@
                                     <StackPanel Spacing="6">
                                         <StackPanel Spacing="2">
                                             <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="允许方法" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="每行一个 HTTP 方法" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="允许的 HTTP 方法。对应 cors.methods，每行一个。" />
                                         </StackPanel>
                                         <TextBox
                                             AcceptsReturn="True"
+                                            x:Name="FieldArray_cors__methods"
                                             AutomationProperties.Name="CORS 允许方法"
                                             FontFamily="Consolas"
                                             FontSize="12"
@@ -1227,12 +1231,13 @@
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
                                             <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="预检缓存时间" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="秒；留空表示不发送缓存头" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="预检请求的缓存时间（秒），留空表示不发送缓存头。对应 cors.maxAge。" />
                                         </StackPanel>
 
                                         <NumberBox
                                             Grid.Column="1"
                                             Width="150"
+                                            x:Name="Field_cors__maxAge"
                                             AutomationProperties.Name="预检缓存时间"
                                             Minimum="0"
                                             SpinButtonPlacementMode="Compact"
@@ -1245,6 +1250,7 @@
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="允许请求头" />
                                         <TextBox
                                             AcceptsReturn="True"
+                                            x:Name="FieldArray_cors__allowedHeaders"
                                             AutomationProperties.Name="CORS 允许请求头"
                                             FontFamily="Consolas"
                                             FontSize="12"
@@ -1259,6 +1265,7 @@
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="暴露响应头" />
                                         <TextBox
                                             AcceptsReturn="True"
+                                            x:Name="FieldArray_cors__exposedHeaders"
                                             AutomationProperties.Name="CORS 暴露响应头"
                                             FontFamily="Consolas"
                                             FontSize="12"
@@ -1270,8 +1277,8 @@
 
                                 <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
                                     <CheckBox
-                                        Content="允许携带凭据"
-                                        ToolTipService.ToolTip="启用后来源不能为通配符 *" />
+                                        x:Name="Field_cors__credentials" Content="允许携带凭据"
+                                        ToolTipService.ToolTip="允许携带 Cookie 与 Authorization 头；开启后来源不能用 *。对应 cors.credentials。" />
                                 </Border>
                             </StackPanel>
                         </StackPanel>
@@ -1340,11 +1347,12 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="请求代理" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="调用模型接口时走本地代理" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="开启后，所有出站的 HTTP/HTTPS 请求都走这个代理。对应 requestProxy.enabled。" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         Grid.Column="1"
+                                        x:Name="Field_requestProxy__enabled"
                                         AutomationProperties.Name="请求代理"
                                         OffContent=""
                                         OnContent=""
@@ -1370,6 +1378,7 @@
                                             Text="代理地址" />
                                         <TextBox
                                             Grid.Column="1"
+                                            x:Name="Field_requestProxy__url"
                                             AutomationProperties.Name="代理地址"
                                             FontFamily="Consolas"
                                             PlaceholderText="http://127.0.0.1:7890" />
@@ -1381,6 +1390,7 @@
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="直连主机" />
                                         <TextBox
                                             AcceptsReturn="True"
+                                            x:Name="FieldArray_requestProxy__bypass"
                                             AutomationProperties.Name="代理直连主机"
                                             FontFamily="Consolas"
                                             FontSize="12"
@@ -1400,12 +1410,13 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="通用备份份数" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="设置、角色卡等文件的保留份数" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="每个聊天文件与设置文件各保留多少份备份。对应 backups.common.numberOfBackups。" />
                                     </StackPanel>
 
                                     <NumberBox
                                         Grid.Column="1"
                                         Width="150"
+                                        x:Name="Field_backups__common__numberOfBackups"
                                         AutomationProperties.Name="通用备份份数"
                                         Minimum="1"
                                         SpinButtonPlacementMode="Compact"
@@ -1422,11 +1433,12 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="聊天记录备份" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="定时保存对话历史，避免误删" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="自动备份聊天记录，避免误删。对应 backups.chat.enabled。" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         Grid.Column="1"
+                                        x:Name="Field_backups__chat__enabled"
                                         AutomationProperties.Name="聊天记录备份"
                                         IsOn="True"
                                         OffContent=""
@@ -1439,9 +1451,9 @@
                             <StackPanel x:Name="ChatPanel" Spacing="8">
                                 <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
                                     <CheckBox
-                                        Content="备份时校验完整性"
+                                        x:Name="Field_backups__chat__checkIntegrity" Content="备份时校验完整性"
                                         IsChecked="True"
-                                        ToolTipService.ToolTip="跳过损坏的备份文件，避免写入不完整数据" />
+                                        ToolTipService.ToolTip="保存前先校验聊天文件完整，避免写入坏数据。对应 backups.chat.checkIntegrity。" />
                                 </Border>
 
                                 <Border Style="{StaticResource SettingRowCardStyle}">
@@ -1453,12 +1465,13 @@
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
                                             <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="最大备份数" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="-1 表示不限制" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="每个用户最多保留多少份聊天备份（从最新的算起），-1 表示全部保留。对应 backups.chat.maxTotalBackups。" />
                                         </StackPanel>
 
                                         <NumberBox
                                             Grid.Column="1"
                                             Width="150"
+                                            x:Name="Field_backups__chat__maxTotalBackups"
                                             AutomationProperties.Name="完整备份上限"
                                             SmallChange="1"
                                             SpinButtonPlacementMode="Compact"
@@ -1475,12 +1488,13 @@
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
                                             <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="写入节流间隔" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="毫秒；两次备份之间的最小间隔" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="毫秒；同一用户两次聊天备份之间的最小间隔。对应 backups.chat.throttleInterval。" />
                                         </StackPanel>
 
                                         <NumberBox
                                             Grid.Column="1"
                                             Width="150"
+                                            x:Name="Field_backups__chat__throttleInterval"
                                             AutomationProperties.Name="写入节流间隔"
                                             LargeChange="1000"
                                             Minimum="0"
@@ -1556,11 +1570,12 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="启用缩略图" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="关闭后角色列表加载原图，流量更大但更清晰" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="是否生成角色头像缩略图；关掉后角色列表加载原图，流量更大也更清晰。对应 thumbnails.enabled。" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         Grid.Column="1"
+                                        x:Name="Field_thumbnails__enabled"
                                         AutomationProperties.Name="启用缩略图"
                                         IsOn="True"
                                         OffContent=""
@@ -1580,12 +1595,14 @@
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
                                             <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="图片格式" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="JPEG 体积最小，WebP 质量更好" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="头像缩略图格式：jpg 压缩最好但不能透明，png 保留透明但体积大约翻倍。对应 thumbnails.format，只影响新缩略图。" />
                                         </StackPanel>
 
                                         <ComboBox
                                             Grid.Column="1"
                                             Width="150"
+                                            x:Name="FieldEnum_thumbnails__format"
+                                            Tag="jpg,png,webp"
                                             AutomationProperties.Name="缩略图格式"
                                             SelectedIndex="0">
                                             <ComboBoxItem Content="JPEG" />
@@ -1604,12 +1621,13 @@
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
                                             <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="压缩质量" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="1–100，越高越清晰也越大" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="JPG 缩略图质量，1–100，越高越清晰也越大。对应 thumbnails.quality。" />
                                         </StackPanel>
 
                                         <NumberBox
                                             Grid.Column="1"
                                             Width="150"
+                                            x:Name="Field_thumbnails__quality"
                                             AutomationProperties.Name="缩略图质量"
                                             Maximum="100"
                                             Minimum="1"
@@ -1627,7 +1645,7 @@
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
                                             <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="背景缩略图尺寸" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="宽 × 高，像素" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="宽 × 高，像素。对应 thumbnails.dimensions。" />
                                         </StackPanel>
 
                                         <StackPanel
@@ -1662,7 +1680,7 @@
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
                                             <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="头像缩略图尺寸" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="宽 × 高，像素" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="宽 × 高，像素。对应 thumbnails.dimensions。" />
                                         </StackPanel>
 
                                         <StackPanel
@@ -1697,7 +1715,7 @@
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
                                             <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="角色卡缩略图尺寸" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="宽 × 高，像素" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="宽 × 高，像素。对应 thumbnails.dimensions。" />
                                         </StackPanel>
 
                                         <StackPanel
@@ -1782,13 +1800,13 @@
 
                             <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
                                 <StackPanel Spacing="8">
-                                    <CheckBox
+                                    <CheckBox x:Name="Field_performance__lazyLoadCharacters"
                                         Content="延迟加载角色卡"
-                                        ToolTipService.ToolTip="进入角色列表后才加载详情，首屏更快" />
-                                    <CheckBox
+                                        ToolTipService.ToolTip="进角色列表后才加载详情，卡片很多时首屏更快；可能和个别扩展不兼容。对应 performance.lazyLoadCharacters。" />
+                                    <CheckBox x:Name="Field_performance__useDiskCache"
                                         Content="使用磁盘缓存"
                                         IsChecked="True"
-                                        ToolTipService.ToolTip="把缩略图与静态资源缓存到本地，减少重复生成" />
+                                        ToolTipService.ToolTip="把角色卡缓存到磁盘，卡片很多时加载更快。对应 performance.useDiskCache。" />
                                 </StackPanel>
                             </Border>
 
@@ -1801,7 +1819,7 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="内存缓存容量" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="可缓存的条目数，过大反而占用内存" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="解析后的角色卡最多能占多少内存，0 表示关闭内存缓存。对应 performance.memoryCacheCapacity。" />
                                     </StackPanel>
 
                                     <NumberBox
@@ -1871,10 +1889,10 @@
                                 Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
                             <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
-                                <CheckBox
+                                <CheckBox x:Name="Field_logging__enableAccessLog"
                                     Content="启用访问日志"
                                     IsChecked="True"
-                                    ToolTipService.ToolTip="记录每次请求的路径与耗时，排查问题必备" />
+                                    ToolTipService.ToolTip="把每次访问写进 access.log 并输出到控制台。对应 logging.enableAccessLog。" />
                             </Border>
 
                             <Border Style="{StaticResource SettingRowCardStyle}">
@@ -1886,12 +1904,14 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="最低日志级别" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="低于该级别的日志不会写入控制台" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="终端里显示的最低日志级别：DEBUG = 0、INFO = 1、WARN = 2、ERROR = 3。对应 logging.minLogLevel。" />
                                     </StackPanel>
 
                                     <ComboBox
                                         Grid.Column="1"
                                         Width="150"
+                                        x:Name="FieldEnum_logging__minLogLevel"
+                                        Tag="0,1,2,3"
                                         AutomationProperties.Name="最低日志级别"
                                         SelectedIndex="1">
                                         <ComboBoxItem Content="Debug" />
@@ -1967,11 +1987,12 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="输入框占位文案" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="新对话输入框里的提示文字" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="新对话输入框里的占位提示文字。对应 promptPlaceholder。" />
                                     </StackPanel>
 
                                     <TextBox
                                         Grid.Column="1"
+                                        x:Name="Field_promptPlaceholder"
                                         AutomationProperties.Name="输入框占位文案"
                                         Text="[Start a new chat]" />
                                 </Grid>
@@ -1986,12 +2007,13 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="会话超时" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="分钟；-1 表示不自动登出" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="用户会话超时（秒）：正数 = 闲置多久后登出；0 = 关闭浏览器即失效；负数 = 永不登出。对应 sessionTimeout。" />
                                     </StackPanel>
 
                                     <NumberBox
                                         Grid.Column="1"
                                         Width="150"
+                                        x:Name="Field_sessionTimeout"
                                         AutomationProperties.Name="会话超时"
                                         SmallChange="1"
                                         SpinButtonPlacementMode="Compact"
@@ -2014,58 +2036,58 @@
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
 
-                                    <CheckBox
+                                    <CheckBox x:Name="Field_extensions__enabled"
                                         Content="启用扩展"
                                         IsChecked="True"
-                                        ToolTipService.ToolTip="允许加载第三方 UI 扩展" />
-                                    <CheckBox
+                                        ToolTipService.ToolTip="启用界面扩展。对应 extensions.enabled。" />
+                                    <CheckBox x:Name="Field_extensions__autoUpdate"
                                         Grid.Column="1"
-                                        Content="扩展自动更新"
+                                        Content="扩展自动更新" ToolTipService.ToolTip="扩展发布新版本时自动更新。对应 extensions.autoUpdate。"
                                         IsChecked="True" />
-                                    <CheckBox
+                                    <CheckBox x:Name="Field_enableServerPlugins"
                                         Grid.Row="1"
                                         Content="启用服务器插件"
-                                        ToolTipService.ToolTip="插件以本机权限运行，只安装可信来源" />
-                                    <CheckBox
+                                        ToolTipService.ToolTip="启用服务器插件。对应 enableServerPlugins。" />
+                                    <CheckBox x:Name="Field_enableServerPluginsAutoUpdate"
                                         Grid.Row="1"
                                         Grid.Column="1"
-                                        Content="插件自动更新"
+                                        Content="插件自动更新" ToolTipService.ToolTip="启动时自动更新服务器插件。对应 enableServerPluginsAutoUpdate。"
                                         IsChecked="True" />
-                                    <CheckBox
+                                    <CheckBox x:Name="Field_sso__autheliaAuth"
                                         Grid.Row="2"
                                         Content="Authelia 单点登录"
-                                        ToolTipService.ToolTip="接入自建 Authelia 认证" />
-                                    <CheckBox Grid.Row="2" Grid.Column="1" Content="Authentik 单点登录" />
-                                    <CheckBox
+                                        ToolTipService.ToolTip="在反向代理上装好 Authelia 后再开：用同名账号（小写）自动登录。对应 sso.autheliaAuth。" />
+                                    <CheckBox x:Name="Field_sso__authentikAuth" Grid.Row="2" Grid.Column="1" Content="Authentik 单点登录" ToolTipService.ToolTip="在反向代理上装好 Authentik 后再开：用同名账号（小写）自动登录。对应 sso.authentikAuth。" />
+                                    <CheckBox x:Name="Field_cacheBuster__enabled"
                                         Grid.Row="3"
                                         Content="启用缓存破坏"
-                                        ToolTipService.ToolTip="为静态资源追加版本参数，强制浏览器刷新" />
-                                    <CheckBox Grid.Row="3" Grid.Column="1" Content="启用 CORS 代理" />
-                                    <CheckBox
+                                        ToolTipService.ToolTip="首次加载或上传图片后清除浏览器缓存；需要 localhost 或 HTTPS 域名才生效。对应 cacheBuster.enabled。" />
+                                    <CheckBox x:Name="Field_enableCorsProxy" Grid.Row="3" Grid.Column="1" Content="启用 CORS 代理" ToolTipService.ToolTip="启用 CORS 代理中间件。对应 enableCorsProxy。" />
+                                    <CheckBox x:Name="Field_enableDownloadableTokenizers"
                                         Grid.Row="4"
                                         Content="允许下载分词器"
-                                        ToolTipService.ToolTip="缺少内置分词器时自动联网下载" />
-                                    <CheckBox
+                                        ToolTipService.ToolTip="按需下载额外的模型分词器；关闭时回退到本机已有的分词器。对应 enableDownloadableTokenizers。" />
+                                    <CheckBox x:Name="Field_disableCsrfProtection"
                                         Grid.Row="4"
                                         Grid.Column="1"
                                         Content="禁用 CSRF 校验"
-                                        ToolTipService.ToolTip="风险项：关闭后跨站请求伪造防护失效" />
-                                    <CheckBox
+                                        ToolTipService.ToolTip="关闭 CSRF 防护，官方标注「不推荐」。对应 disableCsrfProtection。" />
+                                    <CheckBox x:Name="Field_skipContentCheck"
                                         Grid.Row="5"
                                         Content="跳过内容检查"
-                                        ToolTipService.ToolTip="风险项：不再拦截受限内容" />
-                                    <CheckBox
+                                        ToolTipService.ToolTip="跳过新默认内容的检查。对应 skipContentCheck。" />
+                                    <CheckBox x:Name="Field_allowKeysExposure"
                                         Grid.Row="5"
                                         Grid.Column="1"
                                         Content="允许导出密钥"
-                                        ToolTipService.ToolTip="风险项：接口可读取已保存的 API Key" />
+                                        ToolTipService.ToolTip="允许通过 API 导出密钥。对应 allowKeysExposure。" />
                                 </Grid>
                             </Border>
 
                             <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
-                                <CheckBox
+                                <CheckBox x:Name="Field_securityOverride"
                                     Content="忽略启动安全检查"
-                                    ToolTipService.ToolTip="风险项：跳过端口占用与目录权限检查，仅排障时使用" />
+                                    ToolTipService.ToolTip="关闭启动时的安全检查，官方标注「不推荐」。对应 securityOverride。" />
                             </Border>
 
                             <Border Style="{StaticResource SettingRowCardStyle}">
@@ -2077,11 +2099,12 @@
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="缓存破坏规则" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="正则；留空表示匹配全部静态资源" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="只对匹配该正则的浏览器 UA 清缓存，例如 firefox|safari（不区分大小写）。对应 cacheBuster.userAgentPattern。" />
                                     </StackPanel>
 
                                     <TextBox
                                         Grid.Column="1"
+                                        x:Name="Field_cacheBuster__userAgentPattern"
                                         AutomationProperties.Name="缓存破坏规则"
                                         FontFamily="Consolas"
                                         PlaceholderText="可选" />
@@ -2092,39 +2115,90 @@
                 </Border>
             </StackPanel>
 
-            <!--  ==================== 底部操作 ====================  -->
-            <Grid ColumnSpacing="10">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-
-                <Button
-                    AutomationProperties.Name="保存配置"
-                    Click="Save_Click"
-                    Style="{StaticResource AccentActionButtonStyle}">
-                    <StackPanel Orientation="Horizontal" Spacing="7">
-                        <FontIcon FontSize="13" Glyph="&#xE74E;" />
-                        <TextBlock Text="保存配置" />
-                    </StackPanel>
-                </Button>
-
-                <Button
-                    Grid.Column="1"
-                    AutomationProperties.Name="重置为默认"
-                    Click="Reset_Click"
-                    Content="重置为默认" />
-
-                <TextBlock
-                    x:Name="DirtyHint"
-                    Grid.Column="3"
-                    VerticalAlignment="Center"
-                    Style="{StaticResource FootnoteTextStyle}"
-                    Text="修改会在下次启动服务时生效" />
-            </Grid>
+            <!--  ==================== 底部说明 ====================  -->
+            <TextBlock
+                x:Name="DirtyHint"
+                Style="{StaticResource FootnoteTextStyle}"
+                Text="改动会自动保存到 config.yaml，下次启动服务时生效" />
 
         </StackPanel>
     </ScrollViewer>
+
+        <!--
+            首次使用遮罩：全局配置与默认配置都不存在时盖住整页。
+            用户点一次「获取默认配置」就好，不用自己去找 config.yaml 该放哪。
+        -->
+        <Border
+            x:Name="ConfigMask"
+            Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+            Visibility="Collapsed">
+            <Border
+                MaxWidth="520"
+                Padding="28,26"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="14">
+
+                    <FontIcon
+                        HorizontalAlignment="Center"
+                        FontSize="30"
+                        Foreground="{ThemeResource AccentFillColorDefaultBrush}"
+                        Glyph="&#xE8B7;" />
+
+                    <StackPanel Spacing="6">
+                        <TextBlock
+                            HorizontalAlignment="Center"
+                            FontSize="18"
+                            FontWeight="SemiBold"
+                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                            Text="还没有酒馆配置文件" />
+                        <TextBlock
+                            Style="{StaticResource FieldHintTextStyle}"
+                            Text="首次使用需要先准备一份配置。启动器会下载 SillyTavern 官方默认配置，并顺手调好：端口 11451、开启 IPv6、允许局域网访问、白名单只保留本机。"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <Border Padding="12,10" Style="{StaticResource SubPanelStyle}">
+                        <StackPanel Spacing="4">
+                            <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="配置将保存到" />
+                            <TextBlock
+                                x:Name="MaskPathText"
+                                FontFamily="Consolas"
+                                FontSize="11"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+
+                    <Button
+                        x:Name="FetchConfigBtn"
+                        HorizontalAlignment="Center"
+                        Click="FetchConfig_Click"
+                        Style="{StaticResource AccentActionButtonStyle}">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <FontIcon FontSize="13" Glyph="&#xE896;" />
+                            <TextBlock Text="获取默认配置" />
+                        </StackPanel>
+                    </Button>
+
+                    <ProgressRing
+                        x:Name="FetchProgress"
+                        Width="22"
+                        Height="22"
+                        HorizontalAlignment="Center"
+                        IsActive="False"
+                        Visibility="Collapsed" />
+
+                    <TextBlock
+                        x:Name="MaskStatusText"
+                        HorizontalAlignment="Center"
+                        Style="{StaticResource FieldHintTextStyle}"
+                        TextAlignment="Center"
+                        TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+        </Border>
+    </Grid>
 </Page>
