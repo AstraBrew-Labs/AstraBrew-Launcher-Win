@@ -497,6 +497,18 @@ namespace AstraBrew_Launcher.Views
                 SimpleBrowserCombo.SelectedIndex = browserIndex;
                 AdvBrowserCombo.SelectedIndex = browserIndex;
 
+                // 服务范围同理由文件决定：仪表盘的局域网/互联网 chip 读的是这一份
+                TavernSettings.Scope = lan ? ServiceScope.Lan : ServiceScope.Wan;
+
+                // 让仪表盘与启动器读到同一份浏览器选择（含官方的 default）
+                TavernSettings.Browser = browserIndex switch
+                {
+                    1 => BrowserKind.Edge,
+                    2 => BrowserKind.Firefox,
+                    3 => BrowserKind.System,
+                    _ => BrowserKind.Chrome,
+                };
+
                 LoadExtraFields(scalars, text);
                 _syncing = false;
 
@@ -563,10 +575,19 @@ namespace AstraBrew_Launcher.Views
 
         private static bool IsTrue(string value) => string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// 多行文本框 → 数组条目。
+        ///
+        /// 必须同时按 <c>\r</c> 与 <c>\n</c> 切：WinUI 的 TextBox 里回车可能只留下 <c>\r</c>，
+        /// 只按 <c>\n</c> 切会把整段当成一条，写回 YAML 就变成
+        /// <c>- 'localhost\ncdn…'</c> 这种一段带引号的多行标量——酒馆解析直接报错、起不来。
+        /// </summary>
         private static List<string> SplitLines(string text) =>
             System.Linq.Enumerable.ToList(
                 System.Linq.Enumerable.Where(
-                    System.Linq.Enumerable.Select(text.Split('\n'), line => line.Trim()),
+                    System.Linq.Enumerable.Select(
+                        text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries),
+                        line => line.Trim()),
                     line => line.Length > 0));
 
         private void LoadExtraFields(Dictionary<string, string> scalars, string text)
@@ -740,11 +761,17 @@ namespace AstraBrew_Launcher.Views
             }
         }
 
-        /// <summary>配置里存的是浏览器关键字，界面上是三个选项。</summary>
+        /// <summary>
+        /// 配置里存的是浏览器关键字，界面上是四个选项。
+        ///
+        /// 官方默认值是 <c>default</c>（跟随系统）。以前这里只认三种浏览器，
+        /// 于是「打开页面 → 随手改个别的东西 → 自动保存」就把用户的 default 悄悄写成 chrome。
+        /// </summary>
         private static string BrowserKey(int index) => index switch
         {
             1 => "edge",
             2 => "firefox",
+            3 => "default",
             _ => "chrome",
         };
 
@@ -752,7 +779,8 @@ namespace AstraBrew_Launcher.Views
         {
             "edge" => 1,
             "firefox" => 2,
-            _ => 0,
+            "chrome" => 0,
+            _ => 3,
         };
 
         private void ListenAddress_Changed(object sender, TextChangedEventArgs e)
@@ -1007,6 +1035,14 @@ namespace AstraBrew_Launcher.Views
 
         private void MarkDirty()
         {
+            // 加载期间控件被填值：那不是用户改动，不许置脏。
+            // 置脏的后果不只是状态点变色——离开页面会触发一次整份保存，
+            // 于是「只是打开看一眼」也会把 config.yaml 重写一遍。
+            if (_loading)
+            {
+                return;
+            }
+
             if (!_dirty)
             {
                 _dirty = true;
@@ -1017,11 +1053,8 @@ namespace AstraBrew_Launcher.Views
             }
 
             // 防抖：每改一次就重新计时，停手 700ms 才真正写盘
-            if (!_loading)
-            {
-                _saveTimer.Stop();
-                _saveTimer.Start();
-            }
+            _saveTimer.Stop();
+            _saveTimer.Start();
         }
 
         private void MarkClean()

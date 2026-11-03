@@ -106,24 +106,50 @@
                     </Grid.RowDefinitions>
 
                     <Grid
-                        Padding="12,7,10,7"
+                        Padding="12,6,8,6"
                         ColumnSpacing="8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
 
                         <TextBlock
                             VerticalAlignment="Center"
-                            FontSize="12"
-                            FontWeight="SemiBold"
-                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                            Text="{x:Bind IndexLabel}" />
+                            FontSize="11"
+                            FontFamily="Consolas"
+                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                            Text="{x:Bind ShortIndex}" />
+
+                        <!--  标题一行、正文预览一行：收起时也能看清是哪条  -->
+                        <Button
+                            Grid.Column="1"
+                            Padding="0"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Left"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Click="ToggleEntry_Click"
+                            ToolTipService.ToolTip="展开 / 收起这条的编辑区">
+                            <StackPanel Spacing="1">
+                                <TextBlock
+                                    FontSize="12.5"
+                                    FontWeight="SemiBold"
+                                    Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                    Text="{x:Bind Comment}"
+                                    TextTrimming="CharacterEllipsis" />
+                                <TextBlock
+                                    FontSize="11"
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                    Text="{x:Bind SummaryLine, Mode=OneWay}"
+                                    TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Button>
 
                         <Border
-                            Grid.Column="1"
-                            HorizontalAlignment="Left"
+                            Grid.Column="2"
                             VerticalAlignment="Center"
                             Style="{StaticResource MetaChipStyle}"
                             Visibility="{x:Bind KeyHintVisibility}">
@@ -131,7 +157,7 @@
                         </Border>
 
                         <StackPanel
-                            Grid.Column="2"
+                            Grid.Column="3"
                             Orientation="Horizontal"
                             Spacing="7"
                             VerticalAlignment="Center">
@@ -146,22 +172,36 @@
                                 OffContent=""
                                 OnContent="" />
                         </StackPanel>
+
+                        <Button
+                            Grid.Column="4"
+                            Width="26"
+                            Height="26"
+                            Padding="0"
+                            AutomationProperties.Name="展开条目"
+                            Click="ToggleEntry_Click"
+                            Style="{StaticResource SubtleIconButtonStyle}"
+                            ToolTipService.ToolTip="展开 / 收起">
+                            <FontIcon FontSize="10" Glyph="{x:Bind ChevronGlyph, Mode=OneWay}" />
+                        </Button>
                     </Grid>
 
                     <Rectangle
                         Grid.Row="1"
                         Height="1"
-                        Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                        Fill="{ThemeResource DividerStrokeColorDefaultBrush}"
+                        Visibility="{x:Bind ExpandedVisibility, Mode=OneWay}" />
 
                     <StackPanel
                         Grid.Row="2"
                         Padding="12,10,12,12"
-                        Spacing="9">
+                        Spacing="9"
+                        Visibility="{x:Bind ExpandedVisibility, Mode=OneWay}">
 
                         <TextBox
                             FontSize="12"
                             PlaceholderText="备注（只用于识别条目，不参与匹配）"
-                            Text="{x:Bind Comment, Mode=TwoWay}" />
+                            Text="{x:Bind Comment, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
 
                         <Grid ColumnSpacing="10">
                             <Grid.ColumnDefinitions>
@@ -191,7 +231,7 @@
                                         KeyDown="KeyInput_KeyDown"
                                         PlaceholderText="回车添加"
                                         Tag="primary"
-                                        Text="{x:Bind KeysInput, Mode=TwoWay}" />
+                                        Text="{x:Bind KeysInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                     <Button
                                         Grid.Column="1"
                                         Width="32"
@@ -227,7 +267,7 @@
                                         KeyDown="KeyInput_KeyDown"
                                         PlaceholderText="回车添加"
                                         Tag="secondary"
-                                        Text="{x:Bind SecondaryKeysInput, Mode=TwoWay}" />
+                                        Text="{x:Bind SecondaryKeysInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                     <Button
                                         Grid.Column="1"
                                         Width="32"
@@ -246,7 +286,7 @@
                             Height="96"
                             PlaceholderText="命中后插入到上下文中的正文"
                             Style="{StaticResource BodyTextBoxStyle}"
-                            Text="{x:Bind Content, Mode=TwoWay}" />
+                            Text="{x:Bind Content, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
 
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
@@ -260,7 +300,7 @@
                                 <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="顺序" />
                                 <TextBox
                                     FontSize="12"
-                                    Text="{x:Bind Order, Mode=TwoWay}" />
+                                    Text="{x:Bind Order, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                             </StackPanel>
 
                             <StackPanel Grid.Column="1" Spacing="4">
@@ -276,14 +316,14 @@
                                 <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="触发概率" />
                                 <TextBox
                                     FontSize="12"
-                                    Text="{x:Bind Probability, Mode=TwoWay}" />
+                                    Text="{x:Bind Probability, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                             </StackPanel>
 
                             <StackPanel Grid.Column="3" Spacing="4">
                                 <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="深度" />
                                 <TextBox
                                     FontSize="12"
-                                    Text="{x:Bind Depth, Mode=TwoWay}" />
+                                    Text="{x:Bind Depth, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                             </StackPanel>
                         </Grid>
                     </StackPanel>
@@ -381,16 +421,17 @@
                         Grid.Row="2"
                         Padding="12,9,12,11"
                         Spacing="8">
-                        <Grid ColumnSpacing="8">
+                        <Grid ColumnSpacing="6">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="132" />
+                                <ColumnDefinition Width="112" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
 
                             <TextBox
                                 FontSize="12"
                                 PlaceholderText="提示词名称"
-                                Text="{x:Bind Name, Mode=TwoWay}" />
+                                Text="{x:Bind Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                             <ComboBox
                                 Grid.Column="1"
                                 HorizontalAlignment="Stretch"
@@ -398,14 +439,35 @@
                                 ItemsSource="{x:Bind RoleOptions}"
                                 SelectedIndex="{x:Bind Role, Mode=TwoWay}"
                                 Visibility="{x:Bind EditorVisibility}" />
+                            <Button
+                                Grid.Column="2"
+                                Width="28"
+                                Height="28"
+                                Padding="0"
+                                AutomationProperties.Name="编辑提示词正文"
+                                Click="EditPrompt_Click"
+                                Style="{StaticResource SubtleIconButtonStyle}"
+                                ToolTipService.ToolTip="放大编辑提示词正文"
+                                Visibility="{x:Bind EditorVisibility}">
+                                <FontIcon FontSize="12" Glyph="&#xE70F;" />
+                            </Button>
                         </Grid>
 
-                        <TextBox
-                            Height="84"
-                            PlaceholderText="提示词正文"
-                            Style="{StaticResource BodyTextBoxStyle}"
-                            Text="{x:Bind Content, Mode=TwoWay}"
+                        <!--  正文只放预览：每张卡塞一个能装几千字的输入框，光布局就要 40 ms/张  -->
+                        <TextBlock
+                            MaxLines="4"
+                            FontSize="11.5"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Text="{x:Bind Content}"
+                            TextTrimming="CharacterEllipsis"
+                            TextWrapping="Wrap"
                             Visibility="{x:Bind EditorVisibility}" />
+                        <TextBlock
+                            FontSize="11.5"
+                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                            Text="占位提示词：由酒馆在运行时填入内容，预设里没有正文。"
+                            TextWrapping="Wrap"
+                            Visibility="{x:Bind MarkerVisibility}" />
                     </StackPanel>
                 </Grid>
             </Border>
@@ -465,7 +527,7 @@
                         FontFamily="Consolas"
                         FontSize="10.5"
                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        Text="characters/星野澪.json · 8.4 KB" />
+                        Text="characters/… · 正在读取" />
                 </StackPanel>
             </StackPanel>
 
@@ -474,53 +536,6 @@
                 Orientation="Horizontal"
                 Spacing="8"
                 VerticalAlignment="Center">
-
-                <!--  编辑器切换：原型期用于在一页里对照三种工作台  -->
-                <Border
-                    x:Name="KindSwitch"
-                    Style="{StaticResource SegmentTrackStyle}">
-                    <StackPanel Orientation="Horizontal" Spacing="2">
-                        <RadioButton
-                            x:Name="KindCharacterButton"
-                            Checked="Kind_Checked"
-                            GroupName="WorkbenchKind"
-                            Style="{StaticResource SegmentRadioStyle}"
-                            Tag="character">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon FontSize="11" Glyph="&#xE77B;" />
-                                <TextBlock Text="角色卡" />
-                            </StackPanel>
-                        </RadioButton>
-                        <RadioButton
-                            x:Name="KindWorldBookButton"
-                            Checked="Kind_Checked"
-                            GroupName="WorkbenchKind"
-                            Style="{StaticResource SegmentRadioStyle}"
-                            Tag="worldbook">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon FontSize="11" Glyph="&#xE8F1;" />
-                                <TextBlock Text="世界书" />
-                            </StackPanel>
-                        </RadioButton>
-                        <RadioButton
-                            x:Name="KindPresetButton"
-                            Checked="Kind_Checked"
-                            GroupName="WorkbenchKind"
-                            Style="{StaticResource SegmentRadioStyle}"
-                            Tag="preset">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon FontSize="11" Glyph="&#xE9E9;" />
-                                <TextBlock Text="预设" />
-                            </StackPanel>
-                        </RadioButton>
-                    </StackPanel>
-                </Border>
-
-                <Rectangle
-                    Width="1"
-                    Height="18"
-                    VerticalAlignment="Center"
-                    Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
                 <Button
                     x:Name="UndoButton"
@@ -643,7 +658,7 @@
                                         <TextBlock
                                             FontSize="11"
                                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                            Text="改动会自动写回角色卡 JSON" />
+                                            Text="改动会自动写回角色卡文件（PNG 卡改写的是卡里的文本块，图片不动）" />
                                     </StackPanel>
                                 </Grid>
 
@@ -662,14 +677,11 @@
                                         Background="{x:Bind Character.CoverBackground}"
                                         CornerRadius="6">
                                         <Grid>
-                                            <TextBlock
-                                                HorizontalAlignment="Center"
-                                                VerticalAlignment="Center"
-                                                FontSize="34"
-                                                FontWeight="SemiBold"
-                                                Foreground="#FF2B88D8"
-                                                Text="{x:Bind Character.Monogram, Mode=OneWay}"
-                                                Visibility="{x:Bind Character.CoverVisibility, Mode=OneWay}" />
+                                            <!--  真卡面：直接读磁盘上的 PNG，缩到 208 宽解码  -->
+                                            <Image
+                                                Source="{x:Bind Character.CoverSource, Mode=OneWay}"
+                                                Stretch="UniformToFill"
+                                                Visibility="{x:Bind Character.CoverImageVisibility, Mode=OneWay}" />
                                             <TextBlock
                                                 Margin="12,0"
                                                 HorizontalAlignment="Center"
@@ -695,21 +707,17 @@
                                         <TextBlock
                                             FontSize="11"
                                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                            Text="建议 400 × 600 的 PNG。没有卡面时用名称首字占位。"
+                                            Text="换图不会丢设定：新图的像素会接上这张卡自己的文本块。"
                                             TextWrapping="Wrap" />
                                         <StackPanel Orientation="Horizontal" Spacing="6">
                                             <Button
                                                 Padding="9,4,11,5"
-                                                Click="ChangeCover_Click">
+                                                Click="ChangeCover_Click"
+                                                IsEnabled="{x:Bind Character.CanReplaceCover}">
                                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                                     <FontIcon FontSize="11" Glyph="&#xEB9F;" />
-                                                    <TextBlock FontSize="12" Text="更换" />
+                                                    <TextBlock FontSize="12" Text="更换卡面" />
                                                 </StackPanel>
-                                            </Button>
-                                            <Button
-                                                Padding="9,4,11,5"
-                                                Click="RemoveCover_Click">
-                                                <TextBlock FontSize="12" Text="移除" />
                                             </Button>
                                         </StackPanel>
                                     </StackPanel>
@@ -724,7 +732,7 @@
                                         <TextBox
                                             FontSize="12.5"
                                             PlaceholderText="角色名"
-                                            Text="{x:Bind Character.Name, Mode=TwoWay}" />
+                                            Text="{x:Bind Character.Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                     </StackPanel>
 
                                     <Grid ColumnSpacing="10">
@@ -736,13 +744,13 @@
                                             <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="作者" />
                                             <TextBox
                                                 FontSize="12.5"
-                                                Text="{x:Bind Character.Creator, Mode=TwoWay}" />
+                                                Text="{x:Bind Character.Creator, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="1" Spacing="4">
                                             <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="版本" />
                                             <TextBox
                                                 FontSize="12.5"
-                                                Text="{x:Bind Character.Version, Mode=TwoWay}" />
+                                                Text="{x:Bind Character.Version, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                         </StackPanel>
                                     </Grid>
 
@@ -779,7 +787,7 @@
                                                 FontSize="12.5"
                                                 KeyDown="CharTagInput_KeyDown"
                                                 PlaceholderText="回车添加标签"
-                                                Text="{x:Bind Character.TagInput, Mode=TwoWay}" />
+                                                Text="{x:Bind Character.TagInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                             <Button
                                                 Grid.Column="1"
                                                 Width="32"
@@ -811,7 +819,7 @@
                             </Grid.RowDefinitions>
 
                             <Border
-                                MinHeight="168"
+                                Height="252"
                                 Padding="0"
                                 Style="{StaticResource SubPanelStyle}">
                                 <Grid>
@@ -819,9 +827,10 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="*" />
                                     </Grid.RowDefinitions>
-                                    <Grid Padding="12,9,12,6" ColumnSpacing="8">
+                                    <Grid Padding="12,6,8,3" ColumnSpacing="6">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock
@@ -836,19 +845,31 @@
                                             FontSize="10.5"
                                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                             Text="{x:Bind Character.DescriptionCount, Mode=OneWay}" />
+                                        <Button
+                                            Grid.Column="2"
+                                            Width="24"
+                                            Height="24"
+                                            Padding="0"
+                                            AutomationProperties.Name="放大编辑简介"
+                                            Click="ExpandText_Click"
+                                            Style="{StaticResource SubtleIconButtonStyle}"
+                                            Tag="description"
+                                            ToolTipService.ToolTip="放大编辑">
+                                            <FontIcon FontSize="11" Glyph="&#xE740;" />
+                                        </Button>
                                     </Grid>
                                     <TextBox
                                         Grid.Row="1"
                                         Padding="12,0,12,10"
                                         PlaceholderText="外貌、身份、与你的关系…"
                                         Style="{StaticResource BodyTextBoxStyle}"
-                                        Text="{x:Bind Character.Description, Mode=TwoWay}" />
+                                        Text="{x:Bind Character.Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                 </Grid>
                             </Border>
 
                             <Border
                                 Grid.Column="1"
-                                MinHeight="168"
+                                Height="252"
                                 Padding="0"
                                 Style="{StaticResource SubPanelStyle}">
                                 <Grid>
@@ -856,9 +877,10 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="*" />
                                     </Grid.RowDefinitions>
-                                    <Grid Padding="12,9,12,6" ColumnSpacing="8">
+                                    <Grid Padding="12,6,8,3" ColumnSpacing="6">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock
@@ -873,19 +895,31 @@
                                             FontSize="10.5"
                                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                             Text="{x:Bind Character.PersonalityCount, Mode=OneWay}" />
+                                        <Button
+                                            Grid.Column="2"
+                                            Width="24"
+                                            Height="24"
+                                            Padding="0"
+                                            AutomationProperties.Name="放大编辑性格"
+                                            Click="ExpandText_Click"
+                                            Style="{StaticResource SubtleIconButtonStyle}"
+                                            Tag="personality"
+                                            ToolTipService.ToolTip="放大编辑">
+                                            <FontIcon FontSize="11" Glyph="&#xE740;" />
+                                        </Button>
                                     </Grid>
                                     <TextBox
                                         Grid.Row="1"
                                         Padding="12,0,12,10"
                                         PlaceholderText="说话方式、脾气、在意的事…"
                                         Style="{StaticResource BodyTextBoxStyle}"
-                                        Text="{x:Bind Character.Personality, Mode=TwoWay}" />
+                                        Text="{x:Bind Character.Personality, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                 </Grid>
                             </Border>
 
                             <Border
                                 Grid.Row="1"
-                                MinHeight="168"
+                                Height="252"
                                 Padding="0"
                                 Style="{StaticResource SubPanelStyle}">
                                 <Grid>
@@ -893,9 +927,10 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="*" />
                                     </Grid.RowDefinitions>
-                                    <Grid Padding="12,9,12,6" ColumnSpacing="8">
+                                    <Grid Padding="12,6,8,3" ColumnSpacing="6">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock
@@ -910,20 +945,32 @@
                                             FontSize="10.5"
                                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                             Text="{x:Bind Character.ScenarioCount, Mode=OneWay}" />
+                                        <Button
+                                            Grid.Column="2"
+                                            Width="24"
+                                            Height="24"
+                                            Padding="0"
+                                            AutomationProperties.Name="放大编辑场景"
+                                            Click="ExpandText_Click"
+                                            Style="{StaticResource SubtleIconButtonStyle}"
+                                            Tag="scenario"
+                                            ToolTipService.ToolTip="放大编辑">
+                                            <FontIcon FontSize="11" Glyph="&#xE740;" />
+                                        </Button>
                                     </Grid>
                                     <TextBox
                                         Grid.Row="1"
                                         Padding="12,0,12,10"
                                         PlaceholderText="故事发生在哪、此刻正在做什么…"
                                         Style="{StaticResource BodyTextBoxStyle}"
-                                        Text="{x:Bind Character.Scenario, Mode=TwoWay}" />
+                                        Text="{x:Bind Character.Scenario, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                 </Grid>
                             </Border>
 
                             <Border
                                 Grid.Row="1"
                                 Grid.Column="1"
-                                MinHeight="168"
+                                Height="252"
                                 Padding="0"
                                 Style="{StaticResource SubPanelStyle}">
                                 <Grid>
@@ -931,9 +978,10 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="*" />
                                     </Grid.RowDefinitions>
-                                    <Grid Padding="12,9,12,6" ColumnSpacing="8">
+                                    <Grid Padding="12,6,8,3" ColumnSpacing="6">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock
@@ -948,13 +996,25 @@
                                             FontSize="10.5"
                                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                                             Text="{x:Bind Character.FirstMessageCount, Mode=OneWay}" />
+                                        <Button
+                                            Grid.Column="2"
+                                            Width="24"
+                                            Height="24"
+                                            Padding="0"
+                                            AutomationProperties.Name="放大编辑开场白"
+                                            Click="ExpandText_Click"
+                                            Style="{StaticResource SubtleIconButtonStyle}"
+                                            Tag="firstMessage"
+                                            ToolTipService.ToolTip="放大编辑">
+                                            <FontIcon FontSize="11" Glyph="&#xE740;" />
+                                        </Button>
                                     </Grid>
                                     <TextBox
                                         Grid.Row="1"
                                         Padding="12,0,12,10"
                                         PlaceholderText="见面时说的第一句话…"
                                         Style="{StaticResource BodyTextBoxStyle}"
-                                        Text="{x:Bind Character.FirstMessage, Mode=TwoWay}" />
+                                        Text="{x:Bind Character.FirstMessage, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                 </Grid>
                             </Border>
                         </Grid>
@@ -1019,7 +1079,7 @@
                                         x:Name="EmbeddedSubText"
                                         FontSize="11"
                                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                        Text="便利店与电车末班 · 星酿工坊 · 2 个启用"
+                                        Text="未绑定"
                                         TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
 
@@ -1073,21 +1133,11 @@
                                 Padding="18,7,18,7"
                                 BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
                                 BorderThickness="0,1,0,0">
-                                <Grid ColumnSpacing="8">
-                                    <TextBlock
-                                        VerticalAlignment="Center"
-                                        Style="{StaticResource FieldHintTextStyle}"
-                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                        Text="条目正文与关键词在世界书工作台中编辑，这里只做概览。" />
-                                    <HyperlinkButton
-                                        Grid.Column="1"
-                                        Padding="6,2"
-                                        HorizontalAlignment="Right"
-                                        Click="GoWorldBook_Click"
-                                        FontSize="12">
-                                        <TextBlock Text="打开世界书工作台" />
-                                    </HyperlinkButton>
-                                </Grid>
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource FieldHintTextStyle}"
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                    Text="条目正文与关键词在世界书工作台里编辑；这里只随角色卡保存一份副本。" />
                             </Border>
 
                             <!--  未绑定：只留一句说明与一个绑定入口  -->
@@ -1169,7 +1219,7 @@
                                     <TextBlock
                                         FontSize="11"
                                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                        Text="改动会自动写回 worlds 目录下的 JSON" />
+                                        Text="点条目展开编辑；改动会自动写回 worlds 目录下的 JSON" />
                                 </StackPanel>
                             </Grid>
                             <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
@@ -1185,13 +1235,13 @@
                                     <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="名称" />
                                     <TextBox
                                         FontSize="12.5"
-                                        Text="{x:Bind WorldBook.Name, Mode=TwoWay}" />
+                                        Text="{x:Bind WorldBook.Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" Spacing="4">
                                     <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="作者" />
                                     <TextBox
                                         FontSize="12.5"
-                                        Text="{x:Bind WorldBook.Author, Mode=TwoWay}" />
+                                        Text="{x:Bind WorldBook.Author, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                 </StackPanel>
                                 <StackPanel
                                     Grid.Column="2"
@@ -1206,9 +1256,10 @@
                                         VerticalAlignment="Bottom"
                                         Style="{StaticResource MetaChipStyle}">
                                         <TextBlock
+                                            x:Name="WorldSizeText"
                                             FontFamily="Consolas"
                                             Style="{StaticResource MetaChipTextStyle}"
-                                            Text="42.6 KB" />
+                                            Text="—" />
                                     </Border>
                                 </StackPanel>
                             </Grid>
@@ -1281,7 +1332,7 @@
                                 <ItemsControl
                                     x:Name="EntryList"
                                     Margin="-5,0,-5,-5"
-                                    ItemsSource="{x:Bind WorldBook.Entries}">
+                                    ItemsSource="{x:Bind VisibleEntries}">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
                                             <panels:ColumnGrid Columns="2" />
@@ -1292,6 +1343,27 @@
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
                             </Grid>
+
+                            <!--  条目多时只铺一页：一张展开的条目卡要布局十来个输入框，全铺出来会卡  -->
+                            <Border Padding="18,0,18,10">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock
+                                        x:Name="EntryPageText"
+                                        VerticalAlignment="Center"
+                                        Style="{StaticResource FieldHintTextStyle}"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                    <StackPanel
+                                        x:Name="EntryPagerHost"
+                                        Grid.Column="1"
+                                        VerticalAlignment="Center"
+                                        Orientation="Horizontal"
+                                        Spacing="4" />
+                                </Grid>
+                            </Border>
                         </StackPanel>
                     </Border>
                 </StackPanel>
@@ -1339,7 +1411,7 @@
                                 <TextBlock
                                     FontSize="11"
                                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                    Text="顺序由 oai_settings.json 的 prompt_order 管理，这里的改动只写回内容与开关" />
+                                    Text="顺序与开关写在预设文件的 prompt_order 里；内容改动会自动写回文件" />
                             </StackPanel>
                             <Button
                                 Grid.Column="2"
@@ -1403,12 +1475,11 @@
                         <AdaptiveTrigger MinWindowWidth="0" />
                     </VisualState.StateTriggers>
                     <VisualState.Setters>
-                        <!--  窄窗：收紧页边距，资料栏回到 320，三种切换让位给标题  -->
+                        <!--  窄窗：收紧页边距，资料栏回到 320  -->
                         <Setter Target="PageBody.Padding" Value="24,12,24,24" />
                         <Setter Target="HeaderBar.Padding" Value="24,12,24,11" />
                         <Setter Target="ProfileColumn.Width" Value="*" />
                         <Setter Target="EditorColumn.Width" Value="0" />
-                        <Setter Target="KindSwitch.Visibility" Value="Collapsed" />
                         <!--  资料卡独占一行，四块文本落到下面横跨整行，避免每块只剩一百多像素  -->
                         <Setter Target="TextGrid.(Grid.Row)" Value="1" />
                         <Setter Target="TextGrid.(Grid.Column)" Value="0" />

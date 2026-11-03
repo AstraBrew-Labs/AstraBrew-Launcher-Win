@@ -152,6 +152,29 @@ namespace AstraBrew_Launcher
             SyncSelection(tag == "workbench" ? "resources" : tag);
         }
 
+        /// <summary>
+        /// 侧栏「扩展管理」上的待更新角标。
+        ///
+        /// 以前这里写死 `Value="3"`，看起来像有三项要更新，其实是假的——用户点进去
+        /// 一个都找不到。现在只有真的比对过远端、确实有新提交时才显示，0 就整颗藏起来。
+        /// </summary>
+        public void SetExtensionsBadge(int pending)
+        {
+            if (ExtensionsBadge is null)
+            {
+                return;
+            }
+
+            if (pending <= 0)
+            {
+                ExtensionsBadge.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            ExtensionsBadge.Value = pending;
+            ExtensionsBadge.Visibility = Visibility.Visible;
+        }
+
         /// <summary>让左侧导航的选中项与当前路由保持一致。</summary>
         private void SyncSelection(string tag)
         {
@@ -248,6 +271,13 @@ namespace AstraBrew_Launcher
             AppNotify.Raised -= OnNotifyRaised;
 
             _placement?.PersistBounds();
+
+            // 关窗口要不要连酒馆一起停：运行时活在静态状态里，这里不收它就会变成孤儿进程，
+            // 端口一直被占着，下次启动只会看到「端口被占用」。同步杀进程树——窗口一关事件循环就没了。
+            if (LauncherSettings.StopTavernOnWindowClose)
+            {
+                TavernRuntime.Shutdown();
+            }
 
             // 窗口位置是静默写入的（不进保存队列），必须整份写一次；
             // 顺带把还在防抖里的改动一起落盘，进程结束后定时器不会再触发。

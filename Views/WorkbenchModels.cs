@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -174,7 +174,7 @@ namespace AstraBrew_Launcher.Views
         private string _scenario = string.Empty;
         private string _firstMessage = string.Empty;
         private string _tagInput = string.Empty;
-        private bool _hasCover = true;
+        private ImageSource? _coverSource;
 
         public string Name
         {
@@ -244,16 +244,26 @@ namespace AstraBrew_Launcher.Views
             set => Set(ref _tagInput, value, v => TagInput = v);
         }
 
-        public bool HasCover
+        /// <summary>磁盘上的卡面；PNG 卡直接取文件本身，JSON 卡没有卡面。</summary>
+        public ImageSource? CoverSource
         {
-            get => _hasCover;
+            get => _coverSource;
             set
             {
-                Set(ref _hasCover, value, v => HasCover = v);
-                Raise(nameof(CoverVisibility));
+                if (ReferenceEquals(_coverSource, value))
+                {
+                    return;
+                }
+
+                _coverSource = value;
+                Raise(nameof(CoverSource));
+                Raise(nameof(CoverImageVisibility));
                 Raise(nameof(CoverEmptyVisibility));
             }
         }
+
+        /// <summary>只有 PNG 卡能换图（像素与文本块在同一个文件里）。</summary>
+        public bool CanReplaceCover { get; set; }
 
         public ObservableCollection<EditTag> Tags { get; } = new();
 
@@ -264,9 +274,9 @@ namespace AstraBrew_Launcher.Views
 
         public Brush CoverBackground => CoverTint;
 
-        public Visibility CoverVisibility => _hasCover ? Visibility.Visible : Visibility.Collapsed;
+        public Visibility CoverImageVisibility => _coverSource is null ? Visibility.Collapsed : Visibility.Visible;
 
-        public Visibility CoverEmptyVisibility => _hasCover ? Visibility.Collapsed : Visibility.Visible;
+        public Visibility CoverEmptyVisibility => _coverSource is null ? Visibility.Visible : Visibility.Collapsed;
 
         public string TagSummary => Tags.Count == 0 ? "未添加标签" : $"{Tags.Count} 个";
 
@@ -379,18 +389,19 @@ namespace AstraBrew_Launcher.Views
     /// <summary>世界书条目的可编辑版本。</summary>
     public sealed class EntryForm : EditModel
     {
+        /// <summary>
+        /// 酒馆世界书的 <c>position</c> 取值，顺序不能改：0–6 与文件里的数字一一对应，
+        /// 换顺序会把所有条目的插入位置整体搬错。
+        /// </summary>
         private static readonly string[] Positions =
         {
             "角色定义之前",
             "角色定义之后",
-            "示例消息之前",
-            "示例消息之后",
             "作者注释之前",
             "作者注释之后",
             "深度 · 系统",
             "深度 · 用户",
             "深度 · 助手",
-            "出口",
         };
 
         private string _comment = string.Empty;
@@ -401,8 +412,15 @@ namespace AstraBrew_Launcher.Views
         private string _keysInput = string.Empty;
         private string _secondaryKeysInput = string.Empty;
         private bool _enabled = true;
+        private bool _expanded;
         private int _position;
         private int _number = 1;
+
+        /// <summary>这条条目在文件里的原始节点；新建的条目为 null。</summary>
+        public System.Text.Json.Nodes.JsonObject? Node { get; set; }
+
+        /// <summary>entries 是对象字典时它原来的键，保存时按原样写回。</summary>
+        public string? NodeKey { get; set; }
 
         public int Number
         {
@@ -437,7 +455,52 @@ namespace AstraBrew_Launcher.Views
         public string Content
         {
             get => _content;
-            set => Set(ref _content, value, v => Content = v);
+            set
+            {
+                Set(ref _content, value, v => Content = v);
+                Raise(nameof(SummaryLine));
+            }
+        }
+
+        /// <summary>
+        /// 这条是否展开编辑区。世界书几十条时全部展开会让打开工作台慢上秒级——
+        /// 收起时每张卡只有一行标题 + 一行预览，展开才创建那些输入框的布局。
+        /// </summary>
+        public bool IsExpanded
+        {
+            get => _expanded;
+            set
+            {
+                if (_expanded == value)
+                {
+                    return;
+                }
+
+                _expanded = value;
+                Raise(nameof(IsExpanded));
+                Raise(nameof(ExpandedVisibility));
+                Raise(nameof(ChevronGlyph));
+            }
+        }
+
+        public Visibility ExpandedVisibility => _expanded ? Visibility.Visible : Visibility.Collapsed;
+
+        public string ChevronGlyph => _expanded ? "\uE70E" : "\uE70D";
+
+        /// <summary>收起时显示的正文摘要：去掉换行、截断，空正文直接说明。</summary>
+        public string SummaryLine
+        {
+            get
+            {
+                string text = _content.Replace("\r", " ").Replace("\n", " ").Trim();
+
+                if (text.Length == 0)
+                {
+                    return "没有正文";
+                }
+
+                return text.Length <= 70 ? text : text[..70] + "…";
+            }
         }
 
         public string Order
@@ -591,7 +654,16 @@ namespace AstraBrew_Launcher.Views
 
         public string Identifier { get; set; } = string.Empty;
 
+        /// <summary>这条提示词在预设文件 prompts 数组里的原始节点；新建的为 null。</summary>
+        public System.Text.Json.Nodes.JsonObject? Node { get; set; }
+
         public bool IsMarker { get; set; }
+
+        /// <summary>
+        /// 原本是否出现在 prompt_order 里。不在 order 里的提示词酒馆根本不会注入，
+        /// 保存时也不能顺手把它加进去——那等于替用户改了他的预设。
+        /// </summary>
+        public bool InOrder { get; set; }
 
         public string KindLabel => IsMarker ? "标记" : "提示词";
 

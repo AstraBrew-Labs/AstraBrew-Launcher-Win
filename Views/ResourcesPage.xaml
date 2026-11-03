@@ -199,13 +199,18 @@
                         Background="{x:Bind CoverBackground}"
                         CornerRadius="8">
                         <Grid>
+                            <Image
+                                Source="{x:Bind CoverSource}"
+                                Stretch="UniformToFill"
+                                Visibility="{x:Bind CoverImageVisibility}" />
                             <TextBlock
                                 HorizontalAlignment="Center"
                                 VerticalAlignment="Center"
                                 FontSize="42"
                                 FontWeight="SemiBold"
                                 Foreground="{x:Bind CoverForeground}"
-                                Text="{x:Bind Monogram}" />
+                                Text="{x:Bind Monogram}"
+                                Visibility="{x:Bind MonogramVisibility}" />
                             <Border
                                 Margin="8"
                                 Padding="6,1,6,2"
@@ -250,21 +255,21 @@
                 <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
                     <StackPanel Spacing="6">
                         <TextBlock Style="{StaticResource SubSectionTitleTextStyle}" Text="简介" />
-                        <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="{x:Bind Description}" />
+                        <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="{x:Bind DescriptionText}" />
                     </StackPanel>
                 </Border>
 
                 <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
                     <StackPanel Spacing="6">
                         <TextBlock Style="{StaticResource SubSectionTitleTextStyle}" Text="性格" />
-                        <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="{x:Bind Personality}" />
+                        <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="{x:Bind PersonalityText}" />
                     </StackPanel>
                 </Border>
 
                 <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
                     <StackPanel Spacing="6">
                         <TextBlock Style="{StaticResource SubSectionTitleTextStyle}" Text="场景" />
-                        <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="{x:Bind Scenario}" />
+                        <TextBlock Style="{StaticResource CardBodyTextStyle}" Text="{x:Bind ScenarioText}" />
                     </StackPanel>
                 </Border>
 
@@ -275,7 +280,7 @@
                             FontSize="13"
                             FontStyle="Italic"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Text="{x:Bind FirstMessage}"
+                            Text="{x:Bind FirstMessageText}"
                             TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
@@ -458,8 +463,8 @@
                     </Border>
                     <Border Grid.Column="3" Style="{StaticResource MetricTileStyle}">
                         <StackPanel Spacing="2">
-                            <TextBlock Style="{StaticResource MetricTileLabelStyle}" Text="酒馆助手" />
-                            <TextBlock Style="{StaticResource MetricTileValueStyle}" Text="{x:Bind HelperLabel}" />
+                            <TextBlock Style="{StaticResource MetricTileLabelStyle}" Text="接口来源" />
+                            <TextBlock Style="{StaticResource MetricTileValueStyle}" Text="{x:Bind ApiSource}" />
                         </StackPanel>
                     </Border>
                 </Grid>
@@ -559,7 +564,7 @@
                         <TextBlock
                             x:Name="HeaderSummaryText"
                             Style="{StaticResource StatusPillTextStyle}"
-                            Text="共 21 个资源" />
+                            Text="正在读取资源目录…" />
                     </StackPanel>
                 </Border>
                 <Button
@@ -606,7 +611,7 @@
                     <StackPanel Orientation="Horizontal" Spacing="7">
                         <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="数据目录" />
                         <Border Style="{StaticResource MetaChipStyle}">
-                            <TextBlock x:Name="TargetInstanceChipText" Style="{StaticResource MetaChipTextStyle}" Text="内置 · v1.19.0" />
+                            <TextBlock x:Name="TargetInstanceChipText" Style="{StaticResource MetaChipTextStyle}" Text="内置 · —" />
                         </Border>
                         <Border Style="{StaticResource MetaChipStyle}">
                             <TextBlock
@@ -779,7 +784,7 @@
                             <TextBlock
                                 x:Name="ListSummaryText"
                                 Style="{StaticResource FieldHintTextStyle}"
-                                Text="共 6 个 · 16.2 MB" />
+                                Text="正在读取…" />
                         </StackPanel>
 
                         <Button
@@ -880,7 +885,7 @@
                                                         <ColumnDefinition Width="Auto" />
                                                     </Grid.ColumnDefinitions>
 
-                                                    <!--  角色卡：书封式缩略（占位为名称首字）  -->
+                                                    <!--  角色卡：书封式缩略（有真图就显示真图，没有退回名称首字）  -->
                                                     <Border
                                                         Width="44"
                                                         Height="58"
@@ -888,13 +893,20 @@
                                                         Background="{x:Bind CoverBackground}"
                                                         CornerRadius="5"
                                                         Visibility="{x:Bind CoverVisibility}">
-                                                        <TextBlock
-                                                            HorizontalAlignment="Center"
-                                                            VerticalAlignment="Center"
-                                                            FontSize="17"
-                                                            FontWeight="SemiBold"
-                                                            Foreground="{x:Bind CoverForeground}"
-                                                            Text="{x:Bind Monogram}" />
+                                                        <Grid>
+                                                            <Image
+                                                                Source="{x:Bind CoverSource}"
+                                                                Stretch="UniformToFill"
+                                                                Visibility="{x:Bind CoverImageVisibility}" />
+                                                            <TextBlock
+                                                                HorizontalAlignment="Center"
+                                                                VerticalAlignment="Center"
+                                                                FontSize="17"
+                                                                FontWeight="SemiBold"
+                                                                Foreground="{x:Bind CoverForeground}"
+                                                                Text="{x:Bind Monogram}"
+                                                                Visibility="{x:Bind MonogramVisibility}" />
+                                                        </Grid>
                                                     </Border>
 
                                                     <!--  其余三类：色相图标座  -->

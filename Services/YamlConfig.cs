@@ -220,9 +220,17 @@ namespace AstraBrew_Launcher.Services
             return dot < 0 ? path : path[(dot + 1)..];
         }
 
-        /// <summary>写进 YAML 的样子：布尔与数字裸写，其它按需加单引号（如 <c>'[::]'</c>）。</summary>
+        /// <summary>
+        /// 写进 YAML 的样子：布尔与数字裸写，其它按需加单引号（如 <c>'[::]'</c>）。
+        ///
+        /// 写之前先把换行压成空格：这个模块是「按行改」的，一旦某个值里带着换行，
+        /// 输出就会变成跨行的引号块——<c>- 'a\nb'</c> 这种，整份配置直接解析失败，
+        /// 酒馆起不来。宁可把多行值压平，也不能产出坏 YAML。
+        /// </summary>
         private static string Format(string value)
         {
+            value = value.Replace("\r", " ").Replace("\n", " ").Trim();
+
             if (value is "true" or "false")
             {
                 return value;

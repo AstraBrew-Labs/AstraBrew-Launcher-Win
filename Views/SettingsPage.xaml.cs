@@ -39,15 +39,6 @@ namespace AstraBrew_Launcher.Views
         /// <summary>探测进行中：避免切页签／连点「重新检测」时重复拉子进程。</summary>
         private bool _probingEnvironment;
 
-        /// <summary>GitHub 连通性探测的节点，顺序即探测顺序。</summary>
-        private static readonly (string Name, string Host, int Latency, bool Ok)[] GithubProbes =
-        {
-            ("github.com", "网页与克隆入口", 412, true),
-            ("api.github.com", "Release 元数据", 268, true),
-            ("codeload.github.com", "源码压缩包", 0, false),
-            ("gh-proxy.org", "GitHub 加速服务", 168, true),
-        };
-
         /// <summary>
         /// 初始为 true：XAML 解析阶段控件还没全部就位，此时任何 ValueChanged / Toggled
         /// 都不该回写状态，更不该去碰后面才声明的控件（滑杆的 Minimum 一赋值就会触发 ValueChanged）。
@@ -316,6 +307,11 @@ namespace AstraBrew_Launcher.Views
                     : Visibility.Collapsed;
 
             CustomProxyRows.Visibility = !simple && LauncherSettings.Proxy == ProxyModeSetting.Custom
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+            // 只有「跟随系统」才需要把 Windows 那边的真实状态摆出来
+            SystemProxyRows.Visibility = !simple && LauncherSettings.Proxy == ProxyModeSetting.System
                 ? Visibility.Visible
                 : Visibility.Collapsed;
 
@@ -631,6 +627,7 @@ namespace AstraBrew_Launcher.Views
             };
 
             return $"应用内 GitHub 请求（版本列表、安装包、扩展克隆）经 {GithubAccel.Prefix} 中转；"
+                + "中转端有自己的 API 额度，版本列表不必挤直连那 60 次/小时；"
                 + globalGit
                 + "镜像与 npm 源一律直连。";
         }
@@ -703,6 +700,62 @@ namespace AstraBrew_Launcher.Views
             if (CustomProxyBox.Text != LauncherSettings.CustomProxy)
             {
                 CustomProxyBox.Text = LauncherSettings.CustomProxy;
+            }
+
+            RefreshSystemProxyState();
+        }
+
+        /// <summary>
+        /// 读出 Windows 当前的实际代理状态并画到「系统代理状态」那一行。
+        ///
+        /// 「跟随系统」这四个字本身不传递信息：系统那边很可能压根没开代理，
+        /// 用户却以为流量已经走了代理。这里用胶囊标明开/关，并给出实际地址；
+        /// PAC 与自动检测拿不到固定地址，也要如实说明，而不是显示一个空白。
+        /// </summary>
+        private void RefreshSystemProxyState()
+        {
+            if (SystemProxyPill is null)
+            {
+                return;
+            }
+
+            SystemProxyState state = SystemProxy.Read();
+
+            SystemProxyRow.Description = state.Detail;
+            SystemProxyPillText.Text = state.Label;
+
+            Color accent = state.Enabled
+                ? (IsLight ? Color.FromArgb(0xFF, 0x0F, 0x7B, 0x0F) : Color.FromArgb(0xFF, 0x6C, 0xCB, 0x5F))
+                : (IsLight ? Color.FromArgb(0xFF, 0x74, 0x74, 0x74) : Color.FromArgb(0xFF, 0x96, 0x96, 0x96));
+
+            var brush = new SolidColorBrush(accent);
+            SystemProxyPillText.Foreground = brush;
+            SystemProxyDot.Fill = brush;
+            SystemProxyPill.Background = new SolidColorBrush(
+                Color.FromArgb(state.Enabled ? (byte)0x24 : (byte)0x12, accent.R, accent.G, accent.B));
+        }
+
+        private void RefreshSystemProxy_Click(object sender, RoutedEventArgs e)
+        {
+            RefreshSystemProxyState();
+
+            SystemProxyState state = SystemProxy.Read();
+            AppNotify.Post(
+                state.Enabled ? NotifySeverity.Success : NotifySeverity.Informational,
+                state.Enabled ? "系统代理已开启" : "系统代理未开启",
+                state.Detail);
+        }
+
+        /// <summary>直接跳到 Windows 的代理设置页，省得用户自己去翻「Internet 选项」。</summary>
+        private void OpenWindowsProxy_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo { FileName = "ms-settings:network-proxy", UseShellExecute = true });
+            }
+            catch (System.ComponentModel.Win32Exception ex)
+            {
+                AppNotify.Warning("打不开 Windows 设置", ex.Message);
             }
         }
 
@@ -1907,6 +1960,10 @@ namespace AstraBrew_Launcher.Views
 
         // ==================== 连通性测速弹窗 ====================
 
+        /// <summary>
+        /// 连通性测试弹窗。行与状态全部来自 <see cref="GithubConnectivity"/> 的真实请求，
+        /// 打开即测一次，之后由「重新测试」重跑。
+        /// </summary>
         private async Task ShowGithubTestAsync()
         {
             var accent = Color.FromArgb(0xFF, 0x0E, 0x9A, 0xA7);
@@ -1914,15 +1971,27 @@ namespace AstraBrew_Launcher.Views
                 "\uEC4A",
                 accent,
                 "GitHub 连通性测试",
-                "依次探测网页、API 与下载域名；取最快的一条，失败会标红。",
+                "真的去访问网页、API、压缩包与 Raw；延迟是这次请求实测出来的，不是预置数字。",
                 640);
 
+            body.Children.Add(new TextBlock
+            {
+                Text = GithubAccel.Enabled
+                    ? $"当前出口：{GithubConnectivity.DescribeExit()}；GitHub 域名经 {GithubAccel.Prefix} 中转，失败会退回直连。"
+                    : $"当前出口：{GithubConnectivity.DescribeExit()}；加速服务未开启。",
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Tertiary(),
+            });
+
+            IReadOnlyList<GithubProbe> probes = GithubConnectivity.BuildProbes();
             var statuses = new List<TextBlock>();
-            foreach (var probe in GithubProbes)
+
+            foreach (GithubProbe probe in probes)
             {
                 var status = CreateStatus("等待");
                 statuses.Add(status);
-                body.Children.Add(ProbeRow(probe.Name, probe.Host, status));
+                body.Children.Add(ProbeRow(probe.Name, probe.Hint, status));
             }
 
             var summary = new TextBlock
@@ -1933,19 +2002,6 @@ namespace AstraBrew_Launcher.Views
                 Foreground = Secondary(),
             };
 
-            // 加速开关是全应用的总开关：开着就说明一句，免得有人以为只有下载源选直连才生效
-            if (GithubAccel.Enabled)
-            {
-                body.Children.Add(new TextBlock
-                {
-                    Text = "已开启加速服务：只有 GitHub 域名（github.com / api.github.com 等）经 "
-                        + $"{GithubAccel.Prefix} 中转，失败再退回直连；镜像与 npm 源不受影响。",
-                    FontSize = 11,
-                    TextWrapping = TextWrapping.Wrap,
-                    Foreground = Tertiary(),
-                });
-            }
-
             body.Children.Add(summary);
 
             var close = ShellButton("关闭");
@@ -1954,46 +2010,128 @@ namespace AstraBrew_Launcher.Views
             footer.Children.Add(retest);
 
             close.Click += (_, _) => dialog.Hide();
-            retest.Click += async (_, _) => await ProbeGithubAsync(statuses, summary, retest);
+            retest.Click += async (_, _) => await ProbeGithubAsync(probes, statuses, summary, retest);
 
-            dialog.Opened += async (_, _) => await ProbeGithubAsync(statuses, summary, retest);
+            dialog.Opened += async (_, _) => await ProbeGithubAsync(probes, statuses, summary, retest);
             await dialog.ShowAsync();
         }
 
-        private async Task ProbeGithubAsync(List<TextBlock> statuses, TextBlock summary, Button retest)
+        /// <summary>
+        /// 并发探测所有节点：各自计时、各自回填那一行，最后汇总。
+        /// 并发而不是逐个来，是因为最坏的超时是 8 秒一条——串行六条能让人等到关掉弹窗。
+        /// </summary>
+        private async Task ProbeGithubAsync(
+            IReadOnlyList<GithubProbe> probes,
+            List<TextBlock> statuses,
+            TextBlock summary,
+            Button retest)
         {
             retest.IsEnabled = false;
             summary.Text = "正在探测…";
+            summary.Foreground = Secondary();
 
-            foreach (var status in statuses)
+            foreach (TextBlock status in statuses)
             {
                 status.Text = "探测中…";
                 status.Foreground = Secondary();
             }
 
-            for (var i = 0; i < GithubProbes.Length; i++)
-            {
-                await Task.Delay(240);
-                var probe = GithubProbes[i];
-                var status = statuses[i];
-
-                if (!probe.Ok)
+            GithubProbeResult[] results = await Task.WhenAll(
+                probes.Select(async (probe, index) =>
                 {
-                    status.Text = "超时";
-                    status.Foreground = Critical();
-                    continue;
-                }
+                    GithubProbeResult result = await GithubConnectivity.RunAsync(probe, CancellationToken.None);
+                    ApplyProbeResult(statuses[index], result);
+                    return result;
+                }));
 
-                status.Text = $"{probe.Latency} ms";
-                status.Foreground = probe.Latency <= 300 ? Success() : Caution();
+            SummarizeProbe(results, summary);
+            retest.IsEnabled = true;
+        }
+
+        private void ApplyProbeResult(TextBlock status, GithubProbeResult result)
+        {
+            // 失败原因可能很长（Git 的原始报错），截断但保留完整内容在提示里
+            status.MaxWidth = 260;
+            status.TextTrimming = TextTrimming.CharacterEllipsis;
+            ToolTipService.SetToolTip(status, null);
+
+            if (result.Error is { Length: > 0 } error)
+            {
+                status.Text = error;
+                ToolTipService.SetToolTip(status, error);
+                status.Foreground = Critical();
+                return;
             }
 
-            var fastest = GithubProbes.Where(p => p.Ok).OrderBy(p => p.Latency).First();
-            summary.Text = $"最快 {fastest.Latency} ms（{fastest.Name}）。codeload 直连超时：取源码请走镜像；内置实例要加速，需把下载源切成「GitHub 直连」。";
+            if (result.Note is { Length: > 0 } note)
+            {
+                // 「跳过」是没测，「中转 403」是测了但不理想，两者颜色要分开
+                status.Text = note;
+                ToolTipService.SetToolTip(status, note);
+                status.Foreground = result.Probe.IsGit ? Tertiary() : Caution();
+                return;
+            }
 
-            LauncherSettings.SetGithubTestResult(fastest.Latency);
+            if (result.LatencyMs is int latency)
+            {
+                status.Text = $"{latency} ms";
+                status.Foreground = latency <= 300 ? Success() : Caution();
+                return;
+            }
+
+            status.Text = "—";
+        }
+
+        private void SummarizeProbe(IReadOnlyList<GithubProbeResult> results, TextBlock summary)
+        {
+            // 只拿 GitHub 自己的域名算「最快」：中转和 git 通道不是同一维度的数字
+            List<GithubProbeResult> measured = results
+                .Where(item => item.Ok && !item.Probe.IsRelay && !item.Probe.IsGit && item.LatencyMs is not null)
+                .ToList();
+
+            if (measured.Count == 0)
+            {
+                summary.Text = "没有一个 GitHub 域名能连通。"
+                    + (GithubAccel.Enabled
+                        ? "试试关掉加速服务改用直连，或检查代理设置。"
+                        : "检查代理设置，或打开「GitHub 加速服务」换一条出口。");
+                summary.Foreground = Critical();
+                return;
+            }
+
+            GithubProbeResult fastest = measured.OrderBy(item => item.LatencyMs).First();
+            LauncherSettings.SetGithubTestResult(fastest.LatencyMs!.Value);
             UpdateGithubTestUi();
-            retest.IsEnabled = true;
+
+            var notes = new List<string>();
+
+            if (results.Any(item => item.Probe.Key == "codeload" && !item.Ok))
+            {
+                notes.Add("压缩包不通：取源码请走镜像通道。");
+            }
+
+            if (results.Any(item => item.Probe.Key == "api" && !item.Ok))
+            {
+                notes.Add("API 不通：版本列表只能用缓存。");
+            }
+
+            if (results.Any(item => item.Probe.Key == "raw" && !item.Ok))
+            {
+                notes.Add("Raw 不通：blob 转 raw 的下载会失败。");
+            }
+
+            if (results.FirstOrDefault(item => item.Probe.IsRelay) is { Ok: false })
+            {
+                notes.Add("加速中转不可用：建议关掉加速开关，或换个时间再试。");
+            }
+
+            if (results.FirstOrDefault(item => item.Probe.IsGit) is { Ok: false, Error: not null })
+            {
+                notes.Add("git 拉取失败：clone、pull 与酒馆更新都会受影响。");
+            }
+
+            summary.Text = $"最快 {fastest.LatencyMs} ms（{fastest.Probe.Name}）。{string.Join(" ", notes)}";
+            summary.Foreground = notes.Count == 0 ? Success() : Caution();
         }
 
         // ==================== 更新弹窗 ====================

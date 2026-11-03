@@ -1394,7 +1394,11 @@ namespace AstraBrew_Launcher.Views
 
                 if (result.Error is { Length: > 0 })
                 {
-                    Notify(force ? "刷新失败" : "版本列表不可用", result.Error, NotifySeverity.Warning);
+                    // 手里还有列表时只是「没刷新成功」，别写成「不可用」吓人
+                    Notify(
+                        result.Releases.Count > 0 ? "刷新失败" : "版本列表不可用",
+                        result.Error,
+                        NotifySeverity.Warning);
                 }
                 else if (force)
                 {

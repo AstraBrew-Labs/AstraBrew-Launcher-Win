@@ -227,13 +227,19 @@
                                     Margin="0,2,0,0"
                                     Orientation="Horizontal"
                                     Spacing="8">
-                                    <Button Click="Restart_Click" Style="{StaticResource AccentActionButtonStyle}">
+                                    <Button
+                                        x:Name="PrimaryActionButton"
+                                        Click="PrimaryAction_Click"
+                                        Style="{StaticResource AccentActionButtonStyle}">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <FontIcon FontSize="14" Glyph="&#xE72C;" />
-                                            <TextBlock Text="重启服务" />
+                                            <FontIcon
+                                                x:Name="PrimaryActionGlyph"
+                                                FontSize="14"
+                                                Glyph="&#xE72C;" />
+                                            <TextBlock x:Name="PrimaryActionText" Text="重启服务" />
                                         </StackPanel>
                                     </Button>
-                                    <Button Click="Stop_Click">
+                                    <Button x:Name="HeroStopButton" Click="Stop_Click">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <FontIcon FontSize="14" Glyph="&#xE71A;" />
                                             <TextBlock Text="停止" />
@@ -259,12 +265,13 @@
                                     Orientation="Vertical"
                                     Spacing="0">
                                     <TextBlock
+                                        x:Name="HeroUptimeValue"
                                         HorizontalAlignment="Right"
                                         FontFamily="Consolas"
                                         FontSize="26"
                                         FontWeight="SemiBold"
                                         Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                        Text="02:14:37" />
+                                        Text="--:--:--" />
                                     <TextBlock
                                         x:Name="HeroUptimePid"
                                         HorizontalAlignment="Right"
@@ -294,19 +301,31 @@
 
                             <StackPanel Spacing="1">
                                 <TextBlock Style="{StaticResource MetricLabelTextStyle}" Text="内存占用" />
-                                <TextBlock Style="{StaticResource CardTitleTextStyle}" Text="312 MB" />
+                                <TextBlock
+                                    x:Name="MemoryValue"
+                                    Style="{StaticResource CardTitleTextStyle}"
+                                    Text="—" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Spacing="1">
                                 <TextBlock Style="{StaticResource MetricLabelTextStyle}" Text="CPU" />
-                                <TextBlock Style="{StaticResource CardTitleTextStyle}" Text="3.4%" />
+                                <TextBlock
+                                    x:Name="CpuValue"
+                                    Style="{StaticResource CardTitleTextStyle}"
+                                    Text="—" />
                             </StackPanel>
                             <StackPanel Grid.Column="2" Spacing="1">
-                                <TextBlock Style="{StaticResource MetricLabelTextStyle}" Text="今日请求" />
-                                <TextBlock Style="{StaticResource CardTitleTextStyle}" Text="1,284" />
+                                <TextBlock Style="{StaticResource MetricLabelTextStyle}" Text="今日访问" />
+                                <TextBlock
+                                    x:Name="RequestsValue"
+                                    Style="{StaticResource CardTitleTextStyle}"
+                                    Text="—" />
                             </StackPanel>
                             <StackPanel Grid.Column="3" Spacing="1">
-                                <TextBlock Style="{StaticResource MetricLabelTextStyle}" Text="平均响应" />
-                                <TextBlock Style="{StaticResource CardTitleTextStyle}" Text="0.86 s" />
+                                <TextBlock Style="{StaticResource MetricLabelTextStyle}" Text="启动耗时" />
+                                <TextBlock
+                                    x:Name="StartupValue"
+                                    Style="{StaticResource CardTitleTextStyle}"
+                                    Text="—" />
                             </StackPanel>
                         </Grid>
                     </Grid>
@@ -370,18 +389,14 @@
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                 Glyph="&#xE74C;" />
                         </Grid>
-                        <TextBlock Style="{StaticResource MetricValueTextStyle}" Text="12" />
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <Ellipse
-                                Width="5"
-                                Height="5"
-                                VerticalAlignment="Center"
-                                Fill="{ThemeResource SystemFillColorCautionBrush}" />
-                            <TextBlock
-                                FontSize="12"
-                                Foreground="{ThemeResource SystemFillColorCautionBrush}"
-                                Text="3 个待更新" />
-                        </StackPanel>
+                        <TextBlock
+                            x:Name="ExtensionsValue"
+                            Style="{StaticResource MetricValueTextStyle}"
+                            Text="—" />
+                        <TextBlock
+                            x:Name="ExtensionsCaption"
+                            Style="{StaticResource FootnoteTextStyle}"
+                            Text="—" />
                     </StackPanel>
                 </Border>
 
@@ -402,15 +417,23 @@
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                 Glyph="&#xE77B;" />
                         </Grid>
-                        <TextBlock Style="{StaticResource MetricValueTextStyle}">
-                            <Run Text="48" />
-                            <Run
+                        <StackPanel Orientation="Horizontal" Spacing="2">
+                            <TextBlock
+                                x:Name="CharactersCount"
+                                Style="{StaticResource MetricValueTextStyle}"
+                                Text="—" />
+                            <TextBlock
+                                x:Name="CharactersUnit"
+                                Margin="0,0,0,3"
+                                VerticalAlignment="Bottom"
                                 FontSize="13"
-                                FontWeight="Normal"
                                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                Text=" 张" />
-                        </TextBlock>
-                        <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="共 26.4 MB" />
+                                Text="张" />
+                        </StackPanel>
+                        <TextBlock
+                            x:Name="CharactersCaption"
+                            Style="{StaticResource FootnoteTextStyle}"
+                            Text="—" />
                     </StackPanel>
                 </Border>
 
@@ -431,15 +454,14 @@
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                 Glyph="&#xEDA2;" />
                         </Grid>
-                        <TextBlock Style="{StaticResource MetricValueTextStyle}">
-                            <Run Text="1.8" />
-                            <Run
-                                FontSize="13"
-                                FontWeight="Normal"
-                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                Text=" GB" />
-                        </TextBlock>
-                        <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="安装目录 1.3 GB" />
+                        <TextBlock
+                            x:Name="DiskValue"
+                            Style="{StaticResource MetricValueTextStyle}"
+                            Text="—" />
+                        <TextBlock
+                            x:Name="DiskCaption"
+                            Style="{StaticResource FootnoteTextStyle}"
+                            Text="—" />
                     </StackPanel>
                 </Border>
             </Grid>
@@ -524,6 +546,14 @@
                                         Style="{StaticResource MonoTextStyle}"
                                         Text="…\lib\tavern"
                                         TextTrimming="CharacterEllipsis" />
+                                    <TextBlock
+                                        x:Name="RuntimeEnvText"
+                                        Style="{StaticResource FootnoteTextStyle}"
+                                        Text="运行环境 · —" />
+                                    <TextBlock
+                                        x:Name="DataModeText"
+                                        Style="{StaticResource FootnoteTextStyle}"
+                                        Text="数据存放 · —" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -627,6 +657,7 @@
                                         Style="{StaticResource ChoiceChipRadioStyle}" />
                                 </StackPanel>
                                 <TextBlock
+                                    x:Name="BrowserHint"
                                     Style="{StaticResource FootnoteTextStyle}"
                                     Text="启动酒馆后自动用所选浏览器打开界面。"
                                     TextWrapping="Wrap" />

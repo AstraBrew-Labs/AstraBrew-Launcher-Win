@@ -68,7 +68,7 @@
                             <TextBlock
                                 x:Name="HeaderSummaryText"
                                 Style="{StaticResource StatusPillTextStyle}"
-                                Text="已启用 6 / 9" />
+                                Text="已启用 0 / 0" />
                         </StackPanel>
                     </Border>
                     <Button Click="Install_Click" Style="{StaticResource AccentActionButtonStyle}">
@@ -113,10 +113,10 @@
                         <StackPanel Orientation="Horizontal" Spacing="7">
                             <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="目标实例" />
                             <Border Style="{StaticResource MetaChipStyle}">
-                                <TextBlock x:Name="TargetInstanceChipText" Style="{StaticResource MetaChipTextStyle}" Text="内置 · v1.19.0" />
+                                <TextBlock x:Name="TargetInstanceChipText" Style="{StaticResource MetaChipTextStyle}" Text="内置 · —" />
                             </Border>
                         </StackPanel>
-                        <!--  路径在代码里按共享清单的内置实例目录填充，避免写死用户名  -->
+                        <!--  路径在代码里按当前实例的 third-party 目录填充，避免写死用户名  -->
                         <TextBlock
                             x:Name="TargetPathText"
                             VerticalAlignment="Center"
@@ -180,7 +180,7 @@
                             <TextBlock
                                 x:Name="ListSummaryText"
                                 Style="{StaticResource FieldHintTextStyle}"
-                                Text="共 9 个 · 6 个已启用 · 1 个待更新" />
+                                Text="共 0 个 · 正在读取扩展目录…" />
                         </StackPanel>
 
                         <StackPanel
@@ -197,6 +197,7 @@
                                 x:Name="SystemToggle"
                                 MinWidth="0"
                                 VerticalAlignment="Center"
+                                AutomationProperties.Name="显示系统扩展"
                                 IsOn="False"
                                 OffContent=""
                                 OnContent=""
@@ -224,12 +225,26 @@
                             PlaceholderText="搜索扩展名称、作者或目录…"
                             QueryIcon="Find"
                             TextChanged="SearchBox_TextChanged" />
-                        <TextBlock
-                            x:Name="FilterHintText"
+                        <StackPanel
                             Grid.Column="1"
                             VerticalAlignment="Center"
-                            Style="{StaticResource MetaChipTextStyle}"
-                            Text="3 个已停用" />
+                            Orientation="Horizontal"
+                            Spacing="10">
+                            <TextBlock
+                                x:Name="FilterHintText"
+                                VerticalAlignment="Center"
+                                Style="{StaticResource MetaChipTextStyle}"
+                                Text="" />
+                            <HyperlinkButton
+                                x:Name="ToggleAllButton"
+                                Padding="4,0"
+                                Click="ToggleAll_Click"
+                                FontSize="12"
+                                ToolTipService.ToolTip="对第三方扩展批量切换启用状态"
+                                Visibility="Collapsed">
+                                <TextBlock x:Name="ToggleAllText" Text="全部停用" />
+                            </HyperlinkButton>
+                        </StackPanel>
                     </Grid>
 
                     <Rectangle
@@ -293,8 +308,8 @@
                                                     <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="{x:Bind VersionLabel}" />
                                                 </Border>
 
-                                                <Border Style="{StaticResource MetaChipStyle}" Visibility="{x:Bind MinClientVisibility}">
-                                                    <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="{x:Bind MinClientLabel}" />
+                                                <Border Style="{StaticResource MetaChipStyle}" Visibility="{x:Bind RequiresVisibility}">
+                                                    <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="{x:Bind RequiresLabel}" />
                                                 </Border>
 
                                                 <Border
@@ -352,15 +367,6 @@
                                                             <TextBlock FontSize="11" Text="打开目录" />
                                                         </StackPanel>
                                                     </HyperlinkButton>
-                                                    <HyperlinkButton
-                                                        Padding="6,2"
-                                                        Click="RowRepairGit_Click"
-                                                        Visibility="{x:Bind RepairVisibility}">
-                                                        <StackPanel Orientation="Horizontal" Spacing="5">
-                                                            <FontIcon FontSize="11" Glyph="&#xE72C;" />
-                                                            <TextBlock FontSize="11" Text="修复 Git" />
-                                                        </StackPanel>
-                                                    </HyperlinkButton>
                                                 </StackPanel>
                                             </StackPanel>
                                         </StackPanel>
@@ -387,6 +393,7 @@
                                             <ToggleSwitch
                                                 MinWidth="0"
                                                 VerticalAlignment="Center"
+                                                AutomationProperties.Name="{x:Bind Name}"
                                                 IsOn="{x:Bind Enabled, Mode=OneWay}"
                                                 OffContent=""
                                                 OnContent=""

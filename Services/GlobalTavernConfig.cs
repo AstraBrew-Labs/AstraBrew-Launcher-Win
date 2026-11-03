@@ -142,6 +142,40 @@ namespace AstraBrew_Launcher.Services
         /// <summary>写回全局配置（原子写，保留调用方给的整份内容）。</summary>
         public static void SaveGlobal(string yaml) => WriteAtomic(GlobalPath, yaml);
 
+        /// <summary>
+        /// 全局配置被写过（保存 / 导入 / 恢复默认 / 首次获取）。
+        ///
+        /// 仪表盘的地址端口、控制台下次启动用的端口都跟这份文件走，写盘后要通知它们重读——
+        /// 否则配置页把端口从 11451 改成 8080，仪表盘上还挂着旧地址。
+        /// 订阅方可能不在 UI 线程（联网获取配置在后台），自己负责转投。
+        /// </summary>
+        public static event EventHandler? Saved;
+
+        /// <summary>
+        /// 只改配置里的某一项，其余原样保留。
+        ///
+        /// 仪表盘上改「默认浏览器 / 服务范围」时用：这两项属于酒馆配置（要写进 config.yaml），
+        /// 但又不像整份保存那样该由配置页独占——写完配置页下次进来读到的就是新值。
+        /// </summary>
+        /// <returns>文件不在或写不进去返回 false。</returns>
+        public static bool PatchScalar(string path, string value)
+        {
+            if (!HasGlobalConfig)
+            {
+                return false;
+            }
+
+            try
+            {
+                SaveGlobal(YamlConfig.SetScalar(ReadGlobal(), path, value));
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
         /// <summary>看起来像不像一份酒馆配置（防止用户误选了别的 YAML）。</summary>
         public static bool LooksLikeConfig(string text) =>
             text.Length > 200
@@ -193,7 +227,7 @@ namespace AstraBrew_Launcher.Services
 
         /// <summary>
         /// 对官方默认配置做开箱优化：端口 <see cref="Port"/>、允许局域网访问（<c>listen</c>）、
-        /// 打开 IPv6（<c>protocol.ipv6</c>）、白名单只留本机（<c>127.0.0.1</c> 与 <c>localhost</c>）。
+        /// 打开 IPv6（<c>protocol.ipv6</c>）、白名单只留本机（<c>127.0.0.1</c> 与 <c>::1</c>）。
         ///
         /// 逐行改而不是整份重写：注释、分组、其它选项一律原样保留，
         /// 用户拿到的仍是官方那份配置，只是这四项已经调好了。
@@ -247,12 +281,14 @@ namespace AstraBrew_Launcher.Services
                 {
                     if (!whitelistWritten)
                     {
+                        // 只写 IP：SillyTavern 的白名单不认 localhost 这类主机名，
+                        // 而浏览器打开 localhost 往往走 IPv6 回环，缺 ::1 就会被挡住
                         output.Add("  - 127.0.0.1");
-                        output.Add("  - localhost");
+                        output.Add("  - ::1");
                         whitelistWritten = true;
                     }
 
-                    // 官方默认的 ::1 等条目不再保留：白名单只留本机这两项
+                    // 官方默认的其余条目不再保留：白名单只留本机这两个回环地址
                     continue;
                 }
 
@@ -267,6 +303,75 @@ namespace AstraBrew_Launcher.Services
             return string.Join(crlf ? "\r\n" : "\n", output);
         }
 
+        /// <summary>
+        /// 修正全局配置里酒馆不认的白名单条目。
+        ///
+        /// SillyTavern 的白名单只接受 IP / CIDR，<c>localhost</c> 这种主机名会被它判成
+        /// 「Invalid IP」直接忽略；而浏览器打开 localhost 常常走 IPv6 回环，
+        /// 于是服务明明起来了，页面却被白名单挡在门外。这里把主机名换成 <c>::1</c>
+        /// 并补齐两个回环地址，只在真的需要改时写盘。
+        /// </summary>
+        /// <returns>改过返回 true；文件不在、没问题、写不进去都返回 false。</returns>
+        public static bool NormalizeWhitelist()
+        {
+            if (!HasGlobalConfig)
+            {
+                return false;
+            }
+
+            try
+            {
+                string text = ReadGlobal();
+                List<string> current = YamlConfig.ReadList(text, "whitelist");
+
+                if (current.Count == 0)
+                {
+                    return false;
+                }
+
+                var next = new List<string>();
+                bool changed = false;
+
+                foreach (string host in current)
+                {
+                    string value = host.Trim();
+
+                    if (value.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+                    {
+                        value = "::1";
+                        changed = true;
+                    }
+
+                    if (value.Length > 0 && !next.Exists(item =>
+                        string.Equals(item, value, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        next.Add(value);
+                    }
+                }
+
+                foreach (string required in new[] { "127.0.0.1", "::1" })
+                {
+                    if (!next.Exists(item => string.Equals(item, required, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        next.Add(required);
+                        changed = true;
+                    }
+                }
+
+                if (!changed)
+                {
+                    return false;
+                }
+
+                SaveGlobal(YamlConfig.SetList(text, "whitelist", next));
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
         /// <summary>先写临时文件再换名：写一半断掉不会留下半份 YAML。</summary>
         private static void WriteAtomic(string path, string content)
         {
@@ -274,6 +379,8 @@ namespace AstraBrew_Launcher.Services
             string temporary = path + ".tmp";
             File.WriteAllText(temporary, content, new System.Text.UTF8Encoding(false));
             File.Move(temporary, path, overwrite: true);
+
+            Saved?.Invoke(null, EventArgs.Empty);
         }
     }
 }

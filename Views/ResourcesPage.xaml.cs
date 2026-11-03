@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -9,14 +9,21 @@ using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
+using Windows.Storage.Pickers;
 using Windows.UI;
+using WinRT.Interop;
 
 namespace AstraBrew_Launcher.Views
 {
     /// <summary>资源行上用到的一组色相工具，避免每处重复拆 hex。</summary>
     internal static class ResourcePalette
     {
+        /// <summary>按名字取一个稳定的强调色：同一个角色每次进来颜色都一样。</summary>
+        private static readonly string[] Accents = { "#2B88D8", "#8E44DC", "#12A5A5", "#C08A00", "#C23934", "#4F6BED" };
+
         public static Color Parse(string hex)
         {
             string value = hex.TrimStart('#');
@@ -35,6 +42,23 @@ namespace AstraBrew_Launcher.Views
             return new SolidColorBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
         }
 
+        /// <summary>名字 → 强调色；空名字给第一个。</summary>
+        public static string AccentFor(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                return Accents[0];
+            }
+
+            int hash = 0;
+            foreach (char ch in name)
+            {
+                hash = (hash * 31 + ch) & 0x7FFFFFFF;
+            }
+
+            return Accents[hash % Accents.Length];
+        }
+
         /// <summary>人类可读的体积；与列表、详情里的口径保持一致。</summary>
         public static string Size(long bytes) => bytes switch
         {
@@ -43,6 +67,41 @@ namespace AstraBrew_Launcher.Views
             < 1024L * 1024 * 1024 => $"{bytes / (1024.0 * 1024.0):0.0} MB",
             _ => $"{bytes / (1024.0 * 1024 * 1024):0.00} GB",
         };
+
+        /// <summary>
+        /// 从磁盘上的图片取一张缩略图。按解码宽度缩放，不把 5 MB 的原图整个读进内存——
+        /// 列表里同时有二十张卡时，这个差别是「秒开」和「卡三秒」的区别。
+        /// </summary>
+        public static ImageSource? Thumbnail(string path, int decodeWidth, bool ignoreCache = false)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                {
+                    return null;
+                }
+
+                var image = new BitmapImage
+                {
+                    DecodePixelWidth = decodeWidth,
+                    DecodePixelType = DecodePixelType.Logical,
+                };
+
+                // 换过卡面后同一路径指向新内容：不忽略缓存的话界面还是旧图
+                if (ignoreCache)
+                {
+                    image.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
+                }
+
+                image.UriSource = new Uri(path);
+
+                return image;
+            }
+            catch (Exception ex) when (ex is IOException or UriFormatException or UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
     }
 
     /// <summary>
@@ -67,6 +126,9 @@ namespace AstraBrew_Launcher.Views
         /// <summary>在所属分类数据列表里的下标；对话行指向扁平会话列表。</summary>
         public int Index { get; set; }
 
+        /// <summary>真实文件的完整路径；分组行没有。</summary>
+        public string FullPath { get; set; } = string.Empty;
+
         public string Title { get; set; } = string.Empty;
 
         public string Subtitle { get; set; } = string.Empty;
@@ -77,6 +139,9 @@ namespace AstraBrew_Launcher.Views
 
         /// <summary>封面占位里显示的首字（仅角色卡）。</summary>
         public string Monogram { get; set; } = string.Empty;
+
+        /// <summary>角色卡缩略图；取不到就退回首字色块。</summary>
+        public ImageSource? CoverSource { get; set; }
 
         /// <summary>对话列表里的角色分组头，不是可选中的资源。</summary>
         public bool IsGroup { get; set; }
@@ -109,6 +174,10 @@ namespace AstraBrew_Launcher.Views
         public Visibility SelectedVisibility => Show(Selected);
 
         public Visibility CoverVisibility => Show(HasCover);
+
+        public Visibility CoverImageVisibility => Show(CoverSource is not null);
+
+        public Visibility MonogramVisibility => Show(CoverSource is null);
 
         public Visibility IconVisibility => Show(!HasCover && !IsGroup);
 
@@ -147,6 +216,14 @@ namespace AstraBrew_Launcher.Views
         public Visibility EnabledVisibility => Enabled ? Visibility.Visible : Visibility.Collapsed;
 
         public Visibility DisabledVisibility => Enabled ? Visibility.Collapsed : Visibility.Visible;
+
+        public static WorldEntryItem From(LibraryEntry entry) => new()
+        {
+            Title = entry.Title,
+            Keywords = entry.Keywords,
+            Body = entry.Body,
+            Enabled = entry.Enabled,
+        };
     }
 
     /// <summary>预设里的一条提示词。</summary>
@@ -186,13 +263,16 @@ namespace AstraBrew_Launcher.Views
     /// <summary>角色卡详情。</summary>
     public sealed class CharacterDetail
     {
+        /// <summary>磁盘上的完整路径，删除与打开目录都靠它。</summary>
+        public string FullPath { get; set; } = string.Empty;
+
         public string Name { get; set; } = string.Empty;
 
         public string FileName { get; set; } = string.Empty;
 
         public long Bytes { get; set; }
 
-        /// <summary>体积文案由字节数推导，避免种子数据里两处数字对不上。</summary>
+        /// <summary>体积文案由字节数推导，避免两处数字对不上。</summary>
         public string SizeLabel => ResourcePalette.Size(Bytes);
 
         public string Creator { get; set; } = string.Empty;
@@ -219,6 +299,13 @@ namespace AstraBrew_Launcher.Views
 
         public string ModifiedLabel { get; set; } = string.Empty;
 
+        /// <summary>封面：有 png 就显示真图，没有就留首字色块。</summary>
+        public ImageSource? CoverSource { get; set; }
+
+        public Visibility CoverImageVisibility => CoverSource is null ? Visibility.Collapsed : Visibility.Visible;
+
+        public Visibility MonogramVisibility => CoverSource is null ? Visibility.Visible : Visibility.Collapsed;
+
         public List<string> Tags { get; set; } = new();
 
         public List<WorldEntryItem> Entries { get; set; } = new();
@@ -230,8 +317,8 @@ namespace AstraBrew_Launcher.Views
         /// <summary>规格块由重复器排版，宽窄窗只影响列数。</summary>
         public List<InfoCell> InfoCells => new()
         {
-            new InfoCell("作者", Creator),
-            new InfoCell("版本", Version),
+            new InfoCell("作者", string.IsNullOrEmpty(Creator) ? "未署名" : Creator),
+            new InfoCell("版本", string.IsNullOrEmpty(Version) ? "—" : Version),
             new InfoCell("规格", Spec),
             new InfoCell("内嵌世界书", WorldLabel),
         };
@@ -239,23 +326,36 @@ namespace AstraBrew_Launcher.Views
         public Visibility TagsVisibility => Tags.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         public Visibility EntriesVisibility => Entries.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        /// <summary>正文小节为空时显示一句占位，避免整块空白看起来像加载失败。</summary>
+        public string DescriptionText => string.IsNullOrWhiteSpace(Description) ? "（这张卡没有写简介）" : Description;
+
+        public string PersonalityText => string.IsNullOrWhiteSpace(Personality) ? "（没有单独的性格段落）" : Personality;
+
+        public string ScenarioText => string.IsNullOrWhiteSpace(Scenario) ? "（没有设定场景）" : Scenario;
+
+        public string FirstMessageText => string.IsNullOrWhiteSpace(FirstMessage) ? "（没有开场白）" : FirstMessage;
     }
 
     /// <summary>世界书详情。</summary>
     public sealed class WorldBookDetail
     {
+        public string FullPath { get; set; } = string.Empty;
+
         public string Name { get; set; } = string.Empty;
 
         public string FileName { get; set; } = string.Empty;
 
         public long Bytes { get; set; }
 
-        /// <summary>体积文案由字节数推导，避免种子数据里两处数字对不上。</summary>
         public string SizeLabel => ResourcePalette.Size(Bytes);
 
         public string Author { get; set; } = string.Empty;
 
         public string TriggerLabel { get; set; } = string.Empty;
+
+        /// <summary>相对数据目录的位置，例如 default-user\worlds。</summary>
+        public string Location { get; set; } = string.Empty;
 
         public string ModifiedLabel { get; set; } = string.Empty;
 
@@ -267,8 +367,8 @@ namespace AstraBrew_Launcher.Views
 
         public List<InfoCell> InfoCells => new()
         {
-            new InfoCell("作者", Author),
-            new InfoCell("关键词触发", TriggerLabel),
+            new InfoCell("所在目录", Location),
+            new InfoCell("触发方式", TriggerLabel),
             new InfoCell("最后修改", ModifiedLabel),
         };
 
@@ -278,6 +378,8 @@ namespace AstraBrew_Launcher.Views
     /// <summary>一次对话存档。</summary>
     public sealed class ChatDetail
     {
+        public string FullPath { get; set; } = string.Empty;
+
         /// <summary>所属角色（chats 下的子目录名）。</summary>
         public string Group { get; set; } = string.Empty;
 
@@ -287,7 +389,6 @@ namespace AstraBrew_Launcher.Views
 
         public long Bytes { get; set; }
 
-        /// <summary>体积文案由字节数推导，避免种子数据里两处数字对不上。</summary>
         public string SizeLabel => ResourcePalette.Size(Bytes);
 
         public string HintLabel { get; set; } = string.Empty;
@@ -302,13 +403,14 @@ namespace AstraBrew_Launcher.Views
     /// <summary>预设详情。</summary>
     public sealed class PresetDetail
     {
+        public string FullPath { get; set; } = string.Empty;
+
         public string Name { get; set; } = string.Empty;
 
         public string FileName { get; set; } = string.Empty;
 
         public long Bytes { get; set; }
 
-        /// <summary>体积文案由字节数推导，避免种子数据里两处数字对不上。</summary>
         public string SizeLabel => ResourcePalette.Size(Bytes);
 
         public string PromptCount { get; set; } = "0";
@@ -317,7 +419,8 @@ namespace AstraBrew_Launcher.Views
 
         public string Format { get; set; } = "标准";
 
-        public string HelperLabel { get; set; } = "否";
+        /// <summary>接口来源，例如 openai / claude / google。</summary>
+        public string ApiSource { get; set; } = "—";
 
         public string Source { get; set; } = string.Empty;
 
@@ -331,9 +434,12 @@ namespace AstraBrew_Launcher.Views
 
         public string HintLabel { get; set; } = string.Empty;
 
+        /// <summary>「12 条提示词」或「无提示词结构」——TextGen / NovelAI 的预设本来就没有提示词表。</summary>
+        public string PromptSummary => Prompts.Count > 0 ? $"{Prompts.Count} 条提示词" : "无提示词结构";
+
         public List<InfoCell> InfoCells => new()
         {
-            new InfoCell("来源", Source),
+            new InfoCell("来源目录", Source),
             new InfoCell("模型", Model),
             new InfoCell("流式输出", StreamLabel),
             new InfoCell("上下文上限", ContextLabel),
@@ -348,15 +454,12 @@ namespace AstraBrew_Launcher.Views
     /// 资源管理：角色卡、世界书、对话记录与预设。
     /// 页面四段——页头（资源总量与导入）、数据目录（这批资源在哪）、分类 Tab、
     /// 主从区（左列表挑，右详情看）。
+    ///
+    /// 全部内容来自酒馆的数据目录：角色卡读 PNG 里的 chara/ccv3 文本块，世界书读 entries，
+    /// 对话逐行读 jsonl，预设读 prompt_order。导入复制真实文件，删除送回收站。
     /// </summary>
     public sealed partial class ResourcesPage : Page
     {
-        /// <summary>目标实例的默认用户目录：取自共享清单的内置实例路径，不再写死某个用户名。</summary>
-        private static readonly string DataRoot = Path.Combine(
-            TavernInstances.Builtin.Path,
-            "data",
-            "default-user");
-
         private enum TabKind
         {
             Characters,
@@ -374,6 +477,8 @@ namespace AstraBrew_Launcher.Views
         private string _query = string.Empty;
         private bool _ready;
         private bool _busy;
+        private bool _hooked;
+        private string _userRoot = TavernLibrary.UserDirectory();
         private ResourceRow? _selectedRow;
 
         private int? _selectedCharacter;
@@ -381,565 +486,266 @@ namespace AstraBrew_Launcher.Views
         private int? _selectedChat;
         private int? _selectedPreset;
 
-        /// <summary>目录里待导入的角色卡，演示导入动作用；导入后清空。</summary>
-        private CharacterDetail? _pendingImport;
-
         public ResourcesPage()
         {
             InitializeComponent();
 
             // 界面上直接给出展开后的真实路径
-            DataPathText.Text = Path.Combine(DataRoot, FolderOf(_tab));
-            TargetInstanceChipText.Text = $"内置 · {TavernInstances.Builtin.KernelLabel}";
-
-            Seed();
+            UpdateTargetChrome();
+            DataPathText.Text = CurrentDirectory();
 
             _ready = true;
             TabCharacters.IsChecked = true;
+
+            Loaded += OnLoaded;
+            Unloaded += OnUnloaded;
         }
 
         /// <summary>列表数据源；切分类、搜索、删除后整表重建。</summary>
         public ObservableCollection<ResourceRow> Rows { get; } = new();
 
-        // ==================== 种子数据 ====================
+        // ==================== 加载 ====================
 
-        private void Seed()
+        private void OnLoaded(object sender, RoutedEventArgs e)
         {
-            _characters.AddRange(new[]
+            if (!_hooked)
             {
-                new CharacterDetail
-                {
-                    Name = "星野澪",
-                    FileName = "星野澪.png",
-                    Bytes = 2_202_009,
-                    Creator = "星野",
-                    Version = "v1.4",
-                    ImageSize = "864 × 1216",
-                    WorldLabel = "星见町 · 2 条",
-                    AccentHex = "#2B88D8",
-                    Monogram = "澪",
-                    ModifiedLabel = "2026-10-26",
-                    Tags = new List<string> { "治愈", "日常", "温柔", "长篇" },
-                    Description = "星见町街角旧书店的店主，二十三岁。习惯把书页折出小角当书签，也习惯替人记住他们自己忘掉的事。",
-                    Personality = "说话慢，情绪淡，先听对方讲完再开口。对谁都不设防，但也不轻易把心里的事倒出来；被认真道谢时会手足无措地转去整理书脊。",
-                    Scenario = "深秋的傍晚，书店门口的风铃响了一下。你为了避雨推门进来，她正把一摞旧书从纸箱里往外搬，抬头看了你一眼。",
-                    FirstMessage = "「雨挺大的吧。先坐，我把这几本放上去就给你倒水。」",
-                    Entries = new List<WorldEntryItem>
-                    {
-                        new()
-                        {
-                            Title = "星见町",
-                            Keywords = "关键词：星见町、商店街、坡道",
-                            Body = "沿海的小镇，主街是一条缓坡，坡顶有座废弃的观测台。镇上的人习惯在傍晚把店门开到很晚，说是「留着灯，晚归的人好认路」。",
-                        },
-                        new()
-                        {
-                            Title = "旧书店「灯下」",
-                            Keywords = "关键词：旧书店、灯下、店规",
-                            Body = "店规只有两条：书可以随便翻，但翻完要放回原位；下雨天进店的人，热水免费。二楼靠窗的位置常年空着，据说是留给某个再没回来的人。",
-                            Enabled = false,
-                        },
-                    },
-                },
-                new CharacterDetail
-                {
-                    Name = "白鹭千夏",
-                    FileName = "白鹭千夏.png",
-                    Bytes = 1_677_722,
-                    Creator = "月见",
-                    Version = "v0.9",
-                    ImageSize = "768 × 1152",
-                    AccentHex = "#12A5A5",
-                    Monogram = "夏",
-                    ModifiedLabel = "2026-10-22",
-                    Tags = new List<string> { "校园", "青春" },
-                    Description = "转学第三个星期的二年级生，坐在靠窗倒数第二排。成绩中游，社团是濒临解散的文学部。",
-                    Personality = "看似自来熟，其实每句话都在观察对方的反应。兴致上来会把话题拐到很远的地方，被拆穿就笑着装傻。",
-                    Scenario = "放学后的文学部活动室，只有她一个人趴在桌上改社刊的排版，窗外是田径部的口号声。",
-                    FirstMessage = "「你来得正好——帮我看看这段是不是太啰嗦了？我自己读了三遍已经读不出味道了。」",
-                },
-                new CharacterDetail
-                {
-                    Name = "银月骑士",
-                    FileName = "银月骑士.png",
-                    Bytes = 3_565_158,
-                    Creator = "无衣",
-                    Version = "v2.0",
-                    ImageSize = "1024 × 1536",
-                    WorldLabel = "银月大陆 · 3 条",
-                    AccentHex = "#8E44DC",
-                    Monogram = "银",
-                    ModifiedLabel = "2026-10-19",
-                    Tags = new List<string> { "奇幻", "冒险", "战斗" },
-                    Description = "银月骑士团最后一任团长，在王国陷落那夜失去了名字。盔甲上的纹章被磨平，只剩一道月牙形的划痕。",
-                    Personality = "寡言，礼节刻在骨子里。对敌人不留情，对平民会单膝跪下说话。提到「誓约」二字时会沉默很久。",
-                    Scenario = "边境的雪夜，你在一座半塌的哨塔里生火，门外传来马蹄踏雪的声音，随后是三下叩门——不快不慢，极有分寸。",
-                    FirstMessage = "「借个火。天亮前我就走。」",
-                    Entries = new List<WorldEntryItem>
-                    {
-                        new()
-                        {
-                            Title = "银月骑士团",
-                            Keywords = "关键词：骑士团、誓约、月牙纹章",
-                            Body = "建国时的十二骑士之一创立，全盛期三百人。入团誓约只有一句：护住身后的人，不问姓名。",
-                        },
-                        new()
-                        {
-                            Title = "王国陷落之夜",
-                            Keywords = "关键词：陷落、王都、灰烬",
-                            Body = "王都陷落于霜月十七，火从神殿烧到城门。骑士团奉命护送平民出城，无人回头。",
-                        },
-                        new()
-                        {
-                            Title = "无名之誓",
-                            Keywords = "关键词：无名、盔甲、划痕",
-                            Body = "放弃姓氏的骑士会把纹章磨平，只留一道划痕。教会的说法是「让神认不出你，你才好替别人挡灾」。",
-                        },
-                    },
-                },
-                new CharacterDetail
-                {
-                    Name = "雨宫铃",
-                    FileName = "雨宫铃.png",
-                    Bytes = 1_258_291,
-                    Creator = "空青",
-                    Version = "v1.1",
-                    ImageSize = "640 × 960",
-                    AccentHex = "#C08A00",
-                    Monogram = "铃",
-                    ModifiedLabel = "2026-10-14",
-                    Tags = new List<string> { "悬疑", "都市" },
-                    Description = "在一栋老公寓里做夜间广播的独居女性。节目只有半小时，听众据说不超过十个人。",
-                    Personality = "警惕，语速快，习惯用玩笑挡问题。真正紧张时会不自觉地数东西——台阶、窗格、呼吸。",
-                    Scenario = "凌晨一点二十，你在调频里听到一个不该存在的频道。对面的人在念你今天的行程，一字不差。",
-                    FirstMessage = "「……喂？这个频段不该有人。」",
-                },
-                new CharacterDetail
-                {
-                    Name = "洛水",
-                    FileName = "洛水.png",
-                    Bytes = 2_936_013,
-                    Creator = "拾光",
-                    Version = "v1.0",
-                    ImageSize = "896 × 1280",
-                    WorldLabel = "长乐宫 · 2 条",
-                    AccentHex = "#8E44DC",
-                    Monogram = "洛",
-                    ModifiedLabel = "2026-10-08",
-                    Tags = new List<string> { "古风", "宫廷" },
-                    Description = "长乐宫掌乐的女官，十七岁入宫，如今第十一年。能听出任何一把琴的弦是哪年换的。",
-                    Personality = "温和但不软弱，说话留三分余地。最擅长用一支曲子把话题带过去，让人忘了原本要问什么。",
-                    Scenario = "宫宴散后，你被留在偏殿。她把琴横在膝上，指尖压着弦不让它响，等一个解释。",
-                    FirstMessage = "「殿下今日在席上，听了三遍《长乐》，一次也没抬头。」",
-                    Entries = new List<WorldEntryItem>
-                    {
-                        new()
-                        {
-                            Title = "长乐宫",
-                            Keywords = "关键词：长乐宫、女官、乐班",
-                            Body = "掌宫廷礼乐，编制四十八人。女官不入品，但宫宴座次排在九嫔之后——这是先帝留下的旧例。",
-                        },
-                        new()
-                        {
-                            Title = "《长乐》",
-                            Keywords = "关键词：长乐、曲子、禁曲",
-                            Body = "开国时的宴乐曲，共七段。第七段自第三代起禁奏，乐谱仍存于长乐宫，无人敢翻。",
-                            Enabled = false,
-                        },
-                    },
-                },
-                new CharacterDetail
-                {
-                    Name = "维拉",
-                    FileName = "维拉.png",
-                    Bytes = 2_516_582,
-                    Creator = "星酿工坊",
-                    Version = "v1.2",
-                    ImageSize = "832 × 1216",
-                    AccentHex = "#2B88D8",
-                    Monogram = "维",
-                    ModifiedLabel = "2026-09-30",
-                    Tags = new List<string> { "科幻", "机甲", "冷静" },
-                    Description = "轨道工厂的机甲整备师，左臂是工作事故后换的义肢。说话像在读检查单，一个多余的字都没有。",
-                    Personality = "理性到近乎冷淡，但会把你的机体检修记录记得比你自己还清楚。不擅长接受道谢，通常回一句「这是流程」。",
-                    Scenario = "出勤前四十分钟，机库只开了应急灯。她咬着螺丝刀，半个身子探进你机甲的胸腔，听见脚步声也没回头。",
-                    FirstMessage = "「站那儿别动。第三根液压管漏了，我不想再修一次你的腿。」",
-                },
-            });
+                TavernInstances.Changed += OnEnvironmentChanged;
+                TavernRuntime.Changed += OnEnvironmentChanged;
+                _hooked = true;
+            }
 
-            _worldBooks.AddRange(new[]
-            {
-                new WorldBookDetail
-                {
-                    Name = "赛博都市",
-                    FileName = "赛博都市.json",
-                    Bytes = 700_416,
-                    Author = "白露",
-                    TriggerLabel = "关键词 312 个",
-                    ModifiedLabel = "2026-10-24",
-                    HintLabel = "按关键词触发",
-                    EntryCount = "128",
-                    EnabledCount = "121",
-                    Entries = new List<WorldEntryItem>
-                    {
-                        new()
-                        {
-                            Title = "新九龙 · 城市概览",
-                            Keywords = "关键词：新九龙、上城、下城、霓虹",
-                            Body = "垂直分层的巨型都市：上城是玻璃与阳光，下城常年只有霓虹照明。两城之间靠三百部公共升降机连接，票价抵下城人半日工资。",
-                        },
-                        new()
-                        {
-                            Title = "义体黑市",
-                            Keywords = "关键词：义体、黑市、改装、医生",
-                            Body = "藏在旧地铁七号线的岔道里，只做熟客。价格是明面诊所的三成，风险是术后没人告诉你排异期有多长。",
-                        },
-                        new()
-                        {
-                            Title = "数据游侠",
-                            Keywords = "关键词：游侠、潜入、神经接驳",
-                            Body = "拿钱进别人脑机网络的自由职业者。行规三条：不碰记忆区、不接同行单、留一条退路给自己。",
-                            Enabled = false,
-                        },
-                    },
-                },
-                new WorldBookDetail
-                {
-                    Name = "星海纪元",
-                    FileName = "星海纪元.json",
-                    Bytes = 524_288,
-                    Author = "无衣",
-                    TriggerLabel = "关键词 208 个",
-                    ModifiedLabel = "2026-10-18",
-                    HintLabel = "按关键词触发",
-                    EntryCount = "86",
-                    EnabledCount = "86",
-                    Entries = new List<WorldEntryItem>
-                    {
-                        new()
-                        {
-                            Title = "跃迁航道",
-                            Keywords = "关键词：跃迁、航道、星门",
-                            Body = "旧帝国的航道网仍在使用，但星门一半失修。走未登记的暗航道能省三十天，代价是没人知道你会不会到。",
-                        },
-                        new()
-                        {
-                            Title = "拾荒船队",
-                            Keywords = "关键词：拾荒、船队、残骸带",
-                            Body = "在战场残骸里拆零件为生的家族船队，用三代人拼出一艘能跃迁的船。他们信奉一句话：战场上没有垃圾。",
-                        },
-                        new()
-                        {
-                            Title = "静默区",
-                            Keywords = "关键词：静默区、失联、坐标",
-                            Body = "所有通讯都会在这里消失的星域，官方标注为「设备故障高发区」。进去的船，十艘里回来七艘，回来的都记不清里面发生了什么。",
-                        },
-                    },
-                },
-                new WorldBookDetail
-                {
-                    Name = "雾隐村",
-                    FileName = "雾隐村.json",
-                    Bytes = 212_992,
-                    Author = "月见",
-                    TriggerLabel = "关键词 96 个",
-                    ModifiedLabel = "2026-10-11",
-                    HintLabel = "按关键词触发",
-                    EntryCount = "42",
-                    EnabledCount = "38",
-                    Entries = new List<WorldEntryItem>
-                    {
-                        new()
-                        {
-                            Title = "雾的规律",
-                            Keywords = "关键词：雾、清晨、界线",
-                            Body = "村子每天清晨起雾，正午散尽。雾从不越过溪上的木桥——老人说那是「界线」，年轻人当迷信。",
-                        },
-                        new()
-                        {
-                            Title = "守雾人",
-                            Keywords = "关键词：守雾人、祠堂、铃",
-                            Body = "每代一人，住在祠堂后面。职责只有一条：雾起时敲三下铃。上一任守雾人在雾里失踪，铃留在桥头。",
-                        },
-                    },
-                },
-                new WorldBookDetail
-                {
-                    Name = "长乐宫",
-                    FileName = "长乐宫.json",
-                    Bytes = 344_064,
-                    Author = "拾光",
-                    TriggerLabel = "关键词 174 个",
-                    ModifiedLabel = "2026-10-05",
-                    HintLabel = "按关键词触发",
-                    EntryCount = "67",
-                    EnabledCount = "60",
-                    Entries = new List<WorldEntryItem>
-                    {
-                        new()
-                        {
-                            Title = "宫规 · 乐班",
-                            Keywords = "关键词：乐班、宫规、禁奏",
-                            Body = "乐班不得私奏、不得改谱、不得在宫宴之外奏《长乐》。违者削籍出宫，永不叙用。",
-                        },
-                        new()
-                        {
-                            Title = "偏殿",
-                            Keywords = "关键词：偏殿、旧琴、窗",
-                            Body = "长乐宫西侧的偏殿，摆着一张无人认领的旧琴。琴身有三道裂纹，音却比新琴准——据说是先帝亲手调过的那一张。",
-                        },
-                        new()
-                        {
-                            Title = "第七段",
-                            Keywords = "关键词：第七段、禁曲、乐谱",
-                            Body = "《长乐》第七段的乐谱锁在长乐宫的樟木柜里，钥匙由掌乐女官保管。没有人奏过，也没有人敢烧。",
-                            Enabled = false,
-                        },
-                    },
-                },
-                new WorldBookDetail
-                {
-                    Name = "银月大陆",
-                    FileName = "银月大陆.json",
-                    Bytes = 126_976,
-                    Author = "无衣",
-                    TriggerLabel = "关键词 58 个",
-                    ModifiedLabel = "2026-09-27",
-                    HintLabel = "按关键词触发",
-                    EntryCount = "24",
-                    EnabledCount = "24",
-                    Entries = new List<WorldEntryItem>
-                    {
-                        new()
-                        {
-                            Title = "霜月历",
-                            Keywords = "关键词：霜月、历法、冬季",
-                            Body = "一年十个月，以霜月为岁首。霜月十七是王国陷落的日子，此后每到此日，全境禁乐。",
-                        },
-                        new()
-                        {
-                            Title = "边境哨塔",
-                            Keywords = "关键词：边境、哨塔、雪",
-                            Body = "沿北境每隔三十里一座，常年只有两人驻守。塔内有一本交接册，第一页写着：取暖不锁门。",
-                        },
-                    },
-                },
-            });
+            UpdateTargetChrome();
+            _ = ReloadAsync();
+        }
 
-            _chats.AddRange(new[]
+        private void OnUnloaded(object sender, RoutedEventArgs e)
+        {
+            if (!_hooked)
             {
-                new ChatDetail
-                {
-                    Group = "星野澪",
-                    Name = "雨夜的书店",
-                    FileName = "星野澪 - 2026-10-26@22-14-03.jsonl",
-                    Bytes = 96_256,
-                    HintLabel = "最近 4 条",
-                    MessageCount = "46",
-                    UserCount = "21",
-                    Messages = new List<ChatMessageItem>
-                    {
-                        new() { Speaker = "星野澪", Role = "角色", Time = "22:14", Body = "「雨挺大的吧。先坐，我把这几本放上去就给你倒水。」" },
-                        new() { Speaker = "我", Role = "用户", Time = "22:14", Body = "谢谢。我看门口灯还亮着，就进来了。" },
-                        new() { Speaker = "星野澪", Role = "角色", Time = "22:15", Body = "「灯一直亮着。」她把纸箱推到墙边，「反正也不会有人来收电费。」\n「热水在里屋，你自己拿杯子——第二个柜子，别拿最上面那个。」" },
-                        new() { Speaker = "我", Role = "用户", Time = "22:16", Body = "最上面那个有什么讲究吗？" },
-                    },
-                },
-                new ChatDetail
-                {
-                    Group = "星野澪",
-                    Name = "关于那本没还的书",
-                    FileName = "星野澪 - 2026-10-24@19-02-41.jsonl",
-                    Bytes = 72_704,
-                    HintLabel = "更早的存档",
-                    MessageCount = "32",
-                    UserCount = "15",
-                    Messages = new List<ChatMessageItem>
-                    {
-                        new() { Speaker = "星野澪", Role = "角色", Time = "19:02", Body = "「你上次借的那本，还没还。」" },
-                        new() { Speaker = "我", Role = "用户", Time = "19:03", Body = "我记得还了啊，就放在柜台上了。" },
-                        new() { Speaker = "星野澪", Role = "角色", Time = "19:03", Body = "「放在柜台上的是另一本。」她把书推过来，「这本你翻到第 47 页就停了，书签还夹在那儿。」" },
-                    },
-                },
-                new ChatDetail
-                {
-                    Group = "白鹭千夏",
-                    Name = "社刊排版夜",
-                    FileName = "白鹭千夏 - 2026-10-22@18-40-12.jsonl",
-                    Bytes = 41_984,
-                    HintLabel = "更早的存档",
-                    MessageCount = "18",
-                    UserCount = "9",
-                    Messages = new List<ChatMessageItem>
-                    {
-                        new() { Speaker = "白鹭千夏", Role = "角色", Time = "18:40", Body = "「你来得正好——帮我看看这段是不是太啰嗦了？」" },
-                        new() { Speaker = "我", Role = "用户", Time = "18:41", Body = "第三行开始就可以删了。" },
-                        new() { Speaker = "白鹭千夏", Role = "角色", Time = "18:41", Body = "「……你说得对，但我不想承认。」她把稿子翻过去，「那结尾怎么办，光留着不解释吗？」" },
-                    },
-                },
-                new ChatDetail
-                {
-                    Group = "银月骑士",
-                    Name = "哨塔的雪夜",
-                    FileName = "银月骑士 - 2026-10-19@23-58-30.jsonl",
-                    Bytes = 158_720,
-                    HintLabel = "最近 3 条",
-                    MessageCount = "74",
-                    UserCount = "36",
-                    Messages = new List<ChatMessageItem>
-                    {
-                        new() { Speaker = "银月骑士", Role = "角色", Time = "23:58", Body = "「借个火。天亮前我就走。」" },
-                        new() { Speaker = "我", Role = "用户", Time = "23:59", Body = "外面雪这么大，你确定？" },
-                        new() { Speaker = "银月骑士", Role = "角色", Time = "23:59", Body = "「……确定。」他把剑靠在门边，坐下时盔甲发出一声很轻的响，「但我可以等到雪小一点。」" },
-                    },
-                },
-                new ChatDetail
-                {
-                    Group = "银月骑士",
-                    Name = "边境的第三个夜晚",
-                    FileName = "银月骑士 - 2026-10-16@21-12-05.jsonl",
-                    Bytes = 121_344,
-                    HintLabel = "更早的存档",
-                    MessageCount = "58",
-                    UserCount = "29",
-                    Messages = new List<ChatMessageItem>
-                    {
-                        new() { Speaker = "银月骑士", Role = "角色", Time = "21:12", Body = "「你的伤还没好，别碰剑。」" },
-                        new() { Speaker = "我", Role = "用户", Time = "21:13", Body = "那你替我拿着。" },
-                        new() { Speaker = "银月骑士", Role = "角色", Time = "21:13", Body = "「……好。」他接过剑，动作比平时慢了半拍，「这是我今年接过最重的一把。」" },
-                    },
-                },
-                new ChatDetail
-                {
-                    Group = "维拉",
-                    Name = "出勤前的四十分钟",
-                    FileName = "维拉 - 2026-09-30@06-05-22.jsonl",
-                    Bytes = 34_816,
-                    HintLabel = "更早的存档",
-                    MessageCount = "12",
-                    UserCount = "6",
-                    Messages = new List<ChatMessageItem>
-                    {
-                        new() { Speaker = "维拉", Role = "角色", Time = "06:05", Body = "「站那儿别动。第三根液压管漏了，我不想再修一次你的腿。」" },
-                        new() { Speaker = "我", Role = "用户", Time = "06:06", Body = "昨天刚换的新的。" },
-                        new() { Speaker = "维拉", Role = "角色", Time = "06:06", Body = "「新的也会漏。」她把螺丝刀从嘴里拿下来，「记录上写着，你上周超载了两分四十秒。」" },
-                    },
-                },
-            });
+                return;
+            }
 
-            _presets.AddRange(new[]
-            {
-                new PresetDetail
-                {
-                    Name = "长上下文预设",
-                    FileName = "长上下文预设.json",
-                    Bytes = 47_104,
-                    Format = "标准",
-                    HelperLabel = "否",
-                    Source = "本地整理",
-                    Model = "claude-sonnet-4.5",
-                    StreamLabel = "开",
-                    ContextLabel = "200,000 token",
-                    MaxTokensLabel = "8,192 token",
-                    HintLabel = "12 条 · 8 条启用",
-                    PromptCount = "12",
-                    EnabledCount = "8",
-                    Prompts = new List<PromptItem>
-                    {
-                        new() { Index = "01", Name = "主提示词", Role = "system", Position = "注入位置 0 · 相对深度 4" },
-                        new() { Index = "02", Name = "角色扮演守则", Role = "system", Position = "注入位置 0 · 相对深度 3" },
-                        new() { Index = "03", Name = "世界观摘要", Role = "system", Position = "注入位置 1 · 绝对深度 12", Enabled = false },
-                        new() { Index = "04", Name = "长程记忆提示", Role = "system", Position = "注入位置 1 · 绝对深度 8" },
-                    },
-                },
-                new PresetDetail
-                {
-                    Name = "角色扮演增强",
-                    FileName = "角色扮演增强.json",
-                    Bytes = 79_872,
-                    Format = "SPreset",
-                    HelperLabel = "是",
-                    Source = "社区搬运",
-                    Model = "gpt-4.1",
-                    StreamLabel = "开",
-                    ContextLabel = "128,000 token",
-                    MaxTokensLabel = "4,096 token",
-                    HintLabel = "18 条 · 16 条启用",
-                    PromptCount = "18",
-                    EnabledCount = "16",
-                    Prompts = new List<PromptItem>
-                    {
-                        new() { Index = "01", Name = "导演指令", Role = "system", Position = "注入位置 0 · 相对深度 2" },
-                        new() { Index = "02", Name = "输出格式约束", Role = "system", Position = "注入位置 0 · 相对深度 1" },
-                        new() { Index = "03", Name = "变量守则", Role = "system", Position = "注入位置 1 · 绝对深度 10" },
-                        new() { Index = "04", Name = "情绪提示", Role = "system", Position = "注入位置 2 · 按楼层", Enabled = false },
-                    },
-                },
-                new PresetDetail
-                {
-                    Name = "简洁对话",
-                    FileName = "简洁对话.json",
-                    Bytes = 12_288,
-                    Format = "标准",
-                    HelperLabel = "否",
-                    Source = "本地整理",
-                    Model = "deepseek-v4",
-                    StreamLabel = "开",
-                    ContextLabel = "64,000 token",
-                    MaxTokensLabel = "2,048 token",
-                    HintLabel = "6 条 · 全部启用",
-                    PromptCount = "6",
-                    EnabledCount = "6",
-                    Prompts = new List<PromptItem>
-                    {
-                        new() { Index = "01", Name = "简短回答", Role = "system", Position = "注入位置 0 · 相对深度 2" },
-                        new() { Index = "02", Name = "禁用列表式输出", Role = "system", Position = "注入位置 0 · 相对深度 1" },
-                        new() { Index = "03", Name = "角色口吻", Role = "system", Position = "注入位置 1 · 绝对深度 4" },
-                    },
-                },
-                new PresetDetail
-                {
-                    Name = "创意写作",
-                    FileName = "创意写作.json",
-                    Bytes = 94_208,
-                    Format = "标准",
-                    HelperLabel = "否",
-                    Source = "自建",
-                    Model = "claude-opus-4.1",
-                    StreamLabel = "开",
-                    ContextLabel = "200,000 token",
-                    MaxTokensLabel = "16,384 token",
-                    HintLabel = "21 条 · 14 条启用",
-                    PromptCount = "21",
-                    EnabledCount = "14",
-                    Prompts = new List<PromptItem>
-                    {
-                        new() { Index = "01", Name = "文风锚点", Role = "system", Position = "注入位置 0 · 相对深度 4" },
-                        new() { Index = "02", Name = "禁用陈词滥调", Role = "system", Position = "注入位置 0 · 相对深度 3" },
-                        new() { Index = "03", Name = "场景三段式", Role = "system", Position = "注入位置 1 · 绝对深度 16", Enabled = false },
-                        new() { Index = "04", Name = "对白节奏", Role = "system", Position = "注入位置 1 · 绝对深度 12" },
-                    },
-                },
-            });
+            TavernInstances.Changed -= OnEnvironmentChanged;
+            TavernRuntime.Changed -= OnEnvironmentChanged;
+            _hooked = false;
+        }
 
-            _pendingImport = new CharacterDetail
+        /// <summary>换实例、改数据位置、酒馆启停都可能换掉数据目录，整页跟着重读。</summary>
+        private void OnEnvironmentChanged(object? sender, EventArgs e)
+        {
+            UpdateTargetChrome();
+            _ = ReloadAsync(keepSelection: true);
+        }
+
+        private void UpdateTargetChrome()
+        {
+            TavernInstance instance = TavernInstances.Current;
+            TargetInstanceChipText.Text = $"{instance.KindLabel} · {instance.KernelLabel}";
+        }
+
+        /// <summary>把磁盘上的资源读进四张表。解析在后台线程，映射与重建留在 UI 线程。</summary>
+        private async Task ReloadAsync(bool keepSelection = false)
+        {
+            LibrarySnapshot snapshot = await TavernLibrary.LoadAsync();
+
+            _userRoot = snapshot.UserRoot;
+
+            _characters.Clear();
+            foreach (CharacterCard card in snapshot.Characters)
             {
-                Name = "月见雫",
-                FileName = "月见雫.png",
-                Bytes = 1_887_437,
-                Creator = "白露",
-                Version = "v0.8",
-                ImageSize = "800 × 1200",
-                AccentHex = "#12A5A5",
-                Monogram = "雫",
-                ModifiedLabel = "2026-10-28",
-                Tags = new List<string> { "治愈", "海边" },
-                Description = "海边小镇气象站的观测员，负责记录每一场台风的路径。写作用的笔名只有三个人知道。",
-                Personality = "话不多，但一旦聊起云就会停不下来。喜欢把「大概」「可能」挂在嘴边，唯独报天气时从不用这些词。",
-                Scenario = "台风过境前的傍晚，观测站的窗户被风吹得嗡嗡响。她把记录本压在水杯下面，抬头看你。",
-                FirstMessage = "「明天别出门。……我是说，风速七级，出门不太划算。」",
+                _characters.Add(ToDetail(card));
+            }
+
+            _worldBooks.Clear();
+            foreach (WorldBook book in snapshot.Worlds)
+            {
+                _worldBooks.Add(ToDetail(book, _userRoot));
+            }
+
+            _chats.Clear();
+            foreach (ChatArchive chat in snapshot.Chats)
+            {
+                _chats.Add(ToDetail(chat));
+            }
+
+            _presets.Clear();
+            foreach (PresetFile preset in snapshot.Presets)
+            {
+                _presets.Add(ToDetail(preset));
+            }
+
+            if (!keepSelection)
+            {
+                _selectedCharacter = null;
+                _selectedWorldBook = null;
+                _selectedChat = null;
+                _selectedPreset = null;
+            }
+            else
+            {
+                ClampSelection();
+            }
+
+            ApplyTabChrome();
+            EnsureSelection();
+            RefreshRows();
+            ShowDetailForSelection();
+
+            if (snapshot.Error is not null)
+            {
+                Notify("读取资源目录失败", snapshot.Error, NotifySeverity.Error);
+            }
+        }
+
+        /// <summary>重读之后列表可能变短，旧下标要收回到合法范围。</summary>
+        private void ClampSelection()
+        {
+            _selectedCharacter = Clamp(_selectedCharacter, _characters.Count);
+            _selectedWorldBook = Clamp(_selectedWorldBook, _worldBooks.Count);
+            _selectedChat = Clamp(_selectedChat, _chats.Count);
+            _selectedPreset = Clamp(_selectedPreset, _presets.Count);
+
+            static int? Clamp(int? value, int count) =>
+                count == 0 ? null : Math.Clamp(value ?? 0, 0, count - 1);
+        }
+
+        // ==================== 映射 ====================
+
+        private static CharacterDetail ToDetail(CharacterCard card)
+        {
+            string accent = ResourcePalette.AccentFor(card.Name);
+
+            var detail = new CharacterDetail
+            {
+                FullPath = card.FullPath,
+                Name = card.Name,
+                FileName = card.FileName,
+                Bytes = card.Bytes,
+                Creator = card.Creator,
+                Version = card.Version,
+                Spec = card.Spec,
+                ImageSize = card.PixelWidth > 0 ? $"{card.PixelWidth} × {card.PixelHeight}" : "—",
+                WorldLabel = card.EmbeddedWorldName is { Length: > 0 } world
+                    ? $"{world} · {card.EmbeddedEntries.Count} 条"
+                    : card.EmbeddedEntries.Count > 0
+                        ? $"内嵌 · {card.EmbeddedEntries.Count} 条"
+                        : "无内嵌",
+                Description = card.Description,
+                Personality = card.Personality,
+                Scenario = card.Scenario,
+                FirstMessage = card.FirstMessage,
+                Monogram = FirstChar(card.Name),
+                AccentHex = accent,
+                ModifiedLabel = card.Modified.ToString("yyyy-MM-dd"),
+                CoverSource = card.FileName.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+                    ? ResourcePalette.Thumbnail(card.FullPath, 264)
+                    : null,
+                Tags = card.Tags.ToList(),
+                Entries = card.EmbeddedEntries.Select(WorldEntryItem.From).ToList(),
+            };
+
+            return detail;
+        }
+
+        private static WorldBookDetail ToDetail(WorldBook book, string userRoot)
+        {
+            return new WorldBookDetail
+            {
+                Location = RelativeFolder(book.FullPath, userRoot),
+                FullPath = book.FullPath,
+                Name = book.Name,
+                FileName = book.FileName,
+                Bytes = book.Bytes,
+                Author = "—",
+                TriggerLabel = "按关键词触发",
+                ModifiedLabel = book.Modified.ToString("yyyy-MM-dd"),
+                HintLabel = $"共 {book.EntryCount} 条 · {book.EnabledCount} 条启用",
+                EntryCount = book.EntryCount.ToString(),
+                EnabledCount = book.EnabledCount.ToString(),
+                Entries = book.Entries.Select(WorldEntryItem.From).ToList(),
             };
         }
+
+        private static ChatDetail ToDetail(ChatArchive chat)
+        {
+            // 文件名形如「角色名 - 2026-11-03@22-14-03.jsonl」，标题只留前半段
+            string stem = System.IO.Path.GetFileNameWithoutExtension(chat.FileName);
+            int dash = stem.IndexOf(" - ", StringComparison.Ordinal);
+            string name = dash > 0 ? stem[..dash] : stem;
+
+            var messages = chat.Preview.Select(line => new ChatMessageItem
+            {
+                Speaker = line.IsUser ? "我" : line.Speaker,
+                Role = line.IsUser ? "用户" : "角色",
+                Time = line.Time,
+                Body = line.Body,
+            }).ToList();
+
+            return new ChatDetail
+            {
+                FullPath = chat.FullPath,
+                Group = chat.Group,
+                Name = name,
+                FileName = chat.FileName,
+                Bytes = chat.Bytes,
+                HintLabel = messages.Count > 0 ? $"最近 {messages.Count} 条" : "空存档",
+                MessageCount = chat.MessageCount.ToString(),
+                UserCount = chat.UserCount.ToString(),
+                Messages = messages,
+            };
+        }
+
+        private static PresetDetail ToDetail(PresetFile preset)
+        {
+            var prompts = preset.Prompts
+                .Select((prompt, index) => new PromptItem
+                {
+                    Index = (index + 1).ToString("00"),
+                    Name = prompt.Name,
+                    Role = prompt.Role,
+                    Position = prompt.Position,
+                    Enabled = prompt.Enabled,
+                })
+                .ToList();
+
+            return new PresetDetail
+            {
+                FullPath = preset.FullPath,
+                Name = preset.Name,
+                FileName = preset.FileName,
+                Bytes = preset.Bytes,
+                PromptCount = preset.Prompts.Count.ToString(),
+                EnabledCount = preset.EnabledCount.ToString(),
+                Format = preset.Format,
+                ApiSource = preset.Api,
+                Source = preset.Folder,
+                Model = preset.Model,
+                StreamLabel = preset.Stream ? "开" : "关",
+                ContextLabel = preset.MaxContext > 0 ? $"{preset.MaxContext:N0} token" : "—",
+                MaxTokensLabel = preset.MaxTokens > 0 ? $"{preset.MaxTokens:N0} token" : "—",
+                HintLabel = preset.Prompts.Count > 0
+                    ? $"{preset.Prompts.Count} 条 · {preset.EnabledCount} 条启用"
+                    : "这份预设只有生成参数",
+                Prompts = prompts,
+            };
+        }
+
+        /// <summary>相对数据目录的位置，用于「所在目录」这一格。</summary>
+        private static string RelativeFolder(string fullPath, string userRoot)
+        {
+            try
+            {
+                string? folder = System.IO.Path.GetDirectoryName(fullPath);
+                return folder is null ? "—" : System.IO.Path.GetRelativePath(userRoot, folder);
+            }
+            catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+            {
+                return "—";
+            }
+        }
+
+        private static string FirstChar(string name) => string.IsNullOrEmpty(name) ? "?" : name[..1];
 
         // ==================== 分类切换 ====================
 
@@ -1001,8 +807,10 @@ namespace AstraBrew_Launcher.Views
             ListIconGlyph.Foreground = new SolidColorBrush(color);
 
             ListTitleText.Text = TitleOf(_tab);
-            TabFolderChip.Text = FolderOf(_tab);
-            DataPathText.Text = Path.Combine(DataRoot, FolderOf(_tab));
+            TabFolderChip.Text = _tab == TabKind.Presets
+                ? $"{TavernLibrary.PresetDirectories().Count} 个目录"
+                : FolderOf(_tab);
+            DataPathText.Text = CurrentDirectory();
             ListFootText.Text = FootOf(_tab);
 
             ImportButton.Visibility = _tab == TabKind.Chats ? Visibility.Collapsed : Visibility.Visible;
@@ -1016,13 +824,22 @@ namespace AstraBrew_Launcher.Views
             SearchBox.PlaceholderText = _tab switch
             {
                 TabKind.Characters => "搜索角色名、作者或标签…",
-                TabKind.WorldBooks => "搜索世界书名称或作者…",
+                TabKind.WorldBooks => "搜索世界书名称…",
                 TabKind.Chats => "搜索角色名或存档文件名…",
                 _ => "搜索预设名称或模型…",
             };
 
-            ListEmptyTitleText.Text = "没有匹配的资源";
-            ListEmptyHintText.Text = "换个关键词，或清空搜索框后重试。";
+            bool empty = CountOf(_tab) == 0;
+            ListEmptyTitleText.Text = empty ? $"还没有{TitleOf(_tab)}" : "没有匹配的资源";
+            ListEmptyHintText.Text = empty
+                ? _tab switch
+                {
+                    TabKind.Characters => "把角色卡（.png / .json）放进 characters 目录，或点右上角导入。",
+                    TabKind.WorldBooks => "把世界书 .json 放进 worlds 目录，或点右上角导入。",
+                    TabKind.Chats => "在酒馆里聊过天后，存档会自动出现在 chats 目录。",
+                    _ => "把预设 .json 放进 OpenAI Settings 目录，或点右上角导入。",
+                }
+                : "换个关键词，或清空搜索框后重试。";
 
             DetailEmptyGlyph.Glyph = glyph;
             DetailEmptyTitleText.Text = "还没有选中资源";
@@ -1073,7 +890,7 @@ namespace AstraBrew_Launcher.Views
             for (int i = 0; i < _characters.Count; i++)
             {
                 CharacterDetail item = _characters[i];
-                if (!Matches(item.Name, item.Creator, string.Join(' ', item.Tags)))
+                if (!Matches(item.Name, item.Creator, string.Join(' ', item.Tags), item.FileName))
                 {
                     continue;
                 }
@@ -1081,10 +898,12 @@ namespace AstraBrew_Launcher.Views
                 Rows.Add(new ResourceRow(item.AccentHex)
                 {
                     Index = i,
+                    FullPath = item.FullPath,
                     Title = item.Name,
                     Subtitle = string.IsNullOrEmpty(item.Creator) ? "未署名" : item.Creator,
-                    Meta = $"{item.Version} · {item.SizeLabel} · {item.ImageSize} · {item.WorldLabel}",
+                    Meta = $"{item.SizeLabel} · {item.ImageSize} · {item.WorldLabel}",
                     Monogram = item.Monogram,
+                    CoverSource = ResourcePalette.Thumbnail(item.FullPath, 96),
                     HasCover = true,
                     Selected = _selectedCharacter == i,
                 });
@@ -1096,7 +915,7 @@ namespace AstraBrew_Launcher.Views
             for (int i = 0; i < _worldBooks.Count; i++)
             {
                 WorldBookDetail item = _worldBooks[i];
-                if (!Matches(item.Name, item.Author, item.FileName))
+                if (!Matches(item.Name, item.FileName))
                 {
                     continue;
                 }
@@ -1104,8 +923,9 @@ namespace AstraBrew_Launcher.Views
                 Rows.Add(new ResourceRow("#8E44DC")
                 {
                     Index = i,
+                    FullPath = item.FullPath,
                     Title = item.Name,
-                    Subtitle = string.IsNullOrEmpty(item.Author) ? "未署名" : item.Author,
+                    Subtitle = item.FileName,
                     Meta = $"{item.EntryCount} 条条目 · {item.SizeLabel} · {item.ModifiedLabel}",
                     Glyph = "\uE8F1",
                     Selected = _selectedWorldBook == i,
@@ -1116,13 +936,11 @@ namespace AstraBrew_Launcher.Views
         private void BuildChatRows()
         {
             string? lastGroup = null;
-            int groupCount = 0;
 
             for (int i = 0; i < _chats.Count; i++)
             {
                 ChatDetail item = _chats[i];
-                bool groupMatches = Matches(item.Group, item.Name, item.FileName);
-                if (!groupMatches)
+                if (!Matches(item.Group, item.Name, item.FileName))
                 {
                     continue;
                 }
@@ -1130,7 +948,7 @@ namespace AstraBrew_Launcher.Views
                 if (item.Group != lastGroup)
                 {
                     lastGroup = item.Group;
-                    groupCount = _chats.Count(chat => chat.Group == item.Group);
+                    int groupCount = _chats.Count(chat => chat.Group == item.Group);
                     Rows.Add(new ResourceRow("#12A5A5")
                     {
                         IsGroup = true,
@@ -1142,6 +960,7 @@ namespace AstraBrew_Launcher.Views
                 Rows.Add(new ResourceRow("#12A5A5")
                 {
                     Index = i,
+                    FullPath = item.FullPath,
                     Title = item.Name,
                     Subtitle = item.FileName,
                     Meta = $"{item.MessageCount} 条消息 · {item.SizeLabel}",
@@ -1153,20 +972,37 @@ namespace AstraBrew_Launcher.Views
 
         private void BuildPresetRows()
         {
+            string? lastFolder = null;
+
             for (int i = 0; i < _presets.Count; i++)
             {
                 PresetDetail item = _presets[i];
-                if (!Matches(item.Name, item.Model, item.FileName))
+                if (!Matches(item.Name, item.Model, item.FileName, item.Source))
                 {
                     continue;
+                }
+
+                // 四家接口的预设混在一张表里，按来源目录分组，否则「模型」「上下文」这些字段
+                // 在不同来源下含义都不一样，看着像数据串了
+                if (item.Source != lastFolder)
+                {
+                    lastFolder = item.Source;
+                    int groupCount = _presets.Count(preset => preset.Source == item.Source);
+                    Rows.Add(new ResourceRow("#C08A00")
+                    {
+                        IsGroup = true,
+                        Title = item.Source,
+                        Meta = $"{groupCount} 个预设",
+                    });
                 }
 
                 Rows.Add(new ResourceRow("#C08A00")
                 {
                     Index = i,
+                    FullPath = item.FullPath,
                     Title = item.Name,
                     Subtitle = item.Model,
-                    Meta = $"{item.PromptCount} 条提示词 · {item.Format} · {item.SizeLabel}",
+                    Meta = $"{item.PromptSummary} · {item.Format} · {item.SizeLabel}",
                     Glyph = "\uE9E9",
                     Selected = _selectedPreset == i,
                 });
@@ -1198,7 +1034,9 @@ namespace AstraBrew_Launcher.Views
             {
                 TabKind.Characters => $"共 {_characters.Count} 个 · {SizeOf(_characters.Sum(item => item.Bytes))}",
                 TabKind.WorldBooks => $"共 {_worldBooks.Count} 本 · {SizeOf(_worldBooks.Sum(item => item.Bytes))}",
-                TabKind.Chats => $"共 {_chats.Count} 个会话 · {_chats.Select(item => item.Group).Distinct().Count()} 个角色",
+                TabKind.Chats => _chats.Count == 0
+                    ? "共 0 个会话"
+                    : $"共 {_chats.Count} 个会话 · {_chats.Select(item => item.Group).Distinct().Count()} 个角色",
                 _ => $"共 {_presets.Count} 个 · {SizeOf(_presets.Sum(item => item.Bytes))}",
             };
         }
@@ -1360,49 +1198,147 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            if (_pendingImport is null || _tab != TabKind.Characters)
+            string folder = ImportDirectory();
+
+            if (!Directory.Exists(folder))
             {
-                Notify("没有可导入的文件", $"{FolderOf(_tab)} 目录里没有新的文件，把资源放进去后再试。", NotifySeverity.Warning);
+                // 目录可能还没被酒馆创建（全新安装、还没聊过天）：先建出来，别让用户自己去找
+                try
+                {
+                    Directory.CreateDirectory(folder);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    Notify("目录不可写", $"{folder}\n{ex.Message}", NotifySeverity.Error);
+                    return;
+                }
+            }
+
+            var picker = new FileOpenPicker();
+            picker.SuggestedStartLocation = PickerLocationId.Downloads;
+
+            switch (_tab)
+            {
+                case TabKind.Characters:
+                    picker.FileTypeFilter.Add(".png");
+                    picker.FileTypeFilter.Add(".json");
+                    break;
+                default:
+                    picker.FileTypeFilter.Add(".json");
+                    break;
+            }
+
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(App.MainWindow));
+
+            IReadOnlyList<StorageFile> files = await picker.PickMultipleFilesAsync();
+            if (files is null || files.Count == 0)
+            {
                 return;
             }
 
+            await RunImportAsync(files.Select(file => file.Path).ToList());
+        }
+
+        /// <summary>选完文件之后的实际导入：结构检查 → 复制 → 报告。</summary>
+        private async Task RunImportAsync(IReadOnlyList<string> paths)
+        {
+            string folder = ImportDirectory();
+
             _busy = true;
             ImportButton.IsEnabled = false;
-            Notify("正在校验", $"读取 {_pendingImport.FileName} 的角色卡字段…", NotifySeverity.Informational);
 
-            await Task.Delay(900);
+            // 先按分类做结构检查再复制：一张普通 PNG 混进 characters 目录，
+            // 列表里就多一条打不开的空卡，用户还得回头找是哪个文件
+            ResourceKind kind = _tab switch
+            {
+                TabKind.WorldBooks => ResourceKind.WorldBook,
+                TabKind.Presets => ResourceKind.Preset,
+                _ => ResourceKind.Character,
+            };
 
-            CharacterDetail imported = _pendingImport;
-            _pendingImport = null;
-            _characters.Insert(0, imported);
+            ImportReport report = await TavernLibrary.ImportAsync(kind, folder, paths);
 
             _busy = false;
             ImportButton.IsEnabled = true;
-            _query = string.Empty;
-            SearchBox.Text = string.Empty;
 
-            // 进分类时默认落在第一项上，右侧不留一整块空白。
-            EnsureSelection();
-
-            ApplyTabChrome();
-            RefreshRows();
-            SelectNewest(0);
-            Notify("导入完成", $"{imported.Name}（{imported.Version}）已写入 characters 目录。", NotifySeverity.Success);
-        }
-
-        private void SelectNewest(int index)
-        {
-            _selectedCharacter = index;
-            RefreshRows();
-
-            ResourceRow? row = Rows.FirstOrDefault(item => !item.IsGroup && item.Index == index);
-            if (row is not null)
+            if (report.Imported > 0)
             {
-                row.Selected = true;
-                _selectedRow = row;
+                await ReloadAsync(keepSelection: true);
             }
 
-            ShowDetailForSelection();
+            if (report.Error is { Length: > 0 } error)
+            {
+                Notify("导入失败", error, NotifySeverity.Error);
+                return;
+            }
+
+            if (report.Failed.Count == 0)
+            {
+                Notify(
+                    "导入完成",
+                    $"{report.Imported} 个文件已写入 {FolderOf(_tab)}。",
+                    NotifySeverity.Success);
+                return;
+            }
+
+            await ShowImportReportAsync(report);
+        }
+
+        /// <summary>
+        /// 有文件被跳过时列出来：只说「跳过了 2 个」等于让用户自己去猜哪里不对。
+        /// 全部成功走全局消息，不弹窗打扰。
+        /// </summary>
+        private async Task ShowImportReportAsync(ImportReport report)
+        {
+            var body = new StackPanel { Spacing = 10 };
+
+            body.Children.Add(new TextBlock
+            {
+                Text = report.Imported > 0
+                    ? $"已导入 {report.Imported} 个，{report.Failed.Count} 个格式不对被跳过："
+                    : $"这 {report.Failed.Count} 个文件都不像{FolderOf(_tab)}里的资源，一个也没导入：",
+                FontSize = 12.5,
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            var list = new StackPanel { Spacing = 8 };
+            foreach (ImportFailure failure in report.Failed)
+            {
+                var row = new StackPanel { Spacing = 1 };
+                row.Children.Add(new TextBlock
+                {
+                    Text = failure.FileName,
+                    FontSize = 12,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                });
+                row.Children.Add(new TextBlock
+                {
+                    Text = failure.Reason,
+                    FontSize = 11,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = (Brush)Application.Current.Resources["SystemFillColorCriticalBrush"],
+                });
+                list.Children.Add(row);
+            }
+
+            body.Children.Add(new ScrollViewer
+            {
+                MaxHeight = 220,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = list,
+            });
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = "导入结果",
+                Content = body,
+                CloseButtonText = "知道了",
+                DefaultButton = ContentDialogButton.Close,
+            };
+
+            await dialog.ShowAsync();
         }
 
         private async void Rescan_Click(object sender, RoutedEventArgs e)
@@ -1418,7 +1354,7 @@ namespace AstraBrew_Launcher.Views
                 button.IsEnabled = false;
             }
 
-            await Task.Delay(650);
+            await ReloadAsync(keepSelection: true);
 
             _busy = false;
             if (sender is Button done)
@@ -1426,13 +1362,12 @@ namespace AstraBrew_Launcher.Views
                 done.IsEnabled = true;
             }
 
-            RefreshRows();
             Notify("已重新扫描", $"{FolderOf(_tab)} 目录共 {CountOf(_tab)} 个资源。", NotifySeverity.Informational);
         }
 
         private void CopyPath_Click(object sender, RoutedEventArgs e)
         {
-            string path = Path.Combine(DataRoot, FolderOf(_tab));
+            string path = SelectedFullPath ?? CurrentDirectory();
             var package = new DataPackage();
             package.SetText(path);
             Clipboard.SetContent(package);
@@ -1441,17 +1376,32 @@ namespace AstraBrew_Launcher.Views
 
         private void OpenDirectory_Click(object sender, RoutedEventArgs e)
         {
-            Notify("资源目录", Path.Combine(DataRoot, FolderOf(_tab)), NotifySeverity.Informational);
+            string folder = CurrentDirectory();
+
+            if (!Directory.Exists(folder))
+            {
+                Notify("目录还不存在", folder, NotifySeverity.Warning);
+                return;
+            }
+
+            ShellFile.Reveal(folder);
         }
 
         private void OpenWorkbench_Click(object sender, RoutedEventArgs e)
         {
+            if (SelectedFullPath is not { Length: > 0 } path)
+            {
+                return;
+            }
+
+            // 打开哪一类由这里的分类决定；工作台里没有切换入口，进去就是这一类
             WorkbenchPage.PendingKind = _tab switch
             {
                 TabKind.WorldBooks => WorkbenchKind.WorldBook,
                 TabKind.Presets => WorkbenchKind.Preset,
                 _ => WorkbenchKind.Character,
             };
+            WorkbenchPage.PendingPath = path;
             WorkbenchPage.PendingFile = SelectedFileName ?? string.Empty;
 
             App.MainWindow?.NavigateTo("workbench");
@@ -1466,15 +1416,24 @@ namespace AstraBrew_Launcher.Views
             _ => null,
         };
 
+        /// <summary>当前选中资源的完整路径；没选中时为空。</summary>
+        private string? SelectedFullPath => _tab switch
+        {
+            TabKind.Characters => Pick(_characters, _selectedCharacter)?.FullPath,
+            TabKind.WorldBooks => Pick(_worldBooks, _selectedWorldBook)?.FullPath,
+            TabKind.Chats => Pick(_chats, _selectedChat)?.FullPath,
+            TabKind.Presets => Pick(_presets, _selectedPreset)?.FullPath,
+            _ => null,
+        };
+
         private async void Delete_Click(object sender, RoutedEventArgs e)
         {
-            if (_busy)
+            if (_busy || SelectedFullPath is not { Length: > 0 } path)
             {
                 return;
             }
 
             string name = DetailTitleText.Text;
-            string target = FolderOf(_tab);
 
             var dialog = new ContentDialog
             {
@@ -1483,7 +1442,7 @@ namespace AstraBrew_Launcher.Views
                 Content = new TextBlock
                 {
                     TextWrapping = TextWrapping.Wrap,
-                    Text = $"将从 {target} 目录删除「{name}」，文件不可恢复。",
+                    Text = $"将删除文件：\n{path}\n\n文件会先进回收站，需要时可以还原。",
                 },
                 PrimaryButtonText = "删除",
                 CloseButtonText = "取消",
@@ -1501,37 +1460,39 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            RemoveSelected();
-            Notify("已删除", $"{name} 已从 {target} 目录中移除。", NotifySeverity.Success);
-        }
+            _busy = true;
+            (bool ok, string? error) = await ShellFile.MoveToRecycleBinAsync(path);
+            _busy = false;
 
-        private void RemoveSelected()
-        {
-            switch (_tab)
+            if (!ok)
             {
-                case TabKind.Characters when _selectedCharacter is int character:
-                    _characters.RemoveAt(character);
-                    _selectedCharacter = _characters.Count == 0 ? null : Math.Min(character, _characters.Count - 1);
-                    break;
-                case TabKind.WorldBooks when _selectedWorldBook is int worldBook:
-                    _worldBooks.RemoveAt(worldBook);
-                    _selectedWorldBook = _worldBooks.Count == 0 ? null : Math.Min(worldBook, _worldBooks.Count - 1);
-                    break;
-                case TabKind.Chats when _selectedChat is int chat:
-                    _chats.RemoveAt(chat);
-                    _selectedChat = _chats.Count == 0 ? null : Math.Min(chat, _chats.Count - 1);
-                    break;
-                case TabKind.Presets when _selectedPreset is int preset:
-                    _presets.RemoveAt(preset);
-                    _selectedPreset = _presets.Count == 0 ? null : Math.Min(preset, _presets.Count - 1);
-                    break;
+                Notify("没能删除", error ?? "文件可能正被酒馆占用，先停掉服务再试。", NotifySeverity.Error);
+                return;
             }
 
-            RefreshRows();
-            ShowDetailForSelection();
+            await ReloadAsync();
+
+            Notify("已删除", $"{name} 已移入回收站。", NotifySeverity.Success);
         }
 
         // ==================== 文案与工具 ====================
+
+        /// <summary>当前分类对应的真实目录。</summary>
+        private string CurrentDirectory() => _tab switch
+        {
+            TabKind.Characters => TavernLibrary.CharactersDirectory(),
+            TabKind.WorldBooks => TavernLibrary.WorldsDirectory(),
+            TabKind.Chats => TavernLibrary.ChatsDirectory(),
+
+            // 预设散在好几家 Settings 目录里，界面上给它们的共同父目录
+            _ => TavernLibrary.UserDirectory(),
+        };
+
+        /// <summary>导入往哪个目录写：预设统一进 OpenAI Settings，别让用户猜该放哪一家。</summary>
+        private string ImportDirectory() => _tab == TabKind.Presets
+            ? TavernLibrary.PresetDirectories().FirstOrDefault()
+                ?? System.IO.Path.Combine(TavernLibrary.UserDirectory(), "OpenAI Settings")
+            : CurrentDirectory();
 
         private static string TitleOf(TabKind tab) => tab switch
         {
@@ -1570,7 +1531,7 @@ namespace AstraBrew_Launcher.Views
             TabKind.Characters => "按最近修改排序 · 直接读 characters 目录",
             TabKind.WorldBooks => "按最近修改排序 · 直接读 worlds 目录",
             TabKind.Chats => "按角色分文件夹 · 直接读 chats 目录",
-            _ => "按最近修改排序 · 直接读 OpenAI Settings 目录",
+            _ => "按最近修改排序 · 直接读各家 Settings 目录",
         };
 
         private int CountOf(TabKind tab) => tab switch
@@ -1581,7 +1542,7 @@ namespace AstraBrew_Launcher.Views
             _ => _presets.Count,
         };
 
-        private static string SizeOf(long bytes) => ResourcePalette.Size(bytes);
+        private static string SizeOf(long bytes) => bytes == 0 ? "—" : ResourcePalette.Size(bytes);
 
         /// <summary>页面播报统一走全局消息（窗口右下角），页面里不再挂 InfoBar。</summary>
         private static void Notify(string title, string message, NotifySeverity severity)

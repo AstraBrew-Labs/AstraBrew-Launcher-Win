@@ -1,20 +1,32 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 using AstraBrew_Launcher.Services;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
+using Windows.Storage.Pickers;
+using WinRT.Interop;
 
 namespace AstraBrew_Launcher.Views
 {
     /// <summary>
-    /// 仪表盘：服务状态、环境指标、启动配置（版本 / 启动模式）与快捷操作。
-    /// 数据当前为静态样例，交互（切换、导航、复制、启停反馈）为真实行为。
+    /// 仪表盘：服务状态、运行指标、启动配置与快捷操作。
+    ///
+    /// 这里不放任何「样例数字」：服务状态与 PID 来自 <see cref="TavernRuntime"/>，
+    /// 内存 / CPU 读子进程，扩展与角色卡数、目录体积现数磁盘，访问次数读酒馆自己写的
+    /// access.log。改设置、改酒馆配置、在控制台启停之后，这一页都跟着变——
+    /// 因为它读的全是那些页面写的那一份状态。
     /// </summary>
     public sealed partial class DashboardPage : Page
     {
-        private const string LocalEndpoint = "http://127.0.0.1:8000";
+        /// <summary>每秒刷新：运行时长、CPU、内存。磁盘类指标走 <see cref="TavernMetrics"/> 的缓存。</summary>
+        private readonly DispatcherQueueTimer _tick;
 
         private Storyboard? _pulseStoryboard;
 
@@ -31,6 +43,10 @@ namespace AstraBrew_Launcher.Views
         {
             InitializeComponent();
 
+            _tick = DispatcherQueue.CreateTimer();
+            _tick.Interval = TimeSpan.FromSeconds(1);
+            _tick.Tick += OnTick;
+
             // 初始化顺序：版本 → 模式面板 → 服务器地址，三者互相独立
             SyncFromCatalog();
             SyncFromShared();
@@ -41,27 +57,185 @@ namespace AstraBrew_Launcher.Views
             Unloaded += OnUnloaded;
         }
 
+        // ==================== 生命周期 ====================
+
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
+            // 先减后加：同一页面重复 Loaded 时不该累积多份订阅
+            TavernSettings.Changed -= Shared_Changed;
             TavernSettings.Changed += Shared_Changed;
 
-            // 先减后加：避免同一页面重复 Loaded 时累积多份订阅
             TavernInstances.Changed -= Instances_Changed;
             TavernInstances.Changed += Instances_Changed;
 
+            TavernRuntime.Changed -= Runtime_Changed;
+            TavernRuntime.Changed += Runtime_Changed;
+
+            LauncherSettings.Changed -= Settings_Changed;
+            LauncherSettings.Changed += Settings_Changed;
+
+            GlobalTavernConfig.Saved -= Config_Saved;
+            GlobalTavernConfig.Saved += Config_Saved;
+
             SyncFromCatalog();
             SyncFromShared();
+            ApplyModeVisibility();
+            SyncServiceScope();
+            SetServiceRunning();
+
             StartStatusPulse();
+            _tick.Start();
+
+            _ = RefreshMetricsAsync(force: false);
+            _ = SyncRuntimeLabelAsync();
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             TavernSettings.Changed -= Shared_Changed;
             TavernInstances.Changed -= Instances_Changed;
+            TavernRuntime.Changed -= Runtime_Changed;
+            LauncherSettings.Changed -= Settings_Changed;
+            GlobalTavernConfig.Saved -= Config_Saved;
+
+            _tick.Stop();
 
             _pulseStoryboard?.Stop();
             _pulseStoryboard = null;
         }
+
+        // ==================== 数据采集 ====================
+
+        /// <summary>每秒一次：运行时长、子进程内存与 CPU。</summary>
+        private void OnTick(DispatcherQueueTimer sender, object args)
+        {
+            UpdateUptime();
+            UpdateProcessMetrics();
+        }
+
+        private async Task RefreshMetricsAsync(bool force)
+        {
+            TavernMetrics metrics;
+
+            try
+            {
+                metrics = await TavernMetricsService.CollectAsync(force);
+            }
+            catch
+            {
+                // 采集失败不该让整页变成错误状态：数字留空，其余照常
+                return;
+            }
+
+            ApplyMetrics(metrics);
+        }
+
+        /// <summary>把采集结果铺到四张卡上。</summary>
+        private void ApplyMetrics(TavernMetrics metrics)
+        {
+            if (ExtensionsValue is null)
+            {
+                return;
+            }
+
+            int extensions = metrics.BuiltinExtensions + metrics.ThirdPartyExtensions;
+
+            ExtensionsValue.Text = extensions.ToString();
+            ExtensionsCaption.Text = extensions == 0
+                ? "还没有安装扩展"
+                : $"内置 {metrics.BuiltinExtensions} · 第三方 {metrics.ThirdPartyExtensions}";
+
+            CharactersCount.Text = metrics.CharacterCount.ToString();
+            CharactersUnit.Visibility = metrics.CharacterCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+            CharactersCaption.Text = metrics.CharacterCount == 0
+                ? "还没有角色卡，右键导入即可"
+                : "共 " + TavernMetricsService.FormatSize(metrics.CharacterBytes);
+
+            DiskValue.Text = TavernMetricsService.FormatSize(metrics.TotalBytes);
+            DiskCaption.Text = $"安装 {TavernMetricsService.FormatSize(metrics.InstallBytes)} · "
+                + $"数据 {TavernMetricsService.FormatSize(metrics.DataBytes)}";
+
+            RequestsValue.Text = metrics.AccessLogEnabled ? metrics.TodayConnections.ToString() : "—";
+            ToolTipService.SetToolTip(
+                RequestsValue,
+                metrics.AccessLogEnabled
+                    ? "来自酒馆的 access.log（今天零点起）"
+                    : "酒馆的访问日志未开启（logging.enableAccessLog），无法统计");
+
+            LastSyncText.Text = $"最后同步 {metrics.SampledAt:HH:mm:ss}";
+        }
+
+        /// <summary>
+        /// 子进程的内存与 CPU。没在跑就清空——显示上一次的残留值会让人以为服务还在跑。
+        /// </summary>
+        private void UpdateProcessMetrics()
+        {
+            if (MemoryValue is null)
+            {
+                return;
+            }
+
+            TavernProcessState state = TavernRuntime.State;
+
+            if (!state.IsRunning)
+            {
+                MemoryValue.Text = "—";
+                CpuValue.Text = "—";
+                StartupValue.Text = state.StartupSeconds is { } last ? $"{last:0.0} s" : "—";
+                return;
+            }
+
+            (long memory, double? cpu) = TavernMetricsService.SampleProcess();
+
+            MemoryValue.Text = memory > 0 ? TavernMetricsService.FormatSize(memory) : "—";
+            CpuValue.Text = cpu is { } percent ? $"{percent:0.0}%" : "—";
+            StartupValue.Text = state.StartupSeconds is { } seconds ? $"{seconds:0.0} s" : "—";
+        }
+
+        /// <summary>
+        /// 让版本行显示真实的 Node 版本：环境来源可能在设置里改过，
+        /// 探测结果由 <see cref="RuntimeProbe"/> 缓存 30 秒，来回切页面不会反复拉进程。
+        /// </summary>
+        private async Task SyncRuntimeLabelAsync()
+        {
+            try
+            {
+                RuntimeEnvironment env = await RuntimeProbe.ProbeAsync(LauncherSettings.Runtime);
+                TavernInstances.SetRuntimeLabel(env.Node);
+            }
+            catch
+            {
+                // 探测失败保持「Node 未检测」
+            }
+
+            UpdateEnvironmentText();
+        }
+
+        private void UpdateEnvironmentText()
+        {
+            if (RuntimeEnvText is null)
+            {
+                return;
+            }
+
+            bool builtin = LauncherSettings.Runtime == RuntimeSource.Builtin;
+            string node = TavernInstances.Current.Node;
+
+            RuntimeEnvText.Text = $"运行环境 · {(builtin ? "内置环境" : "系统环境")} · {node}";
+            ToolTipService.SetToolTip(
+                RuntimeEnvText,
+                builtin
+                    ? @"内置环境装在 %AppData%\AstraBrew Launcher\bin，可随启动器搬走"
+                    : "系统环境使用 PATH 里的 Node.js 与 Git，由你自己维护");
+
+            string dataRoot = TavernRuntime.ResolveDataRoot();
+            DataModeText.Text = LauncherSettings.DataLocation == DataLocationMode.Global
+                ? "数据存放 · 全局目录（所有实例共用）"
+                : "数据存放 · 跟随实例目录";
+            ToolTipService.SetToolTip(DataModeText, dataRoot);
+        }
+
+        // ==================== 共享状态 ====================
 
         /// <summary>
         /// 与酒馆配置页共用同一份设置：启动模式、默认浏览器、服务范围。
@@ -88,6 +262,20 @@ namespace AstraBrew_Launcher.Views
             WanRadio.IsChecked = TavernSettings.Scope == ServiceScope.Wan;
 
             _syncing = false;
+
+            if (OpenTavernHint is not null)
+            {
+                OpenTavernHint.Text = $"用 {TavernSettings.BrowserName} 打开";
+            }
+
+            if (BrowserHint is not null)
+            {
+                // 三个 chip 全不选中表示「跟随系统」，这件事得说出来，
+                // 不然用户只会看到一排都没亮的按钮
+                BrowserHint.Text = TavernSettings.Browser == BrowserKind.System
+                    ? "当前跟随系统默认浏览器；点上面任一项可以固定使用。"
+                    : "启动酒馆后自动用所选浏览器打开界面。";
+            }
         }
 
         private void Shared_Changed(object? sender, EventArgs e)
@@ -96,6 +284,32 @@ namespace AstraBrew_Launcher.Views
             ApplyModeVisibility();
             SyncServiceScope();
             SyncEndpoint();
+        }
+
+        /// <summary>环境来源 / 数据存放改了：版本行与地址都要跟着动。</summary>
+        private void Settings_Changed(object? sender, EventArgs e)
+        {
+            UpdateEnvironmentText();
+            SyncEndpoint();
+            SyncServiceScope();
+            _ = SyncRuntimeLabelAsync();
+        }
+
+        /// <summary>config.yaml 被写过（本页、配置页或恢复默认）：端口可能变了。</summary>
+        private void Config_Saved(object? sender, EventArgs e)
+        {
+            if (DispatcherQueue.HasThreadAccess)
+            {
+                SyncEndpoint();
+                SyncServiceScope();
+                return;
+            }
+
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                SyncEndpoint();
+                SyncServiceScope();
+            });
         }
 
         /// <summary>运行状态呼吸光晕：进入 Decelerate、循环播放。</summary>
@@ -129,10 +343,20 @@ namespace AstraBrew_Launcher.Views
 
         // ==================== 页头 / 主卡操作 ====================
 
-        private void Refresh_Click(object sender, RoutedEventArgs e)
+        private async void Refresh_Click(object sender, RoutedEventArgs e)
         {
-            LastSyncText.Text = $"最后同步 {DateTime.Now:HH:mm:ss}";
-            Notify("指标已刷新", "服务状态、资源占用与运行环境已重新采集。", NotifySeverity.Success);
+            // 顺带按磁盘现状复核一遍实例：用户可能刚 git pull 过、或删了某个目录
+            TavernInstances.ReloadBuiltin();
+
+            foreach (TavernInstance instance in TavernInstances.Locals)
+            {
+                TavernInstances.ReloadLocal(instance);
+            }
+
+            await RefreshMetricsAsync(force: true);
+            _ = SyncRuntimeLabelAsync();
+
+            AppNotify.Success("指标已刷新", "服务状态、资源占用与磁盘数据已重新采集。");
         }
 
         private void CopyEndpoint_Click(object sender, RoutedEventArgs e)
@@ -142,7 +366,7 @@ namespace AstraBrew_Launcher.Views
             Clipboard.SetContent(package);
 
             FlashCopiedFeedback();
-            Notify("地址已复制", EndpointText.Text, NotifySeverity.Success);
+            AppNotify.Success("地址已复制", EndpointText.Text);
         }
 
         private void FlashCopiedFeedback()
@@ -163,19 +387,38 @@ namespace AstraBrew_Launcher.Views
             storyboard.Begin();
         }
 
-        private void Restart_Click(object sender, RoutedEventArgs e)
+        /// <summary>主操作：没在跑就是「启动」，跑着就是「重启」。</summary>
+        private async void PrimaryAction_Click(object sender, RoutedEventArgs e)
         {
-            SetServiceRunning(true);
-            Notify("已发送重启指令", "SiliconTavern 将在数秒内重启，进度可在控制台查看。", NotifySeverity.Informational);
+            TavernProcessState state = TavernRuntime.State;
+
+            if (state.IsBusy)
+            {
+                return;
+            }
+
+            if (state.IsRunning)
+            {
+                AppNotify.Info("正在重启酒馆", "停止旧进程后会重新启动，进度可在控制台查看。");
+                await TavernRuntime.RestartAsync();
+                return;
+            }
+
+            await TavernRuntime.StartAsync();
         }
 
         private async void Stop_Click(object sender, RoutedEventArgs e)
         {
+            if (!TavernRuntime.IsRunning)
+            {
+                return;
+            }
+
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
                 Title = "停止酒馆服务？",
-                Content = "正在进行的对话请求会被中断，本地端口 8000 将被释放。",
+                Content = $"正在进行的对话请求会被中断，本地端口 {TavernRuntime.CurrentPort} 将被释放。",
                 PrimaryButtonText = "停止服务",
                 CloseButtonText = "取消",
                 DefaultButton = ContentDialogButton.Close,
@@ -190,8 +433,7 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            SetServiceRunning(false);
-            Notify("服务已停止", "端口 8000 已释放，可随时重新启动。", NotifySeverity.Warning);
+            await TavernRuntime.StopAsync();
         }
 
         private void OpenConsole_Click(object sender, RoutedEventArgs e)
@@ -199,16 +441,13 @@ namespace AstraBrew_Launcher.Views
             App.MainWindow?.NavigateTo("console");
         }
 
-        // ==================== 启动配置 ====================
-
         // ==================== 启动配置：酒馆版本 ====================
 
-        /// <summary>
-        /// 清单或当前实例变化后重画版本区。
-        /// 本页与版本管理页读写同一份 <see cref="TavernInstances"/>，
-        /// 任何一边切换都会走到这里，不存在「这边改了那边不知道」。
-        /// </summary>
-        private void Instances_Changed(object? sender, EventArgs e) => SyncFromCatalog();
+        private void Instances_Changed(object? sender, EventArgs e)
+        {
+            SyncFromCatalog();
+            UpdateEnvironmentText();
+        }
 
         private void SyncFromCatalog()
         {
@@ -233,7 +472,7 @@ namespace AstraBrew_Launcher.Views
         {
             var builder = new System.Text.StringBuilder();
 
-            foreach (var instance in TavernInstances.All)
+            foreach (TavernInstance instance in TavernInstances.All)
             {
                 builder.Append(instance.Kind)
                     .Append(':')
@@ -252,7 +491,7 @@ namespace AstraBrew_Launcher.Views
 
             VersionCombo.Items.Clear();
 
-            foreach (var instance in TavernInstances.All)
+            foreach (TavernInstance instance in TavernInstances.All)
             {
                 VersionCombo.Items.Add(new ComboBoxItem
                 {
@@ -267,7 +506,7 @@ namespace AstraBrew_Launcher.Views
         /// <summary>把下拉框的选中项对齐到共享状态里的当前实例。</summary>
         private void SelectCurrentInCombo()
         {
-            var current = TavernInstances.Current;
+            TavernInstance current = TavernInstances.Current;
 
             for (int i = 0; i < VersionCombo.Items.Count; i++)
             {
@@ -341,10 +580,9 @@ namespace AstraBrew_Launcher.Views
             // 把选择弹回原处并说明原因
             if (!instance.DepsReady)
             {
-                Notify(
+                AppNotify.Warning(
                     "该实例缺少依赖",
-                    $"{instance.DisplayName} 需要先在「版本管理」安装 Node 依赖才能启动，当前仍使用 {TavernInstances.Current.DisplayName}。",
-                    NotifySeverity.Warning);
+                    $"{instance.DisplayName} 需要先在「版本管理」安装 Node 依赖才能启动，当前仍使用 {TavernInstances.Current.DisplayName}。");
 
                 SelectCurrentInCombo();
                 return;
@@ -357,20 +595,32 @@ namespace AstraBrew_Launcher.Views
 
             TavernInstances.Use(instance);
 
-            Notify(
+            // 换实例就换了数据目录（实例模式）或配置来源，地址与指标跟着重算
+            SyncEndpoint();
+            UpdateEnvironmentText();
+            _ = RefreshMetricsAsync(force: true);
+
+            AppNotify.Success(
                 "已切换版本",
                 instance.IsBuiltin
                     ? $"后续启动将使用内置实例 {instance.KernelLabel}。"
-                    : $"后续启动将使用本地 {instance.KernelLabel}，目录：{instance.Path}",
-                NotifySeverity.Success);
+                    : $"后续启动将使用本地 {instance.KernelLabel}，目录：{instance.Path}");
         }
 
         private void RescanVersions_Click(object sender, RoutedEventArgs e)
         {
+            TavernInstances.ReloadBuiltin();
+
+            foreach (TavernInstance instance in TavernInstances.Locals)
+            {
+                TavernInstances.ReloadLocal(instance);
+            }
+
             SyncFromCatalog();
+            _ = RefreshMetricsAsync(force: true);
 
             int missing = 0;
-            foreach (var instance in TavernInstances.Locals)
+            foreach (TavernInstance instance in TavernInstances.Locals)
             {
                 if (!instance.DepsReady)
                 {
@@ -378,18 +628,19 @@ namespace AstraBrew_Launcher.Views
                 }
             }
 
-            Notify(
+            AppNotify.Success(
                 "已重新扫描本地版本",
                 missing == 0
                     ? $"发现 {TavernInstances.Locals.Count} 个本地版本，均可正常启动。"
-                    : $"发现 {TavernInstances.Locals.Count} 个本地版本，其中 {missing} 个缺少 Node 依赖。",
-                NotifySeverity.Success);
+                    : $"发现 {TavernInstances.Locals.Count} 个本地版本，其中 {missing} 个缺少 Node 依赖。");
         }
 
         private void ManageVersions_Click(object sender, RoutedEventArgs e)
         {
             App.MainWindow?.NavigateTo("versions");
         }
+
+        // ==================== 启动配置：模式 / 浏览器 / 范围 ====================
 
         /// <summary>启动模式切换：普通 / 桌面 / 服务器三种面板互斥显示。</summary>
         private void Mode_Checked(object sender, RoutedEventArgs e)
@@ -406,10 +657,11 @@ namespace AstraBrew_Launcher.Views
                     : DesktopModeRadio.IsChecked == true
                         ? LaunchMode.Desktop
                         : LaunchMode.Normal;
-            }
 
-            ApplyModeVisibility();
-            SyncEndpoint();
+                ApplyModeVisibility();
+                SyncEndpoint();
+                SyncServiceScope();
+            }
         }
 
         private void ApplyModeVisibility()
@@ -448,14 +700,19 @@ namespace AstraBrew_Launcher.Views
 
             if (!_syncing)
             {
-                TavernSettings.Scope = LanRadio.IsChecked == true ? ServiceScope.Lan : ServiceScope.Wan;
+                bool lan = LanRadio.IsChecked == true;
+                TavernSettings.Scope = lan ? ServiceScope.Lan : ServiceScope.Wan;
+
+                // 服务范围就是酒馆配置里的 listen：写进文件，配置页下次进来读到的是同一份
+                GlobalTavernConfig.PatchScalar("listen", lan ? "true" : "false");
+                GlobalTavernConfig.PatchScalar("listenAddress.ipv4", lan ? "0.0.0.0" : "127.0.0.1");
             }
 
             SyncServiceScope();
             SyncEndpoint();
         }
 
-        /// <summary>局域网 / 互联网：切换访问地址与说明文案。</summary>
+        /// <summary>局域网 / 互联网：都显示本机真实地址，区别只在于「能不能从外面连进来」。</summary>
         private void SyncServiceScope()
         {
             if (AccessAddressText is null)
@@ -464,11 +721,16 @@ namespace AstraBrew_Launcher.Views
             }
 
             bool lan = LanRadio.IsChecked != false;
+            int port = TavernRuntime.CurrentPort;
 
-            AccessAddressText.Text = lan ? "http://192.168.1.24:8000" : "https://tavern.astrabrew.cn";
+            (string? v4, _) = NetworkInfo.LocalAddresses();
+
+            AccessAddressText.Text = NetworkInfo.HttpUrl(port);
             ServiceScopeHint.Text = lan
                 ? "同一 Wi-Fi 下的设备可直接访问，无需额外配置。"
-                : "经反向代理映射到公网，需保证端口转发与证书有效。";
+                : v4 is null
+                    ? "没有检测到局域网地址；公网访问需要路由器端口映射或反向代理。"
+                    : "公网访问需要路由器端口映射或反向代理；这里显示的是本机网卡地址。";
         }
 
         private void Browser_Checked(object sender, RoutedEventArgs e)
@@ -480,22 +742,40 @@ namespace AstraBrew_Launcher.Views
 
             if (!_syncing)
             {
-                TavernSettings.Browser = EdgeRadio.IsChecked == true
+                // 三个 chip 全不选中 = 跟随系统（官方配置里的 default）
+                BrowserKind browser = EdgeRadio.IsChecked == true
                     ? BrowserKind.Edge
                     : FirefoxRadio.IsChecked == true
                         ? BrowserKind.Firefox
-                        : BrowserKind.Chrome;
+                        : ChromeRadio.IsChecked == true
+                            ? BrowserKind.Chrome
+                            : BrowserKind.System;
+
+                TavernSettings.Browser = browser;
+
+                // 专属浏览器是酒馆自己的配置（browserLaunch.browser），顺手写回文件
+                GlobalTavernConfig.PatchScalar("browserLaunch.browser", BrowserKey(browser));
             }
 
-            OpenTavernHint.Text = $"用 {SelectedBrowserName} 打开";
+            OpenTavernHint.Text = $"用 {TavernSettings.BrowserName} 打开";
+
+            if (BrowserHint is not null)
+            {
+                BrowserHint.Text = TavernSettings.Browser == BrowserKind.System
+                    ? "当前跟随系统默认浏览器；点上面任一项可以固定使用。"
+                    : "启动酒馆后自动用所选浏览器打开界面。";
+            }
         }
 
-        private string SelectedBrowserName =>
-            EdgeRadio.IsChecked == true ? "Edge" :
-            FirefoxRadio.IsChecked == true ? "火狐浏览器" :
-            "谷歌浏览器";
+        private static string BrowserKey(BrowserKind browser) => browser switch
+        {
+            BrowserKind.Edge => "edge",
+            BrowserKind.Firefox => "firefox",
+            BrowserKind.System => "default",
+            _ => "chrome",
+        };
 
-        /// <summary>主卡对外展示的地址：服务器模式下跟随服务模式。</summary>
+        /// <summary>主卡对外展示的地址：服务器模式下跟随服务模式，否则是本机回环地址。</summary>
         private void SyncEndpoint()
         {
             if (EndpointText is null || ServerModeRadio is null)
@@ -503,32 +783,165 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
+            int port = TavernRuntime.CurrentPort;
             bool server = ServerModeRadio.IsChecked == true;
+
             EndpointText.Text = server && AccessAddressText is not null
                 ? AccessAddressText.Text
-                : LocalEndpoint;
+                : $"http://127.0.0.1:{port}";
         }
 
         // ==================== 快捷操作 ====================
 
         private void OpenTavern_Click(object sender, RoutedEventArgs e)
         {
-            Notify("已在浏览器中打开酒馆", $"使用「{SelectedBrowserName}」访问 {EndpointText.Text}。", NotifySeverity.Informational);
+            if (!TavernRuntime.IsRunning)
+            {
+                AppNotify.Info(
+                    "酒馆还没启动",
+                    "点「启动服务」把酒馆跑起来之后，这里会直接用浏览器打开它。",
+                    "启动",
+                    () => _ = TavernRuntime.StartAsync());
+                return;
+            }
+
+            string url = EndpointText.Text;
+
+            if (BrowserLauncher.Open(url, TavernSettings.Browser, out string detail))
+            {
+                AppNotify.Success("已在浏览器中打开酒馆", $"{url} · {detail}");
+                return;
+            }
+
+            AppNotify.Error("打开浏览器失败", $"{url} · {detail}");
         }
 
         private void OpenDataDir_Click(object sender, RoutedEventArgs e)
         {
-            Notify(
-                "已打开数据目录",
-                Path.Combine(AppPaths.RoamingRoot, "data"),
-                NotifySeverity.Informational);
-            App.MainWindow?.NavigateTo("resources");
+            string path = TavernRuntime.ResolveDataRoot();
+
+            if (!Directory.Exists(path))
+            {
+                AppNotify.Warning("数据目录还不存在", path + " 会在酒馆第一次启动时创建。");
+                return;
+            }
+
+            try
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
+                AppNotify.Success("已打开数据目录", path);
+            }
+            catch (Exception ex)
+            {
+                AppNotify.Error("打不开数据目录", ex.Message);
+            }
         }
 
-        private void ImportCard_Click(object sender, RoutedEventArgs e)
+        /// <summary>
+        /// 导入角色卡：选 PNG / JSON 直接复制进酒馆的 characters 目录。
+        /// 复制完刷新一次指标——卡片数字应该当场变，而不是等下次进页面。
+        /// </summary>
+        private async void ImportCard_Click(object sender, RoutedEventArgs e)
         {
-            Notify("请选择角色卡文件", "支持 PNG 与 JSON 两种格式，可一次选择多张。", NotifySeverity.Informational);
-            App.MainWindow?.NavigateTo("resources");
+            string root = TavernRuntime.ResolveDataRoot();
+            string target = Path.Combine(root, "default-user", "characters");
+
+            IReadOnlyList<StorageFile> files;
+
+            try
+            {
+                var picker = new FileOpenPicker
+                {
+                    SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                    ViewMode = PickerViewMode.Thumbnail,
+                };
+
+                picker.FileTypeFilter.Add(".png");
+                picker.FileTypeFilter.Add(".json");
+
+                if (App.MainWindow is not null)
+                {
+                    InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(App.MainWindow));
+                }
+
+                files = await picker.PickMultipleFilesAsync();
+            }
+            catch (Exception ex)
+            {
+                AppNotify.Error("打开文件选择器失败", ex.Message);
+                return;
+            }
+
+            if (files.Count == 0)
+            {
+                return;
+            }
+
+            int copied = 0;
+            string? firstError = null;
+
+            try
+            {
+                Directory.CreateDirectory(target);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                AppNotify.Error("角色卡目录不可写", target + "：" + ex.Message);
+                return;
+            }
+
+            foreach (StorageFile file in files)
+            {
+                try
+                {
+                    File.Copy(file.Path, UniquePath(target, file.Name), overwrite: false);
+                    copied++;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    firstError ??= ex.Message;
+                }
+            }
+
+            if (copied == 0)
+            {
+                AppNotify.Error("导入失败", firstError ?? "没有文件被复制。");
+                return;
+            }
+
+            AppNotify.Success(
+                $"已导入 {copied} 张角色卡",
+                firstError is null
+                    ? "已复制到酒馆的角色卡目录，刷新酒馆页面即可看到。"
+                    : $"其中 {files.Count - copied} 张失败：{firstError}");
+
+            await RefreshMetricsAsync(force: true);
+        }
+
+        /// <summary>同名文件不覆盖：加「(2)」后缀，避免把用户已有的卡顶掉。</summary>
+        private static string UniquePath(string directory, string fileName)
+        {
+            string path = Path.Combine(directory, fileName);
+
+            if (!File.Exists(path))
+            {
+                return path;
+            }
+
+            string stem = Path.GetFileNameWithoutExtension(fileName);
+            string extension = Path.GetExtension(fileName);
+
+            for (int index = 2; index < 1000; index++)
+            {
+                path = Path.Combine(directory, $"{stem} ({index}){extension}");
+
+                if (!File.Exists(path))
+                {
+                    return path;
+                }
+            }
+
+            return Path.Combine(directory, $"{stem}-{Guid.NewGuid():N}{extension}");
         }
 
         private void OpenConfig_Click(object sender, RoutedEventArgs e)
@@ -538,10 +951,21 @@ namespace AstraBrew_Launcher.Views
 
         // ==================== 状态同步 ====================
 
-        /// <summary>切换运行/停止态：主卡光晕与状态文案保持一致。</summary>
-        private void SetServiceRunning(bool running)
+        /// <summary>切换运行/停止态：主卡、主按钮、指标条保持一致。</summary>
+        private void SetServiceRunning()
         {
-            ServiceStateText.Text = running ? "服务运行中" : "服务已停止";
+            TavernProcessState state = TavernRuntime.State;
+            bool running = state.IsRunning;
+            bool busy = state.IsBusy;
+
+            ServiceStateText.Text = state.State switch
+            {
+                TavernRunState.Starting => "正在启动…",
+                TavernRunState.Running => "服务运行中",
+                TavernRunState.Stopping => "正在停止…",
+                TavernRunState.Failed => "启动失败",
+                _ => "服务已停止",
+            };
 
             StatusHalo.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
             StatusDotRunning.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
@@ -556,10 +980,43 @@ namespace AstraBrew_Launcher.Views
             {
                 StopStatusPulse();
             }
+
+            // 没在跑时主按钮是「启动」，跑起来才变成「重启」——一个按钮兼顾两件事，
+            // 也避免「停止状态点重启什么都不会发生」
+            PrimaryActionButton.IsEnabled = !busy;
+            PrimaryActionText.Text = running ? "重启服务" : "启动服务";
+            PrimaryActionGlyph.Glyph = running ? "\uE72C" : "\uE768";
+            HeroStopButton.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
+
+            UpdateUptime();
+            UpdateProcessMetrics();
+            SyncEndpoint();
+            UpdateEnvironmentText();
         }
 
-        /// <summary>页面播报统一走全局消息（窗口右下角），页面里不再挂 InfoBar。</summary>
-        private static void Notify(string title, string message, NotifySeverity severity)
-            => AppNotify.Post(severity, title, message);
+        /// <summary>运行状态只有一份：控制台在跑什么，仪表盘的徽标就显示什么。</summary>
+        private void Runtime_Changed(object? sender, EventArgs e) => SetServiceRunning();
+
+        /// <summary>已持续运行 / PID：都取自运行时快照，没在跑就显示占位。</summary>
+        private void UpdateUptime()
+        {
+            if (HeroUptimeValue is null || HeroUptimePid is null)
+            {
+                return;
+            }
+
+            TavernProcessState state = TavernRuntime.State;
+
+            if (!state.IsRunning || state.StartedAt is not { } started)
+            {
+                HeroUptimeValue.Text = "--:--:--";
+                HeroUptimePid.Text = "PID —";
+                return;
+            }
+
+            TimeSpan span = DateTime.Now - started;
+            HeroUptimeValue.Text = $"{(int)span.TotalHours:00}:{span.Minutes:00}:{span.Seconds:00}";
+            HeroUptimePid.Text = state.Pid is { } pid ? $"PID {pid}" : "PID —";
+        }
     }
 }

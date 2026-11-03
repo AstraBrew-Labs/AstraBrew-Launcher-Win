@@ -80,7 +80,7 @@
                 <TextBlock
                     Style="{StaticResource FieldHintTextStyle}"
                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                    Text="支持 GitHub、Gitee 的 HTTPS 地址；只有 GitHub 域名会经 gh-proxy.org 中转，Gitee 等镜像直接连。同名目录已存在时会被覆盖，扩展配置不保留。" />
+                    Text="支持 GitHub、Gitee 的 HTTPS 地址；只有 GitHub 域名会按「GitHub 加速」开关经中转访问，其余直连。同名目录已存在时会加后缀另装一份，不会覆盖已有扩展。" />
             </StackPanel>
 
             <!--  离线面板  -->
@@ -91,20 +91,31 @@
                 <Button Click="PickOffline_Click">
                     <StackPanel Orientation="Horizontal" Spacing="7">
                         <FontIcon FontSize="12" Glyph="&#xE8E5;" />
-                        <TextBlock Text="选择 .zip 离线包" />
+                        <TextBlock Text="选择 .zip 离线包（可多选）" />
                     </StackPanel>
                 </Button>
-                <Border Padding="12,10" Style="{StaticResource SubPanelStyle}">
-                    <TextBlock
-                        x:Name="OfflineText"
-                        Style="{StaticResource FieldHintTextStyle}"
-                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        Text="尚未选择离线包" />
+
+                <!--  已选的包逐个列出预检结果：哪个能装、装成什么名字、哪个有问题  -->
+                <Border
+                    x:Name="OfflineListPanel"
+                    Padding="10,6"
+                    Style="{StaticResource SubPanelStyle}"
+                    Visibility="Collapsed">
+                    <ScrollViewer MaxHeight="148" VerticalScrollBarVisibility="Auto">
+                        <StackPanel x:Name="OfflineHost" Spacing="2" />
+                    </ScrollViewer>
                 </Border>
+
+                <TextBlock
+                    x:Name="OfflineText"
+                    Style="{StaticResource FieldHintTextStyle}"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                    Text="尚未选择离线包" />
+
                 <TextBlock
                     Style="{StaticResource FieldHintTextStyle}"
                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                    Text="离线包需包含 manifest.json；一次可选择多个，安装完成后统一启用。" />
+                    Text="离线包需包含 manifest.json；压缩包里套了一层目录也能认出来。同一批里有两个同名的包会整组标为无效——装出来会是 x 和 x-2，分不清哪个才是要的。装完会自动启用，可在列表中关闭。" />
             </StackPanel>
 
             <!--  校验提示放在两条路径之外，切 Tab 后仍然可见  -->

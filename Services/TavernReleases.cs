@@ -1,7 +1,8 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -43,19 +44,27 @@ namespace AstraBrew_Launcher.Services
         string? Error)
     {
         public int StableCount => Releases.Count(release => !release.Prerelease);
+
+        public static ReleaseResult Empty { get; } = new(
+            Array.Empty<TavernRelease>(),
+            DateTimeOffset.MinValue,
+            string.Empty,
+            false,
+            null);
     }
 
     /// <summary>
     /// 内置实例的版本列表：GitHub Releases API + 本地缓存。
     ///
-    /// 约定：
-    /// · <b>缓存优先</b>：只要本地有缓存就直接用，不请求网络——未登录的 GitHub API
-    ///   每小时只有 60 次额度，页面每进一次就拉一次很快就会 403。
-    /// · <b>强制刷新</b>只由用户点「刷新版本列表」触发，成功后覆盖缓存。
-    /// · <b>加速跟随开关</b>：请求经 <see cref="GithubAccel.Targets"/> 排地址，开着先走
-    ///   <c>gh-proxy.org</c> 再退回直连；关掉就只连直连。与下载源选的是 Gitee / GitCode /
-    ///   GitHub 无关——加速针对的是 github 域名本身，不是某一条下载通道。
-    /// · <b>失败不空手</b>：强制刷新失败时继续显示旧缓存，并把原因折成一句话给界面。
+    /// 关于限流与缓存的关系（这里以前想错过一次）：
+    /// · <b>加速是一条独立出口，不是同一条线路的备胎</b>。中转端自己有 Token 池，
+    ///   直连的 60 次/小时与它无关。所以某条出口返回 403/429 时**不能直接放弃**，
+    ///   要继续试下一条——这正是「加速绕开 QPS 限制」的实际含义。
+    /// · <b>缓存与节流只为「不要频繁请求」</b>，不是「永远不请求」：缓存 15 分钟内直接用，
+    ///   过期就重新校验一次；失败后 5 分钟内不再重试，避免每次翻页都去撞墙。
+    /// · <b>条件请求</b>：带上上一次的 <c>ETag</c>（<c>If-None-Match</c>），GitHub 回 304 时
+    ///   不消耗额度——所以「经常校验」和「省额度」可以同时成立。
+    /// · <b>失败不空手</b>：刷新失败时继续显示旧缓存，并把原因折成一句话给界面。
     /// </summary>
     public static class TavernReleases
     {
@@ -66,11 +75,23 @@ namespace AstraBrew_Launcher.Services
         /// <summary>发布说明保留多少字进缓存。完整正文常有十几 KB，界面上也看不完。</summary>
         private const int NotesLimit = 12000;
 
+        /// <summary>缓存的新鲜期：这段时间内直接用，不碰网络。</summary>
+        private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
+
+        /// <summary>一次请求失败后的冷却期，期间不再自动重试（手动刷新不受限制）。</summary>
+        private static readonly TimeSpan FailureCooldown = TimeSpan.FromMinutes(5);
+
         private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(20);
 
         private static readonly SemaphoreSlim Gate = new(1, 1);
 
         private static ReleaseResult? _memory;
+
+        /// <summary>上一次成功响应带的 ETag；条件请求用它换 304，不消耗额度。</summary>
+        private static string? _etag;
+
+        private static DateTimeOffset _lastFailureAt = DateTimeOffset.MinValue;
+        private static string? _lastFailure;
 
         /// <summary>缓存文件；删掉只会让下次多请求一次，不影响任何配置。</summary>
         public static string CachePath { get; } =
@@ -80,7 +101,7 @@ namespace AstraBrew_Launcher.Services
         public static IReadOnlyList<TavernRelease> Current => _memory?.Releases ?? Array.Empty<TavernRelease>();
 
         /// <summary>
-        /// 取发布列表。<paramref name="force"/> 为 true 时跳过缓存重新请求；
+        /// 取发布列表。<paramref name="force"/> 为 true 时无视缓存与冷却，直接请求；
         /// 请求失败但手里还有缓存时返回旧数据并带上 <see cref="ReleaseResult.Error"/>。
         /// 永不抛异常（取消除外）。
         /// </summary>
@@ -91,29 +112,55 @@ namespace AstraBrew_Launcher.Services
             try
             {
                 // 内存缓存比磁盘更近：同一进程里切页签不需要反复读文件
-                if (!force && _memory is not null)
+                ReleaseResult? cached = _memory ?? ReadCache();
+                if (cached is not null)
                 {
-                    return _memory with { FromCache = true };
+                    _memory = cached;
                 }
 
-                if (!force)
+                if (!force && cached is not null && IsFresh(cached))
                 {
-                    ReleaseResult? cached = ReadCache();
-                    if (cached is not null)
+                    return cached with { FromCache = true, Error = null };
+                }
+
+                if (!force && _lastFailure is { Length: > 0 }
+                    && DateTimeOffset.Now - _lastFailureAt < FailureCooldown)
+                {
+                    return (cached ?? ReleaseResult.Empty) with
                     {
-                        _memory = cached;
-                        return cached;
-                    }
+                        FromCache = cached is not null,
+                        Error = cached is null
+                            ? _lastFailure
+                            : $"刚才没能刷新，先看缓存的列表。{_lastFailure}",
+                    };
                 }
 
                 try
                 {
-                    (IReadOnlyList<TavernRelease> releases, string source) =
-                        await FetchAsync(token).ConfigureAwait(false);
+                    (IReadOnlyList<TavernRelease> releases, string source, bool notModified) =
+                        await FetchAsync(cached?.Releases, token).ConfigureAwait(false);
+
+                    if (notModified && cached is not null)
+                    {
+                        // 304：内容没变，但「校验过」本身就说明缓存是最新的
+                        ReleaseResult verified = cached with
+                        {
+                            FetchedAt = DateTimeOffset.Now,
+                            Source = source,
+                            FromCache = false,
+                            Error = null,
+                        };
+
+                        WriteCache(verified);
+                        _memory = verified;
+                        _lastFailure = null;
+                        return verified;
+                    }
 
                     var fresh = new ReleaseResult(releases, DateTimeOffset.Now, source, false, null);
                     WriteCache(fresh);
                     _memory = fresh;
+                    _lastFailure = null;
                     return fresh;
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -122,23 +169,21 @@ namespace AstraBrew_Launcher.Services
                 }
                 catch (Exception ex)
                 {
+                    _lastFailure = Describe(ex);
+                    _lastFailureAt = DateTimeOffset.Now;
+
                     // 刷新失败时不要把手里的旧列表也弄丢：用户至少还能看到上一次的结果
-                    ReleaseResult? fallback = _memory ?? ReadCache();
+                    ReleaseResult? fallback = cached ?? _memory;
                     if (fallback is not null)
                     {
                         return fallback with
                         {
                             FromCache = true,
-                            Error = $"这次没能刷新，显示的是上次缓存的版本列表。{Describe(ex)}",
+                            Error = $"这次没能刷新，显示的是上次缓存的版本列表。{_lastFailure}",
                         };
                     }
 
-                    return new ReleaseResult(
-                        Array.Empty<TavernRelease>(),
-                        DateTimeOffset.MinValue,
-                        string.Empty,
-                        false,
-                        Describe(ex));
+                    return ReleaseResult.Empty with { Error = _lastFailure };
                 }
             }
             finally
@@ -147,10 +192,8 @@ namespace AstraBrew_Launcher.Services
             }
         }
 
-        /// <summary>
-        /// 比较两个版本号，&gt; 0 表示 <paramref name="left"/> 更新。
-        /// 解析不了就退回字符串比较，至少保证结果稳定。
-        /// </summary>
+        /// <summary>比较两个版本号，&gt; 0 表示 <paramref name="left"/> 更新。</summary>
+        /// <remarks>解析不了就退回字符串比较，至少保证结果稳定。</remarks>
         public static int Compare(string? left, string? right)
         {
             string a = Numeric(left);
@@ -164,12 +207,23 @@ namespace AstraBrew_Launcher.Services
             return string.CompareOrdinal(a, b);
         }
 
+        private static bool IsFresh(ReleaseResult result)
+            => result.Releases.Count > 0
+                && result.FetchedAt != DateTimeOffset.MinValue
+                && DateTimeOffset.Now - result.FetchedAt < CacheTtl;
+
         // ==================== 网络 ====================
 
-        private static async Task<(IReadOnlyList<TavernRelease> Releases, string Source)> FetchAsync(
+        private static async Task<(IReadOnlyList<TavernRelease> Releases, string Source, bool NotModified)> FetchAsync(
+            IReadOnlyList<TavernRelease>? known,
             CancellationToken token)
         {
             var failures = new List<string>();
+            var throttled = new List<string>();
+            string? resumeHint = null;
+
+            // 只有手里确实有列表时条件请求才有意义（304 时要拿它顶上）
+            bool conditional = known is { Count: > 0 } && _etag is { Length: > 0 };
 
             foreach (SourceTarget target in GithubAccel.Targets(ApiUrl))
             {
@@ -182,20 +236,33 @@ namespace AstraBrew_Launcher.Services
                     request.Headers.Accept.ParseAdd("application/vnd.github+json");
                     request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
 
+                    if (conditional)
+                    {
+                        request.Headers.TryAddWithoutValidation("If-None-Match", _etag);
+                    }
+
                     using HttpResponseMessage response =
                         await client.SendAsync(request, token).ConfigureAwait(false);
+
+                    if (response.StatusCode == HttpStatusCode.NotModified)
+                    {
+                        // 304 按 GitHub 的规定不计入额度：这次「刷新」几乎不花钱
+                        return (known!, target.Name, true);
+                    }
+
+                    // 限流只针对这一条出口：中转端有自己的 Token 池，直连是 60 次/小时。
+                    // 一条被拒不代表另一条也不行，所以这里记一笔继续试，绝不直接放弃。
+                    if ((int)response.StatusCode is 403 or 429)
+                    {
+                        throttled.Add(target.Name);
+                        resumeHint ??= ResumeHint(response);
+                        failures.Add($"{target.Name} 被限流（HTTP {(int)response.StatusCode}）");
+                        continue;
+                    }
 
                     if (!response.IsSuccessStatusCode)
                     {
                         failures.Add($"{target.Name} HTTP {(int)response.StatusCode}");
-
-                        // 403 / 429 是限流，换直连也一样，早点说清楚比逐个试一遍更快
-                        if ((int)response.StatusCode is 403 or 429)
-                        {
-                            throw new FetchException(
-                                "GitHub 接口被限流（403）。等一小时后再试，或切换「GitHub 加速服务」开关换一条出口。");
-                        }
-
                         continue;
                     }
 
@@ -217,13 +284,10 @@ namespace AstraBrew_Launcher.Services
                         continue;
                     }
 
-                    return (releases, target.Name);
+                    _etag = ReadEtag(response);
+                    return (releases, target.Name, false);
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (FetchException)
                 {
                     throw;
                 }
@@ -233,10 +297,65 @@ namespace AstraBrew_Launcher.Services
                 }
             }
 
+            if (throttled.Count > 0)
+            {
+                throw new FetchException(BuildThrottleMessage(throttled, failures, resumeHint));
+            }
+
             throw new FetchException(
                 failures.Count > 0
                     ? $"拿不到版本列表（{string.Join("；", failures)}）。"
                     : "拿不到版本列表。");
+        }
+
+        private static string BuildThrottleMessage(List<string> throttled, List<string> failures, string? resumeHint)
+        {
+            string when = resumeHint is null ? string.Empty : $"额度大约 {resumeHint}恢复。";
+
+            // 另一条出口可能是因为别的原因失败的（连不上、502），如实带上，别一律说成「被限流」
+            List<string> others = failures
+                .Where(item => !item.Contains("被限流", StringComparison.Ordinal))
+                .ToList();
+
+            string detail = others.Count > 0 ? $"另外{string.Join("；", others)}。" : string.Empty;
+            string advice = GithubAccel.Enabled
+                ? "加速与直连两条出口都试过了，只能等一会儿再试。"
+                : "打开「设置 → 网络 → GitHub 加速服务」可以换一条出口——中转端有自己的配额，不用等直连那 60 次/小时恢复。";
+
+            return $"GitHub 接口限流（{string.Join("、", throttled)} 被拒）。{when}{detail}{advice}";
+        }
+
+        /// <summary>从限流响应里读「什么时候恢复」：优先 Retry-After，其次 X-RateLimit-Reset。</summary>
+        private static string? ResumeHint(HttpResponseMessage response)
+        {
+            if (response.Headers.RetryAfter is { } retry)
+            {
+                if (retry.Delta is { } delta)
+                {
+                    int minutes = (int)Math.Ceiling(delta.TotalMinutes);
+                    return minutes <= 1 ? "在 1 分钟内" : $"在 {minutes} 分钟内";
+                }
+
+                if (retry.Date is { } date)
+                {
+                    return $"在 {date.ToLocalTime():HH:mm} 之后";
+                }
+            }
+
+            if (response.Headers.TryGetValues("X-RateLimit-Reset", out IEnumerable<string>? values)
+                && long.TryParse(values.FirstOrDefault(), out long epoch)
+                && epoch > 0 && epoch < 4102444800)
+            {
+                return $"在 {DateTimeOffset.FromUnixTimeSeconds(epoch).ToLocalTime():HH:mm} 之后";
+            }
+
+            return null;
+        }
+
+        private static string? ReadEtag(HttpResponseMessage response)
+        {
+            string? tag = response.Headers.ETag?.Tag;
+            return string.IsNullOrWhiteSpace(tag) ? null : tag;
         }
 
         private static List<TavernRelease> Map(ApiRelease[] payload)
@@ -322,6 +441,8 @@ namespace AstraBrew_Launcher.Services
                     return null;
                 }
 
+                _etag = string.IsNullOrWhiteSpace(file.Etag) ? null : file.Etag;
+
                 return new ReleaseResult(
                     releases,
                     file.FetchedAt,
@@ -346,6 +467,7 @@ namespace AstraBrew_Launcher.Services
                 {
                     FetchedAt = result.FetchedAt,
                     Source = result.Source,
+                    Etag = _etag,
                 };
 
                 foreach (TavernRelease release in result.Releases)
@@ -441,6 +563,10 @@ namespace AstraBrew_Launcher.Services
 
         [JsonPropertyName("source")]
         public string? Source { get; set; }
+
+        /// <summary>条件请求用的 ETag；镜像与直连偶尔会给不同的值，以最近一次成功为准。</summary>
+        [JsonPropertyName("etag")]
+        public string? Etag { get; set; }
 
         [JsonPropertyName("releases")]
         public List<ReleaseCacheEntry> Releases { get; set; } = new();

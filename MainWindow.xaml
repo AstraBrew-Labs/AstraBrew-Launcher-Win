@@ -122,7 +122,11 @@
                                 <FontIcon Glyph="&#xE74C;" />
                             </NavigationViewItem.Icon>
                             <NavigationViewItem.InfoBadge>
-                                <InfoBadge Value="3" />
+                                <!--  待更新数量由扩展页检查更新后写入，默认不显示（没有数据时挂个 0 只会误导）  -->
+                                <InfoBadge
+                                    x:Name="ExtensionsBadge"
+                                    Value="0"
+                                    Visibility="Collapsed" />
                             </NavigationViewItem.InfoBadge>
                         </NavigationViewItem>
                         <NavigationViewItem Content="资源管理" Tag="resources">

@@ -79,6 +79,21 @@ namespace AstraBrew_Launcher.Services
         public static string? LocateNode() => FirstExisting(BuiltinNodeCandidates()) ?? FindOnPath("node");
 
         /// <summary>
+        /// 按设置里的环境来源找 Git：内置只看启动器目录，系统只看 PATH。
+        ///
+        /// 与无参版本的区别是「不跨来源回退」：选了内置环境却拿系统的 git 去跑，
+        /// 用户以为在用一个自包含的便携环境，实际并没有——启动时的环境检查必须问得准。
+        /// </summary>
+        public static string? LocateGit(RuntimeSource source) => source == RuntimeSource.Builtin
+            ? FirstExisting(BuiltinGitCandidates())
+            : FindOnPath("git");
+
+        /// <summary>按环境来源找 Node.js，规则同 <see cref="LocateGit(RuntimeSource)"/>。</summary>
+        public static string? LocateNode(RuntimeSource source) => source == RuntimeSource.Builtin
+            ? FirstExisting(BuiltinNodeCandidates())
+            : FindOnPath("node");
+
+        /// <summary>
         /// 找 npm 的入口脚本（<c>&lt;node 目录&gt;\node_modules\npm\bin\npm-cli.js</c>）。
         ///
         /// 不直接用 <c>npm.cmd</c>：.cmd 是批处理，重定向 stdout/stderr 时得先起 cmd.exe，

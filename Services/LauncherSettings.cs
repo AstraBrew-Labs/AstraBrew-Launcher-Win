@@ -38,11 +38,15 @@ namespace AstraBrew_Launcher.Services
         All,
     }
 
-    /// <summary>用户点「启动」后的默认行为。</summary>
+    /// <summary>
+    /// 用户点「启动」后的默认行为。顺序必须与 <see cref="LaunchMode"/> 一致——
+    /// <see cref="TavernSettings.Mode"/> 直接按序号换算，两者是同一份状态的两个视角。
+    /// </summary>
     public enum QuickStartMode
     {
         Normal,
         Desktop,
+        Server,
     }
 
     /// <summary>局域网内可见，还是经反代暴露到公网。</summary>

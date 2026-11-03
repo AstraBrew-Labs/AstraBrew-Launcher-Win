@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -17,6 +17,7 @@ namespace AstraBrew_Launcher.Views
 {
     /// <summary>
     /// 扩展列表的行视图数据。
+    /// 每行背后都有一份真实目录（<see cref="Source"/>），开关状态来自酒馆的 settings.json。
     /// 行的增删与筛选由页面整表重建，只有启用开关会就地改状态，
     /// 因此与开关相关的展示属性都走变更通知（XAML 里绑定为 OneWay）。
     /// </summary>
@@ -35,32 +36,36 @@ namespace AstraBrew_Launcher.Views
 
         public event PropertyChangedEventHandler? PropertyChanged;
 
+        /// <summary>这行指向的磁盘实体。</summary>
+        public TavernExtension Source { get; set; } = new();
+
         public string Name { get; set; } = string.Empty;
 
         public string Version { get; set; } = string.Empty;
 
-        /// <summary>最低酒馆版本，例如 1.12.0；为空表示不限制。</summary>
-        public string MinClient { get; set; } = string.Empty;
+        /// <summary>manifest 里声明的依赖扩展；为空表示不依赖别的扩展。</summary>
+        public string RequiresLabel { get; set; } = string.Empty;
 
         public string Author { get; set; } = string.Empty;
 
         /// <summary>third-party 下的目录名。</summary>
         public string Folder { get; set; } = string.Empty;
 
-        /// <summary>目录提示：行内不再单独占一列，鼠标停到图标座上显示。</summary>
-        public string FolderTip => string.IsNullOrEmpty(Folder) ? string.Empty : "third-party\\" + Folder;
+        /// <summary>扩展目录的完整路径，鼠标停到图标座上显示。</summary>
+        public string FolderTip { get; set; } = string.Empty;
+
+        public string HomePage { get; set; } = string.Empty;
 
         public string Glyph { get; set; } = "\uE8F1";
 
+        /// <summary>酒馆自带（不可删除、不可开关）。</summary>
         public bool IsSystem { get; set; }
 
         public bool HasUpdate { get; set; }
 
         public bool Broken { get; set; }
 
-        public bool GitRepairable { get; set; }
-
-        public bool HasHomepage { get; set; } = true;
+        public bool HasHomepage => !string.IsNullOrEmpty(HomePage);
 
         public bool Enabled
         {
@@ -87,8 +92,6 @@ namespace AstraBrew_Launcher.Views
 
         public string VersionLabel => string.IsNullOrEmpty(Version) ? "—" : "v" + Version;
 
-        public string MinClientLabel => string.IsNullOrEmpty(MinClient) ? string.Empty : "ST ≥ " + MinClient;
-
         public string AuthorLabel => string.IsNullOrEmpty(Author) ? "未署名" : Author;
 
         public Visibility TitleOnVisibility => Show(Enabled);
@@ -99,7 +102,7 @@ namespace AstraBrew_Launcher.Views
 
         public Visibility DisabledLabelVisibility => Show(!Enabled);
 
-        public Visibility MinClientVisibility => Show(!string.IsNullOrEmpty(MinClient));
+        public Visibility RequiresVisibility => Show(!string.IsNullOrEmpty(RequiresLabel));
 
         public Visibility SystemVisibility => Show(IsSystem);
 
@@ -108,8 +111,6 @@ namespace AstraBrew_Launcher.Views
         public Visibility BrokenVisibility => Show(Broken);
 
         public Visibility HomepageVisibility => Show(HasHomepage && !IsSystem);
-
-        public Visibility RepairVisibility => Show(GitRepairable);
 
         public Visibility SwitchVisibility => Show(!IsSystem);
 
@@ -133,149 +134,128 @@ namespace AstraBrew_Launcher.Views
     }
 
     /// <summary>
-    /// 扩展管理：绑定到一个酒馆实例的 third-party 目录，管理启用、更新与删除。
-    /// 页面分三层——页头（全局状态与安装入口）、目标实例条（这批扩展装在哪）、
-    /// 已安装列表（每行一个扩展，行内完成开关与清理）。
+    /// 扩展管理：管当前实例的 third-party 目录，以及酒馆自带的那批扩展。
+    ///
+    /// 页面上每个数字都对得上磁盘：列表来自真实目录，开关写回
+    /// <c>default-user/settings.json</c> 的 <c>disabledExtensions</c>，
+    /// 删除走回收站，检查更新真的去比对远端 HEAD。切换实例时整页跟着换目标。
     /// </summary>
     public sealed partial class ExtensionsPage : Page
     {
-        /// <summary>目标实例的扩展目录：取自共享清单的内置实例路径，不再写死某个用户名。</summary>
-        private static readonly string TargetPath = Path.Combine(
-            TavernInstances.Builtin.Path,
-            "public",
-            "scripts",
-            "extensions",
-            "third-party");
-
         private readonly List<ExtensionRow> _all = new();
 
+        private TavernInstance _instance = TavernInstances.Current;
         private string _query = string.Empty;
         private bool _showSystem;
         private bool _busy;
+        private bool _hooked;
 
         public ExtensionsPage()
         {
             InitializeComponent();
 
-            // 界面上直接给出展开后的真实路径
-            TargetPathText.Text = TargetPath;
-            TargetInstanceChipText.Text = $"内置 · {TavernInstances.Builtin.KernelLabel}";
-
-            Seed();
-            Loaded += (_, _) => RefreshRows();
+            Loaded += OnLoaded;
+            Unloaded += OnUnloaded;
         }
 
         /// <summary>列表数据源；筛选后整表重建。</summary>
         public ObservableCollection<ExtensionRow> Rows { get; } = new();
 
+        private string TargetRoot => TavernExtensions.ThirdPartyRoot(_instance);
+
+        private void OnLoaded(object sender, RoutedEventArgs e)
+        {
+            if (!_hooked)
+            {
+                TavernInstances.Changed += OnInstancesChanged;
+                TavernRuntime.Changed += OnRuntimeChanged;
+                _hooked = true;
+            }
+
+            UpdateTargetChrome();
+            _ = ReloadAsync();
+        }
+
+        private void OnUnloaded(object sender, RoutedEventArgs e)
+        {
+            if (!_hooked)
+            {
+                return;
+            }
+
+            TavernInstances.Changed -= OnInstancesChanged;
+            TavernRuntime.Changed -= OnRuntimeChanged;
+            _hooked = false;
+        }
+
+        private void OnInstancesChanged(object? sender, EventArgs e)
+        {
+            if (ReferenceEquals(_instance, TavernInstances.Current))
+            {
+                return;
+            }
+
+            UpdateTargetChrome();
+            _ = ReloadAsync();
+        }
+
+        /// <summary>酒馆启停不影响扩展目录，但会影响「改了会不会被覆盖」的提示，所以只刷新说明。</summary>
+        private void OnRuntimeChanged(object? sender, EventArgs e) => UpdateTargetChrome();
+
         // ==================== 数据 ====================
 
-        private void Seed()
+        private void UpdateTargetChrome()
         {
-            _all.AddRange(new[]
+            TavernInstance instance = TavernInstances.Current;
+            _instance = instance;
+
+            TargetPathText.Text = TavernExtensions.ThirdPartyRoot(instance);
+            TargetInstanceChipText.Text = $"{instance.KindLabel} · {instance.KernelLabel}";
+        }
+
+        /// <summary>重扫磁盘并整表重建。扫描在后台线程跑，几十个目录也不至于卡一下。</summary>
+        private async Task ReloadAsync()
+        {
+            TavernInstance instance = _instance;
+            IReadOnlyList<TavernExtension> items = await Task.Run(() => TavernExtensions.Load(instance));
+
+            // 扫描期间用户可能又换了实例，这批结果就过期了
+            if (!ReferenceEquals(instance, TavernInstances.Current))
             {
-                new ExtensionRow("#8E44DC")
-                {
-                    Name = "长期记忆",
-                    Version = "2.1.0",
-                    Author = "星酿工坊",
-                    Folder = "long-term-memory",
-                    HasUpdate = true,
-                    Glyph = "\uE8F1",
-                },
-                new ExtensionRow("#2B88D8")
-                {
-                    Name = "语音合成",
-                    Version = "1.0.4",
-                    MinClient = "1.12.0",
-                    Author = "月见",
-                    Folder = "speech-synthesis",
-                    Glyph = "\uE767",
-                },
-                new ExtensionRow("#12A5A5")
-                {
-                    Name = "变量脚本",
-                    Version = "0.9.2",
-                    Author = "白露",
-                    Folder = "var-scripts",
-                    Enabled = false,
-                    Glyph = "\uE943",
-                },
-                new ExtensionRow("#C08A00")
-                {
-                    Name = "界面主题包",
-                    Version = "3.2.0",
-                    Author = "星野",
-                    Folder = "theme-pack",
-                    Glyph = "\uE790",
-                },
-                new ExtensionRow("#8E44DC")
-                {
-                    Name = "快捷回复",
-                    Version = "1.4.1",
-                    MinClient = "1.12.0",
-                    Author = "空青",
-                    Folder = "quick-reply",
-                    Glyph = "\uE8AC",
-                },
-                new ExtensionRow("#2B88D8")
-                {
-                    Name = "正则助手",
-                    Version = "0.6.0",
-                    Author = "无衣",
-                    Folder = "regex-helper",
-                    Enabled = false,
-                    Broken = true,
-                    Glyph = "\uE943",
-                },
-                new ExtensionRow("#12A5A5")
-                {
-                    Name = "翻译桥",
-                    Version = "2.0.3",
-                    Author = "星酿工坊",
-                    Folder = "translate-bridge",
-                    Glyph = "\uE774",
-                },
-                new ExtensionRow("#C08A00")
-                {
-                    Name = "角色卡导出",
-                    Version = "1.1.0",
-                    Author = "拾光",
-                    Folder = "card-export",
-                    Enabled = false,
-                    GitRepairable = true,
-                    HasHomepage = false,
-                    Glyph = "\uE8B5",
-                },
-                new ExtensionRow("#8E44DC")
-                {
-                    Name = "群聊增强",
-                    Version = "0.4.2",
-                    Author = "空青",
-                    Folder = "group-enhance",
-                    Glyph = "\uE902",
-                },
-                new ExtensionRow("#8A8A8A")
-                {
-                    Name = "扩展管理器",
-                    Version = "1.0.0",
-                    Author = "SillyTavern",
-                    Folder = "extensions-manager",
-                    IsSystem = true,
-                    HasHomepage = false,
-                    Glyph = "\uE713",
-                },
-                new ExtensionRow("#8A8A8A")
-                {
-                    Name = "向量存储",
-                    Version = "1.2.0",
-                    Author = "SillyTavern",
-                    Folder = "vector-storage",
-                    IsSystem = true,
-                    HasHomepage = false,
-                    Glyph = "\uE9F5",
-                },
-            });
+                return;
+            }
+
+            _all.Clear();
+            foreach (TavernExtension item in items)
+            {
+                _all.Add(ToRow(item));
+            }
+
+            RefreshRows();
+        }
+
+        private static ExtensionRow ToRow(TavernExtension item)
+        {
+            var row = new ExtensionRow(item.IsThirdParty ? "#8E44DC" : "#8A8A8A")
+            {
+                Source = item,
+                Name = item.DisplayName,
+                Version = item.Version,
+                Author = item.Author,
+                Folder = item.Folder,
+                FolderTip = item.Path,
+                HomePage = item.HomePage,
+                Glyph = item.IsThirdParty ? "\uE8F1" : "\uE713",
+                IsSystem = !item.IsThirdParty,
+                Broken = item.Broken,
+                HasUpdate = item.HasUpdate,
+                Enabled = item.Enabled,
+                RequiresLabel = item.Requires.Count == 0
+                    ? string.Empty
+                    : "依赖 " + string.Join("、", item.Requires),
+            };
+
+            return row;
         }
 
         // ==================== 列表 ====================
@@ -296,12 +276,23 @@ namespace AstraBrew_Launcher.Views
             bool empty = visible.Count == 0;
             ExtensionList.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
             EmptyPanel.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+
             if (empty)
             {
-                EmptyTitleText.Text = _all.Count == 0 ? "这个实例还没有扩展" : "没有匹配的扩展";
-                EmptyHintText.Text = _all.Count == 0
+                bool nothingAtAll = _all.Count == 0;
+                bool onlySystem = !nothingAtAll && _all.All(row => row.IsSystem);
+
+                EmptyTitleText.Text = nothingAtAll
+                    ? "这个实例还没有扩展"
+                    : onlySystem
+                        ? "这里只有酒馆自带的扩展"
+                        : "没有匹配的扩展";
+
+                EmptyHintText.Text = nothingAtAll
                     ? "点右上角「安装扩展」，从 Git 仓库或离线包装一个。"
-                    : "换个关键词，或清空搜索框后重试。";
+                    : onlySystem
+                        ? $"自带的 {_all.Count} 个扩展不在 third-party 里，打开右上角「显示系统扩展」就能看到。"
+                        : "换个关键词，或清空搜索框后重试。";
             }
 
             UpdateSummary();
@@ -321,22 +312,37 @@ namespace AstraBrew_Launcher.Views
 
         private void UpdateSummary()
         {
+            // 顶部的「已启用 x / y」只算第三方：自带扩展不受这里控制，算进去分母会骗人
             var scope = _all.Where(row => _showSystem || !row.IsSystem).ToList();
+            var controllable = _all.Where(row => !row.IsSystem).ToList();
             int total = scope.Count;
-            int enabled = scope.Count(row => row.Enabled);
-            int pending = scope.Count(row => row.HasUpdate);
-            int disabled = total - enabled;
+            int enabled = controllable.Count(row => row.Enabled);
+            int pending = _all.Count(row => row.HasUpdate && !row.IsSystem);
 
-            HeaderSummaryText.Text = $"已启用 {enabled} / {total}";
+            HeaderSummaryText.Text = $"已启用 {enabled} / {controllable.Count}";
 
-            string summary = $"共 {total} 个 · {enabled} 个已启用";
+            string summary = $"共 {total} 个 · 第三方 {controllable.Count} 个 · {enabled} 个已启用";
             if (pending > 0)
             {
                 summary += $" · {pending} 个待更新";
             }
 
             ListSummaryText.Text = summary;
-            FilterHintText.Text = disabled > 0 ? $"{disabled} 个已停用" : "全部启用";
+            // 右侧按钮已经写着「全部停用 / 全部启用」，这里只说停用数量，免得两个词并排重复
+            int disabled = controllable.Count - enabled;
+            FilterHintText.Text = disabled > 0 ? $"{disabled} 个已停用" : string.Empty;
+
+            // 批量开关的方向由「现在有没有开着的」决定：有开着的就给「全部停用」
+            // 数据没到之前不要先把按钮亮出来：XAML 里的默认文字会是一个错误的方向
+            if (ToggleAllText is not null)
+            {
+                ToggleAllText.Text = enabled > 0 ? "全部停用" : "全部启用";
+                ToggleAllButton.IsEnabled = controllable.Count > 0;
+                ToggleAllButton.Visibility = controllable.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            // 侧栏角标跟着真实待更新数走，没有就整颗隐藏
+            App.MainWindow?.SetExtensionsBadge(pending);
         }
 
         private void SearchBox_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
@@ -371,22 +377,43 @@ namespace AstraBrew_Launcher.Views
             }
 
             // 模板实例化时 IsOn 由绑定写入也会触发 Toggled，值没变就当作噪音丢掉。
-            if (row.Enabled == toggle.IsOn)
+            if (row.Enabled == toggle.IsOn || row.IsSystem)
             {
                 return;
             }
 
-            row.Enabled = toggle.IsOn;
+            bool target = toggle.IsOn;
+
+            if (!TavernExtensions.SetEnabled(row.Source, target, out string? error))
+            {
+                // 写不进去就把开关拨回去，别让界面显示一个磁盘上不存在的状态
+                _busy = true;
+                toggle.IsOn = row.Enabled;
+                _busy = false;
+
+                Notify("没能保存扩展开关", error ?? "settings.json 写入失败。", NotifySeverity.Error);
+                return;
+            }
+
+            row.Enabled = target;
             UpdateSummary();
-            Notify(
-                toggle.IsOn ? "已启用扩展" : "已停用扩展",
-                toggle.IsOn ? $"{row.Name} 会在下次酒馆启动时加载。" : $"{row.Name} 的配置保留，下次启动不再加载。",
-                NotifySeverity.Informational);
+
+            string title = target ? "已启用扩展" : "已停用扩展";
+            string message = target
+                ? $"{row.Name} 会在下次酒馆启动时加载。"
+                : $"{row.Name} 的目录保留，下次启动不再加载。";
+
+            if (TavernRuntime.IsRunning)
+            {
+                message += " 酒馆正在运行，它保存设置时会覆盖这次改动，建议重启后确认。";
+            }
+
+            Notify(title, message, NotifySeverity.Informational);
         }
 
         private async void RowDelete_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button { DataContext: ExtensionRow row })
+            if (sender is not Button { DataContext: ExtensionRow row } || _busy)
             {
                 return;
             }
@@ -398,7 +425,7 @@ namespace AstraBrew_Launcher.Views
                 Content = new TextBlock
                 {
                     TextWrapping = TextWrapping.Wrap,
-                    Text = $"将删除 third-party\\{row.Folder} 整个目录，扩展配置一并移除，且无法撤销。",
+                    Text = $"将删除整个目录：\n{row.FolderTip}\n\n目录会先进回收站，但扩展自己的配置不保留。",
                 },
                 PrimaryButtonText = "删除",
                 CloseButtonText = "取消",
@@ -420,65 +447,126 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
+            _busy = true;
+            (bool ok, string? error) = await TavernExtensions.DeleteAsync(row.Source);
+            _busy = false;
+
+            if (!ok)
+            {
+                Notify("没能删除扩展", error ?? "目录可能正被酒馆占用，先停掉服务再试。", NotifySeverity.Error);
+                return;
+            }
+
             _all.Remove(row);
             RefreshRows();
-            Notify("已删除扩展", $"{row.Name} 及其目录已被移除。", NotifySeverity.Success);
+            Notify("已删除扩展", $"{row.Name} 已移入回收站。", NotifySeverity.Success);
         }
 
         private void RowHomepage_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is HyperlinkButton { DataContext: ExtensionRow row })
+            if (sender is not HyperlinkButton { DataContext: ExtensionRow row } || !row.HasHomepage)
             {
-                Notify("扩展主页", $"{row.Name} 的主页会在浏览器中打开。", NotifySeverity.Informational);
+                return;
+            }
+
+            if (BrowserLauncher.Open(row.HomePage, TavernSettings.Browser, out string detail))
+            {
+                Notify("已在浏览器中打开", $"{row.Name} · {detail}", NotifySeverity.Informational);
+            }
+            else
+            {
+                Notify("打不开主页", detail, NotifySeverity.Warning);
             }
         }
 
         private void RowOpenDir_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is HyperlinkButton { DataContext: ExtensionRow row })
-            {
-                Notify("扩展目录", System.IO.Path.Combine(TargetPath, row.Folder), NotifySeverity.Informational);
-            }
-        }
-
-        private void RowRepairGit_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not HyperlinkButton { DataContext: ExtensionRow row })
             {
                 return;
             }
 
-            row.GitRepairable = false;
-            row.Broken = false;
-            RefreshRows();
-            Notify("Git 仓库已修复", $"{row.Name} 的远端地址已重新写入，可以正常更新。", NotifySeverity.Success);
+            if (!Directory.Exists(row.FolderTip))
+            {
+                Notify("目录已不存在", row.FolderTip, NotifySeverity.Warning);
+                _ = ReloadAsync();
+                return;
+            }
+
+            ShellFile.Reveal(row.FolderTip);
         }
 
         // ==================== 页级动作 ====================
 
         private async void Install_Click(object sender, RoutedEventArgs e)
         {
-            var dialog = new ExtensionInstallDialog { XamlRoot = XamlRoot };
+            var dialog = new ExtensionInstallDialog
+            {
+                XamlRoot = XamlRoot,
+                Instance = _instance,
+            };
+
             dialog.Installed += (_, _) =>
             {
-                string name = string.IsNullOrWhiteSpace(dialog.InstalledName) ? "新扩展" : dialog.InstalledName;
-                _all.Insert(0, new ExtensionRow("#8E44DC")
-                {
-                    Name = name,
-                    Version = "1.0.0",
-                    Author = "本地安装",
-                    Folder = name,
-                    HasUpdate = false,
-                    HasHomepage = false,
-                    Glyph = "\uE8F1",
-                });
                 _query = string.Empty;
                 SearchBox.Text = string.Empty;
-                RefreshRows();
-                Notify("安装完成", $"{name} 已启用，出现在列表最上方。", NotifySeverity.Success);
+                _ = ReloadAsync();
             };
 
             await dialog.ShowAsync();
+        }
+
+        /// <summary>
+        /// 一键开关所有第三方扩展。写法是「一次算好、一次落盘」——
+        /// 逐个调 SetEnabled 会把 settings.json 整份重写 N 次，中途失败还会留下半套状态。
+        /// </summary>
+        private void ToggleAll_Click(object sender, RoutedEventArgs e)
+        {
+            if (_busy)
+            {
+                return;
+            }
+
+            List<ExtensionRow> controllable = _all.Where(row => !row.IsSystem).ToList();
+
+            if (controllable.Count == 0)
+            {
+                Notify("没有可切换的扩展", "自带扩展不受启动器控制，只能开关第三方扩展。", NotifySeverity.Informational);
+                return;
+            }
+
+            // 只要还有开着的，就整体停用；全停了才反过来
+            bool disable = controllable.Any(row => row.Enabled);
+            List<(TavernExtension Extension, bool Enabled)> changes = controllable
+                .Select(row => (row.Source, !disable))
+                .ToList();
+
+            if (!TavernExtensions.SetEnabledMany(changes, out string? error))
+            {
+                Notify("没能保存扩展开关", error ?? "settings.json 写入失败。", NotifySeverity.Error);
+                return;
+            }
+
+            // 行里的 Enabled 是加载时抄下来的一份副本，写盘成功要同步回来，
+            // 否则开关与「已启用 x/y」会停在旧状态（批量接口改的是 TavernExtension）
+            foreach (ExtensionRow row in controllable)
+            {
+                row.Enabled = !disable;
+            }
+
+            RefreshRows();
+            UpdateSummary();
+
+            string message = disable
+                ? $"{controllable.Count} 个第三方扩展已全部停用：目录保留，下次启动不再加载。"
+                : $"{controllable.Count} 个第三方扩展已全部启用，下次启动生效。";
+
+            if (TavernRuntime.IsRunning)
+            {
+                message += " 酒馆正在运行，它保存设置时会覆盖这次改动，建议重启后确认。";
+            }
+
+            Notify(disable ? "已全部停用" : "已全部启用", message, NotifySeverity.Informational);
         }
 
         private async void Refresh_Click(object sender, RoutedEventArgs e)
@@ -494,7 +582,7 @@ namespace AstraBrew_Launcher.Views
                 button.IsEnabled = false;
             }
 
-            await Task.Delay(650);
+            await ReloadAsync();
 
             _busy = false;
             if (sender is Button done)
@@ -502,8 +590,8 @@ namespace AstraBrew_Launcher.Views
                 done.IsEnabled = true;
             }
 
-            RefreshRows();
-            Notify("已重新扫描", $"third-party 下共发现 {_all.Count(row => !row.IsSystem)} 个扩展。", NotifySeverity.Informational);
+            int thirdParty = _all.Count(row => !row.IsSystem);
+            Notify("已重新扫描", $"{TargetRoot} 下共 {thirdParty} 个第三方扩展。", NotifySeverity.Informational);
         }
 
         private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
@@ -519,7 +607,8 @@ namespace AstraBrew_Launcher.Views
                 button.IsEnabled = false;
             }
 
-            await Task.Delay(900);
+            var targets = _all.Select(row => row.Source).ToList();
+            (int checkedCount, int pending, string? error) = await TavernExtensions.CheckUpdatesAsync(targets);
 
             _busy = false;
             if (sender is Button done)
@@ -527,30 +616,50 @@ namespace AstraBrew_Launcher.Views
                 done.IsEnabled = true;
             }
 
-            foreach (var row in _all.Where(row => !row.IsSystem && !row.Broken).Take(1))
+            if (error is not null)
             {
-                row.HasUpdate = true;
+                Notify("检查更新失败", error, NotifySeverity.Error);
+                return;
             }
 
-            RefreshRows();
-            int pending = _all.Count(row => row.HasUpdate && !row.IsSystem);
+            if (checkedCount == 0)
+            {
+                Notify(
+                    "没有可检查的扩展",
+                    "只有用 Git 克隆的扩展才能比对远端版本；离线包装的需要重新下载新版本。",
+                    NotifySeverity.Informational);
+                return;
+            }
+
+            await ReloadAsync();
+
             Notify(
-                pending > 0 ? "检查完成" : "已是最新",
-                pending > 0 ? $"{pending} 个扩展有新版本，可逐个更新。" : "所有扩展都已是最新版本。",
-                NotifySeverity.Informational);
+                pending > 0 ? "发现新版本" : "已是最新",
+                pending > 0
+                    ? $"{checkedCount} 个 Git 扩展里 {pending} 个的远端有新提交。"
+                    : $"{checkedCount} 个 Git 扩展都与远端一致。",
+                pending > 0 ? NotifySeverity.Warning : NotifySeverity.Informational);
         }
 
         private void CopyTargetPath_Click(object sender, RoutedEventArgs e)
         {
             var package = new DataPackage();
-            package.SetText(TargetPath);
+            package.SetText(TargetRoot);
             Clipboard.SetContent(package);
-            Notify("路径已复制", TargetPath, NotifySeverity.Success);
+            Notify("路径已复制", TargetRoot, NotifySeverity.Success);
         }
 
         private void OpenRoot_Click(object sender, RoutedEventArgs e)
         {
-            Notify("扩展目录", TargetPath, NotifySeverity.Informational);
+            string root = TargetRoot;
+
+            if (!Directory.Exists(root))
+            {
+                Notify("目录还不存在", $"{root} 会在安装第一个扩展时创建。", NotifySeverity.Warning);
+                return;
+            }
+
+            ShellFile.Reveal(root);
         }
 
         /// <summary>页面播报统一走全局消息（窗口右下角），页面里不再挂 InfoBar。</summary>

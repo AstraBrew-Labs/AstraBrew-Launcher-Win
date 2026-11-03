@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Net;
@@ -23,20 +24,26 @@ namespace AstraBrew_Launcher.Services
         Wan,
     }
 
-    /// <summary>默认浏览器。</summary>
+    /// <summary>默认浏览器。<see cref="System"/> 对应官方配置里的 <c>default</c>（跟随系统）。</summary>
     public enum BrowserKind
     {
         Chrome,
         Edge,
         Firefox,
+        System,
     }
 
     /// <summary>
-    /// 跨页面共享的酒馆启动设置（原型状态，不做持久化）。
+    /// 跨页面共享的酒馆启动设置。
     ///
-    /// 仪表盘的「启动模式 / 默认浏览器」与酒馆配置页的对应选项读写同一份数据：
-    /// 任一页面修改都会通过 <see cref="Changed"/> 通知另一页面刷新界面，
-    /// 因此两处永远是同一状态，而不是各自维护一份。
+    /// 仪表盘、酒馆配置页、设置页读写的都是这一份：任一页面修改都会通过 <see cref="Changed"/>
+    /// 通知其它页面刷新，启动器也按它决定怎么拉起酒馆——不存在「设置里选了桌面模式，
+    /// 仪表盘还显示普通模式，启动时又按另一份来」。
+    ///
+    /// 启动模式与浏览器/服务范围的落点不同：
+    /// · 启动模式存在 <c>settings.toml</c>（<see cref="LauncherSettings.StartMode"/>），
+    ///   它是启动器自己的偏好；
+    /// · 浏览器与服务范围属于酒馆配置，改动会写回 <c>config.yaml</c>。
     /// </summary>
     public static class TavernSettings
     {
@@ -46,22 +53,72 @@ namespace AstraBrew_Launcher.Services
         /// <summary>白名单发生增删。</summary>
         public static event EventHandler? WhitelistChanged;
 
-        private static LaunchMode _mode = LaunchMode.Normal;
-        private static BrowserKind _browser = BrowserKind.Chrome;
-        private static ServiceScope _scope = ServiceScope.Lan;
-
-        public static LaunchMode Mode
+        static TavernSettings()
         {
-            get => _mode;
-            set
+            // 设置页改「默认启动方式」写的是 LauncherSettings；这里补一次通知，
+            // 让仪表盘与酒馆配置页的模式单选项跟着动
+            LauncherSettings.Changed += (_, _) => Changed?.Invoke(null, EventArgs.Empty);
+
+            LoadFromConfig();
+        }
+
+        /// <summary>
+        /// 浏览器与服务范围的真相在 <c>config.yaml</c> 里（<c>browserLaunch.browser</c> /
+        /// <c>listen</c>）。启动时先读一遍：否则仪表盘会按「默认谷歌浏览器、局域网」
+        /// 显示，而文件里写的其实是 <c>default</c> 或 <c>listen: false</c>。
+        /// </summary>
+        private static void LoadFromConfig()
+        {
+            try
             {
-                if (_mode == value)
+                if (!GlobalTavernConfig.HasGlobalConfig)
                 {
                     return;
                 }
 
-                _mode = value;
-                Changed?.Invoke(null, EventArgs.Empty);
+                Dictionary<string, string> scalars = YamlConfig.ReadScalars(GlobalTavernConfig.ReadGlobal());
+
+                if (scalars.TryGetValue("browserLaunch.browser", out string? browser))
+                {
+                    _browser = browser.ToLowerInvariant() switch
+                    {
+                        "chrome" => BrowserKind.Chrome,
+                        "edge" => BrowserKind.Edge,
+                        "firefox" => BrowserKind.Firefox,
+                        _ => BrowserKind.System,
+                    };
+                }
+
+                if (scalars.TryGetValue("listen", out string? listen)
+                    && bool.TryParse(listen, out bool allowed))
+                {
+                    _scope = allowed ? ServiceScope.Lan : ServiceScope.Wan;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // 读不到就按默认值走，不影响启动
+            }
+        }
+
+        private static BrowserKind _browser = BrowserKind.Chrome;
+        private static ServiceScope _scope = ServiceScope.Lan;
+
+        /// <summary>
+        /// 启动模式。读写的是 <see cref="LauncherSettings.StartMode"/>（那份会被存进 settings.toml），
+        /// 本类只是它的一层视图——两个枚举顺序一致，直接按序号换算。
+        /// </summary>
+        public static LaunchMode Mode
+        {
+            get => (LaunchMode)(int)LauncherSettings.StartMode;
+            set
+            {
+                if (Mode == value)
+                {
+                    return;
+                }
+
+                LauncherSettings.SetStartMode((QuickStartMode)(int)value);
             }
         }
 
@@ -96,9 +153,9 @@ namespace AstraBrew_Launcher.Services
         }
 
         /// <summary>只有普通模式才和浏览器相关，其余模式相关选项应当隐藏。</summary>
-        public static bool IsNormalMode => _mode == LaunchMode.Normal;
+        public static bool IsNormalMode => Mode == LaunchMode.Normal;
 
-        public static string ModeName => _mode switch
+        public static string ModeName => Mode switch
         {
             LaunchMode.Desktop => "桌面模式",
             LaunchMode.Server => "服务器模式",
@@ -109,14 +166,20 @@ namespace AstraBrew_Launcher.Services
         {
             BrowserKind.Edge => "Edge",
             BrowserKind.Firefox => "火狐浏览器",
+            BrowserKind.System => "系统默认浏览器",
             _ => "谷歌浏览器",
         };
 
-        /// <summary>白名单：localhost 与 127.0.0.1 默认锁定，不可删除。</summary>
+        /// <summary>
+        /// 白名单：127.0.0.1 与 ::1 默认锁定，不可删除。
+        ///
+        /// 不用 localhost：SillyTavern 的白名单只认 IP / CIDR，写主机名会被它判为
+        /// 「Invalid IP」并忽略，于是浏览器用 IPv6 回环打开时直接被挡在门外。
+        /// </summary>
         public static ObservableCollection<WhitelistEntry> Whitelist { get; } = new()
         {
-            new WhitelistEntry("localhost", true),
             new WhitelistEntry("127.0.0.1", true),
+            new WhitelistEntry("::1", true),
             new WhitelistEntry("192.168.1.24", false),
         };
 
@@ -184,14 +247,14 @@ namespace AstraBrew_Launcher.Services
         public static void ResetWhitelist()
         {
             Whitelist.Clear();
-            Whitelist.Add(new WhitelistEntry("localhost", true));
             Whitelist.Add(new WhitelistEntry("127.0.0.1", true));
+            Whitelist.Add(new WhitelistEntry("::1", true));
             Whitelist.Add(new WhitelistEntry("192.168.1.24", false));
             WhitelistChanged?.Invoke(null, EventArgs.Empty);
         }
 
         /// <summary>
-        /// 用配置文件里的白名单替换当前列表。localhost 与 127.0.0.1 永远保留且锁定，
+        /// 用配置文件里的白名单替换当前列表。127.0.0.1 与 ::1 永远保留且锁定，
         /// 它们不在文件里也要补上——否则界面会出现「没有锁定项」这种说不通的状态。
         /// </summary>
         public static void SetWhitelist(IEnumerable<string> hosts)
@@ -207,12 +270,20 @@ namespace AstraBrew_Launcher.Services
                 }
             }
 
-            Add("localhost");
             Add("127.0.0.1");
+            Add("::1");
 
             foreach (string host in hosts)
             {
-                Add(host.Trim());
+                string value = host.Trim();
+
+                // 旧配置里可能存着 localhost：它不是合法 IP，换成 IPv6 回环
+                if (value.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+                {
+                    value = "::1";
+                }
+
+                Add(value);
             }
 
             Whitelist.Clear();
@@ -224,20 +295,19 @@ namespace AstraBrew_Launcher.Services
             WhitelistChanged?.Invoke(null, EventArgs.Empty);
         }
 
-        /// <summary>localhost 与 127.0.0.1 是内置项：界面上不可删除。</summary>
+        /// <summary>127.0.0.1 与 ::1 是内置项：界面上不可删除。</summary>
         private static bool IsLockedHost(string value) =>
-            value.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-            || value == "127.0.0.1";
+            value == "127.0.0.1" || value == "::1";
 
         /// <summary>
-        /// 只留本机两项（localhost 与 127.0.0.1），不带示例内网地址。
+        /// 只留本机两项（127.0.0.1 与 ::1），不带示例内网地址。
         /// 与首次获取默认配置时写进 config.yaml 的白名单保持一致。
         /// </summary>
         public static void ResetToLocalOnly()
         {
             Whitelist.Clear();
-            Whitelist.Add(new WhitelistEntry("localhost", true));
             Whitelist.Add(new WhitelistEntry("127.0.0.1", true));
+            Whitelist.Add(new WhitelistEntry("::1", true));
             WhitelistChanged?.Invoke(null, EventArgs.Empty);
         }
     }

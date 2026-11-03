@@ -354,14 +354,14 @@
                             <Rectangle x:Name="DividerAfterCpu" Style="{StaticResource RowDividerStyle}" />
 
                             <controls:SettingRow
-                                Description="普通模式在浏览器里打开，桌面模式套一层独立窗口。"
+                                Description="普通模式在浏览器里打开，桌面模式套一层独立窗口，服务器模式不自动开浏览器、开放给其它设备。"
                                 Glyph="&#xE768;"
                                 Title="默认启动方式"
                                 WrapAt="620">
                                 <controls:SegmentedPicker
                                     x:Name="StartModePicker"
-                                    Glyphs="E774,E7F4"
-                                    Options="普通模式,桌面模式"
+                                    Glyphs="E774,E7F4,E968"
+                                    Options="普通模式,桌面模式,服务器模式"
                                     SelectionChanged="StartModePicker_SelectionChanged" />
                             </controls:SettingRow>
 
@@ -957,6 +957,60 @@
                                         Options="不使用,系统代理,自定义"
                                         SelectionChanged="ProxyPicker_SelectionChanged" />
                                 </controls:SettingRow>
+
+                                <!--
+                                    跟随系统时把 Windows 的真实状态摆出来：
+                                    「系统代理」这个词本身不说明任何事——Windows 那边可能压根没开代理。
+                                -->
+                                <StackPanel x:Name="SystemProxyRows" Visibility="Collapsed">
+                                    <Rectangle Style="{StaticResource RowDividerStyle}" />
+
+                                    <controls:SettingRow
+                                        x:Name="SystemProxyRow"
+                                        Description="正在读取 Windows 的 Internet 选项…"
+                                        Glyph="&#xE968;"
+                                        Title="系统代理状态"
+                                        WrapAt="700">
+                                        <StackPanel
+                                            VerticalAlignment="Center"
+                                            Orientation="Horizontal"
+                                            Spacing="8">
+                                            <Border x:Name="SystemProxyPill" Style="{StaticResource StatePillStyle}">
+                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                    <Ellipse
+                                                        x:Name="SystemProxyDot"
+                                                        Width="6"
+                                                        Height="6"
+                                                        VerticalAlignment="Center" />
+                                                    <TextBlock
+                                                        x:Name="SystemProxyPillText"
+                                                        Style="{StaticResource StatePillTextStyle}"
+                                                        Text="读取中" />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Button
+                                                Click="RefreshSystemProxy_Click"
+                                                Style="{StaticResource RowButtonStyle}"
+                                                ToolTipService.ToolTip="重新读取 Windows 的 Internet 选项">
+                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                    <FontIcon FontSize="12" Glyph="&#xE72C;" />
+                                                    <TextBlock Text="刷新" />
+                                                </StackPanel>
+                                            </Button>
+
+                                            <Button
+                                                Click="OpenWindowsProxy_Click"
+                                                Style="{StaticResource RowButtonStyle}"
+                                                ToolTipService.ToolTip="打开 Windows 的代理设置页">
+                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                    <FontIcon FontSize="12" Glyph="&#xE8A7;" />
+                                                    <TextBlock Text="去设置" />
+                                                </StackPanel>
+                                            </Button>
+                                        </StackPanel>
+                                    </controls:SettingRow>
+                                </StackPanel>
 
                                 <StackPanel x:Name="CustomProxyRows" Visibility="Collapsed">
                                     <Rectangle Style="{StaticResource RowDividerStyle}" />

@@ -70,6 +70,7 @@ namespace AstraBrew_Launcher.Services
         {
             (QuickStartMode.Normal, "browser"),
             (QuickStartMode.Desktop, "desktop"),
+            (QuickStartMode.Server, "server"),
         };
 
         private static readonly (ServiceScopeSetting Value, string Id)[] ServiceScopes =

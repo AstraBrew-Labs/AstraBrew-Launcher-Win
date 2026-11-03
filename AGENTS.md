@@ -1,4 +1,4 @@
-## 窗口规范
+﻿## 窗口规范
 软件窗口界面，不能最大化
 要适配高清屏，高分辨率屏，保持界面清晰度
 要保证每个缩放都能正常显示
@@ -303,12 +303,22 @@ git config --global --unset url."https://gh-proxy.org/https://github.com/".inste
 - 接口固定为 `TavernReleases.ApiUrl`（`/releases?per_page=30`），地址经
   `GithubAccel.Targets()` 展开：加速开着先 `gh-proxy.org` 再直连，关着只直连。
   与下载源选的是镜像还是直连**无关**——版本列表始终在 `api.github.com`。
-- **缓存优先**：`%Temp%\astrabrew-launcher\caches\sillytavern-releases.json`，内存再缓存一层。
+- **加速是独立出口，不是同一条线路的备胎**：中转端有自己的 Token 池，和直连那
+  60 次/小时互不相干。所以某条出口返回 403/429 时**必须继续试下一条**，
+  不能像以前那样一句「换直连也一样」直接放弃——那正好把这个功能废掉了。
+  只有所有出口都被拒才报限流，并在文案里带上 `Retry-After` / `X-RateLimit-Reset`
+  换算出的恢复时间；加速关着时提示去设置里打开。
+- **缓存是「不要频繁请求」，不是「永远不请求」**：`CacheTtl` 15 分钟内直接用，
+  过期在页面打开时自动校验一次；失败后 `FailureCooldown` 5 分钟内不再自动重试
+  （手动刷新不受限制）。
+- **条件请求不花额度**：缓存里存 GitHub 的 `ETag`，下次带 `If-None-Match`；
+  304 按 GitHub 规定不计入限额，所以「经常校验」和「省额度」可以同时成立，
+  304 时把 `FetchedAt` 刷新为当前时间，界面显示「已更新于」而不是「缓存于」。
+- 缓存路径：`%Temp%\astrabrew-launcher\caches\sillytavern-releases.json`，内存再缓存一层。
   缓存是中间产物（删了只是多请求一次），所以放临时目录而不是 AppData；路径统一取
   `AppPaths.CacheRoot`，不要在页面里自己拼。
-  有缓存就不请求网络（未登录的 GitHub API 每小时只有 60 次）；
-  只有用户点「刷新版本列表」才强制请求并覆盖缓存。
-- 强制刷新失败时继续显示旧缓存，并把原因折成一句话给 InfoBar；**不要**清空列表或弹堆栈。
+- 刷新失败时继续显示旧缓存，并把原因折成一句话给全局消息；**不要**清空列表或弹堆栈。
+  手里还有列表时标题写「刷新失败」，一条都没有才写「版本列表不可用」。
 - 发布说明是 Markdown，展示前只做最小整理（去 `#`、`*` 换 `•`、压空行），不引渲染库。
 - 内置实例的版本优先读 `sillytavern\package.json` 的 `version`；读不到才用
   `TavernInstances.DefaultVersion` 占位。元信息（日期 / 标签）只写发布列表里真有的事实，
@@ -460,6 +470,293 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
   例如「手机、平板访问酒馆时用的门牌号，一般不用改。」——两版的差别不只是数量，也是措辞。
 尚未接入：缩略图尺寸（`thumbnails.dimensions` 是对象数组，需要索引写入支持）、内存缓存容量
 （官方是 `'100mb'` 字符串，界面是数字框）。
+
+## 控制台与酒馆进程
+
+**运行状态只有一份**：`Services/TavernRuntime.cs`（进程、PID、端口、启动时间、日志）。
+控制台页面只负责画，仪表盘的服务徽标、地址、运行时长、PID 也全部读它——
+以前每个页面各自模拟一套，切换页面就自相矛盾。
+
+- **启动顺序**：定环境来源 → 查 Node.js、Git 并逐行输出它们的版本 → 校验实例
+  （`server.js`、`node_modules`）→ 读配置端口 → 查端口占用 → 组命令 → 起进程 → 轮询端口就绪。
+- **环境来源不跨来源回退**：`RuntimeProbe.LocateNode/LocateGit(RuntimeSource)`——
+  内置只看启动器 `bin/`（历史版本是 `lib/`），系统只看 PATH。选了内置却拿系统的 node，
+  用户以为在用一个自包含的便携环境，实际并没有。无参版本（安装器用）才做「内置优先、再 PATH」。
+- **Git 缺失只警告不拦截**：酒馆本体不依赖 Git，装扩展才用；缺了照样启动，但要把后果写清楚。
+- **启动参数照旧版 `core/tavern_process.rs`**：`node server.js`；全局数据模式补
+  `--configPath <配置> --dataRoot <目录>`；桌面模式补 `--browserLaunchEnabled false`
+  （浏览器由启动器自己开）；有代理时补 `--requestProxyEnabled/Url/Bypass` 并注入
+  `HTTP(S)_PROXY`。代理来自自定义设置，系统模式读 WinINET 的 `ProxyEnable/ProxyServer`。
+- **PATH 必须前置 node 与 git 目录**：酒馆的子进程（npm、扩展安装脚本）靠它找工具。
+- **状态通知一律转投 UI 线程**（`Raise()` 内部走 `Post`）。启动流程在线程池上跑，
+  直接 `Invoke` 会跨线程改控件抛 COMException，而且抛在事件里没人接得住，
+  表现成「状态一直停在启动中、PID 永远是 —」。
+- **就绪靠连端口判断**，不靠日志里那句 listening：用户换端口、换日志格式都不该影响判定。
+- **停止先礼后兵**：`taskkill /T` 不带 `/F`，taskkill 报失败（控制台程序没有窗口，几乎必然）
+  或 3 秒内没退出就升级 `/F`。别空等 6 秒——那段时间界面上只会显示「停止中」。
+- **退出启动器要收子进程**（`MainWindow.OnClosed` → `TavernRuntime.Shutdown()`，按
+  `stop_tavern_on_window_close`）：运行时活在静态状态里，不收就是孤儿进程一直占着端口。
+  用同步杀进程树，窗口一关事件循环就没了，异步收尾跑不完。
+- **日志**：stdout/stderr 逐行收、去 ANSI 色码、上限 2000 行，存在服务层——
+  切页面回来还能看到历史。空日志区会先放一行「控制台就绪」，否则像是输出没接上。
+- **自动跟随别用「离底部多远」判断**：酒馆刷屏时内容一直在长，会把自己一路判成
+  「已暂停跟随」。记下自己滚到的位置（`_followTarget`），明显低于它才是用户往上翻了。
+- **白名单只认 IP / CIDR**：`localhost` 会被 SillyTavern 判为 `Invalid IP` 直接忽略，
+  而浏览器打开 localhost 常走 IPv6 回环，缺 `::1` 就会「服务起来了、页面被挡住」。
+  `GlobalTavernConfig.NormalizeWhitelist()` 在起服务前把主机名换成 `::1` 并补齐回环地址，
+  改动会在日志里说一句；默认配置也直接写 `127.0.0.1` + `::1`。
+- **设备访问弹窗的地址来自网卡**（`NetworkInterface`，取已连接网卡的全局单播地址），
+  别再写死示例 IP；二维码占位已去掉——扫不出东西的码比没有更糟。
+
+## 仪表盘（真实数据）
+
+仪表盘上**没有样例数字**：每一格都来自真实来源，切换页面 / 改设置 / 启停服务后都跟着变。
+
+| 位置 | 来源 |
+|---|---|
+| 状态、PID、运行时长、启动耗时 | `TavernRuntime.State`（`StartedAt` / `StartupSeconds`） |
+| 内存、CPU | `TavernMetricsService.SampleProcess()` 读子进程（CPU 要两次采样，第一秒显示「—」） |
+| 今日访问 | 酒馆自己写的 `<dataRoot>/access.log`（按本地日期数行）；日志没开就显示「—」并提示原因 |
+| 已装扩展 | 内置 = `<实例>/public/scripts/extensions/*/manifest.json`；第三方 = `third-party` + `<dataRoot>/extensions` + `default-user/extensions`，按目录名去重 |
+| 角色卡 | `<dataRoot>/default-user/characters` 的**顶层** png——同名目录里是表情差分，递归数会把一个角色数成二十几张 |
+| 磁盘占用 | 安装目录 + 数据目录的总字节（后台遍历，20 秒缓存，刷新按钮强制重算） |
+
+**联动规则**（这是本轮的重点，改之前先读）：
+
+- **端口只有一份**：`TavernRuntime.CurrentPort`。运行中取实际监听的端口，停下就回读
+  `config.yaml`——只看快照里的 `Port` 会让「改成 8080 后仪表盘还显示 11451」。
+- **配置写盘后要通知**：`GlobalTavernConfig.Saved` 在每次原子写之后触发（保存 / 导入 / 恢复默认 /
+  首次获取），仪表盘据此重读端口与访问地址。订阅方可能不在 UI 线程，自己转投。
+- **启动模式只有一个状态**：`TavernSettings.Mode` 是 `LauncherSettings.StartMode` 的视图
+  （两个枚举顺序一致，直接按序号换算），存 `settings.toml`。设置页的「默认启动方式」也是三项，
+  在任一页改，仪表盘、酒馆配置页、启动器实际行为同时变——以前这里是两份状态，
+  设置里选桌面模式、仪表盘还显示普通模式、启动时按第三份来。
+- **浏览器与服务范围属于酒馆配置**：改了要 `GlobalTavernConfig.PatchScalar(...)` 写回
+  `config.yaml`（`browserLaunch.browser` / `listen` / `listenAddress.ipv4`），启动时
+  `TavernSettings` 再从文件读回来。官方默认值是 `browser: default`（跟随系统），
+  界面用「三个 chip 都不选中」表示它，别把 `default` 静默改成 `chrome`。
+- **环境来源 / 数据存放只读展示**：`RuntimeEnvText` 显示内置/系统环境与 Node 版本，
+  `DataModeText` 显示数据存放策略，点开 Tooltip 给路径。要改请去设置页。
+- **主按钮随状态变**：没在跑是「启动服务」，跑起来才是「重启服务」；「停止」只在运行时出现。
+  停止状态点「重启」什么都不会发生，那是以前的问题。
+
+**快捷操作是真的会做事**：打开酒馆走 `BrowserLauncher.Open`（按 App Paths 找 chrome/edge/firefox，
+找不到退回系统默认浏览器）；数据目录开资源管理器；导入角色卡把选中的 PNG/JSON 复制进
+`characters`（同名加 `(2)` 后缀），复制完刷新指标。地址一律取自
+`NetworkInfo.LocalAddresses()` + 实际端口，别再写示例 IP。
+
+### config.yaml 写入的三个坑（都踩过）
+
+1. **多行文本框必须按 `\r` 与 `\n` 一起切**（`SplitLines`）。WinUI 的回车可能只留 `\r`，
+   只按 `\n` 切会把整段当一条，写出来是 `- 'localhost\ncdn…'` 这种跨行标量，酒馆直接解析失败。
+2. **`YamlConfig.Format` 先把换行压成空格**。这个模块按行改，值里带换行必然产出坏 YAML；
+   宁可压平也不能写坏配置。
+3. **加载期间不许置脏**（`MarkDirty` 在 `_loading` 时直接返回）。否则「只是打开配置页看一眼」
+   也会在离开时触发整份保存，把 `browser: default` 改成 `chrome`、把数组重排——用户没改任何东西。
+
+## 扩展管理（真实环境）
+
+页面上的每个数字都对得上磁盘，没有样例扩展。数据层是 `Services/TavernExtensions.cs`。
+
+- **落点有四处**，顺序即优先级：`<实例>/public/scripts/extensions/third-party`（安装默认位置）→
+  `<实例>/data/default-user/extensions` → `<ResolveUserRoot>/extensions` → 自带
+  `<实例>/public/scripts/extensions`。同一份扩展可能在两处都有，**按目录名去重，先出现的赢**。
+  自带目录里只认带 `manifest.json` 的子目录（`assets` 这类纯资源目录不是扩展）；
+  第三方目录连没有清单的一起列出来并标「清单损坏」，否则用户没法删掉装坏的残留。
+- **开关状态只有一处真相**：`<ResolveUserRoot>/default-user/settings.json` 的
+  `extension_settings.disabledExtensions`（数组，元素是目录名）。酒馆自己就是这么判的。
+- **只改那一个数组**：`SetEnabled` 走 `JsonArrayEditor` 按字符扫描替换，绝不 `JsonNode.Parse` 再整体写回——
+  settings.json 有一百多个字段，整体反序列化会改写数字格式、把中文转成 `\uXXXX`，
+  一份用户配置为加一个名字被改了样。
+- **缩进要从 `\n` 之后开始量**（已踩）：`IndentOf` 一开始写成 `json[lineStart..index]`，
+  把行首那个 `\n` 也算进了缩进，写出来是 `[\r\n\n  "x"` 的空行。要写成 `json[(lineStart + 1)..index]`。
+- **删除走回收站**（`ShellFile.MoveToRecycleBin`，`SHFileOperation` + `FOF_ALLOWUNDO`），
+  `Directory.Delete` 一按就没了。酒馆正在运行时删不掉（文件占用），把失败原因原样提示。
+- **检查更新是比 HEAD**：`git rev-parse HEAD` vs `git ls-remote origin HEAD`，只有 `.git` 目录存在
+  （clone 来的）才查得动；离线包装的一律跳过，别报「已是最新」骗人。
+- **安装不覆盖**：目标目录已存在就加 `-2`、`-3` 后缀另装一份。Git 走
+  `git clone --depth 1 --branch <b>`（GitHub 地址按加速开关中转），离线包解压后
+  在最多三层里找「直接含 manifest.json」的那一层再搬运。
+- **分支列表把远端默认分支排第一**（`ls-remote --symref --heads`）。只按 main/master/字母序排，
+  酒馆主仓库（默认 `release`）会把 `copilot/xxx` 顶到第一项，一不留神装错分支。
+- **侧栏角标是真的**：`MainWindow.SetExtensionsBadge(pending)`，0 就整颗隐藏。
+  以前 XAML 里写死 `Value="3"`，点进去一个都找不到。
+
+### 离线包批量安装
+
+对齐旧版 `pages/extensions.rs` 的 `offline_packages: Vec<…>` 语义：**先整批预检，再逐个安装**。
+
+- `TavernExtensions.InspectOfflinePackages` 只读压缩包目录，不写盘：找最浅的 `manifest.json`
+  （最多三层），装出来的目录名＝清单所在目录，清单在根上时用压缩包文件名。
+  「同一批里两个包同名」**整组标为无效**——按「重名加后缀」的规则会装成 x 与 x-2，
+  用户分不清哪个才是要的，必须让他自己删掉重复的。
+- 有任何一个包无效就**整批不动**，弹窗里逐个标红并给出原因，右侧 ✕ 可以移除单个包后重试。
+  半批装完再回滚比直接拦住更难收拾。
+- `InstallFromZipBatchAsync` 逐个安装、单个失败不影响其余包（与旧版「遇错整批中止」不同：
+  批量安装最怕「第三个坏了，前两个白装」）。进度按整批换算百分比，日志里带
+  `▶ 文件名 → 目录`，失败逐条列在末尾。
+- 文件名选择用 `PickMultipleFilesAsync`，路径去重后整批重检；每次重选＝替换整批。
+
+### 一键启用 / 停用
+
+- 页面右上「全部停用 / 全部启用」按当前状态决定方向（有开着的就整体停用），
+  只作用于第三方扩展——自带扩展不受启动器控制。
+- 走 `TavernExtensions.SetEnabledMany`：**一次算好目标集合、一次落盘**。
+  逐个调 `SetEnabled` 会把整份 settings.json 重写 N 次，中途失败还会留下半套状态。
+- 行里的 `Enabled` 是加载时抄下来的副本，批量改完必须同步回 `ExtensionRow`，
+  否则开关与「已启用 x/y」会停在旧状态（这个坑真踩过）。
+- 按钮在有数据前保持 Collapsed：XAML 里的默认文字会是一个错误的方向（写着「全部停用」
+  而实际全都停用）。
+
+## 资源管理（真实环境）
+
+数据层是 `Services/TavernLibrary.cs`，只读磁盘；导入 / 删除由页面调用 `ImportAsync` 与 `ShellFile`。
+
+| 分类 | 目录 | 解析方式 |
+|---|---|---|
+| 角色卡 | `<userRoot>/characters/*.png`、`*.json` | PNG 块链里的 `tEXt`/`zTXt` 找 `ccv3`（v3）或 `chara`（v2 兼容），base64 → JSON；`IHDR` 取像素尺寸。JSON 卡直接按 `chara_card_v2/v3` 读 |
+| 世界书 | `<userRoot>/worlds/*.json` | `entries` 可能是对象字典也可能是数组，两种都认；`disable` = 停用 |
+| 对话 | `<userRoot>/chats/<角色>/*.jsonl` | 逐行一个 JSON，`is_user` / `mes` / `send_date`；只留最后 8 条做预览，条数全量数 |
+| 预设 | `<userRoot>/* Settings/*.json` | `prompt_order` 决定每条提示词的启停；OpenAI 之外的来源字段名不同（见下） |
+
+- **`userRoot` 要用 `TavernRuntime.ResolveUserRoot()`**，不是 `ResolveDataRoot()`：
+  后者在实例模式下返回的是代码目录，而酒馆没传 `--dataRoot` 时用的是 `<代码目录>/data`。
+  另外全局数据目录可能刚切过去、只有空壳，方法里带「没有 `default-user` 就回退另一处」的兜底，
+  否则资源页会突然一片空白，看起来像数据被删了。仪表盘的指标也改用同一个方法。
+- **预设不是只有 OpenAI**：`TextGen Settings` 用 `max_context_length` / `genamt`，
+  `NovelAI` 用别的字段，`chat_completion_source` 也只有 OpenAI 预设里有。
+  所以模型 / 上下文 / 上限要按候选字段依次取，接口名按来源目录映射；列表按来源目录**分组**显示。
+- **缩略图按解码宽度取**（`BitmapImage.DecodePixelWidth`，列表 96 / 详情 264）。
+  直接绑原图，二十张 3 MB 的卡会把页面拖住好几秒。
+- **导入不覆盖**：同名文件加 `(2)` 后缀；预设统一进 `OpenAI Settings`，别让用户猜该放哪一家。
+- **删除走回收站**，与扩展一致。
+
+### 导入前的结构检查
+
+参考旧版 `core/library` 的 `validate_character` / `validate_world_book` / `validate_preset`，
+但**刻意放松**——那套逐字段校验类型（每个数字、每个布尔），拦得住「类型写错的卡」，
+也拦得住一堆酒馆自己都能读的老文件。这里只判断「这是不是这一类资源」（`Services/ResourceValidator.cs`）：
+
+- **角色卡**：PNG 必须真有 `chara`/`ccv3` 文本块（普通 PNG 会被拦下），JSON 必须能解析；
+  `spec`/`spec_version` 只认 v1/v2/v3，别的版本明确说认不出；`name` 不能为空。
+  版本判定：`spec` 含 v3 或 `spec_version` 以 3 开头 ⇒ v3；v2 同理；没有 spec 时
+  **`ccv3` 块 ⇒ v3**（不少 v3 卡的块里是平铺 JSON，没有 spec 外壳），有 `data` ⇒ v2，否则 v1。
+- **世界书**：有 `entries`（对象或数组）且非空，至少一条 `content` 非空。
+- **预设**：有 `prompts` 数组，或含常见生成参数（`temperature` / `openai_max_context` /
+  `chat_completion_source` / `genamt` …）——老预设本来就没有 `prompts`。
+- 不查字段类型、不查 extensions、不查字节大小（只设 64 MB 上限拦巨型文件）。
+- **单个文件不合格只跳过它**，同批其它文件照常导入；结果用 `ImportReport` 返回，
+  有失败才弹「导入结果」窗口逐条列原因（全成功走全局消息，不打扰）。
+  复制仍然「同名加后缀」，不会覆盖用户已有的资源。
+
+## 工作台（真实环境）
+
+从「资源管理」右侧点「打开工作台」进入，编辑的是磁盘上那份文件本身。数据层是
+`Services/WorkbenchDocument.cs`，表单与写回在 `Views/WorkbenchPage.xaml.cs`。
+
+- **类型在打开时锁死**：`WorkbenchPage.PendingKind` + `PendingPath` 由资源页写入，页面里
+  没有切换入口（原来的三段 RadioButton 已删）。角色卡 → 角色卡工作台，预设 → 预设工作台，
+  世界书 → 世界书工作台；对话记录没有工作台（按钮本身不显示）。
+  角色卡里的「打开世界书工作台」链接也一并删了——那同样是一次跨类型跳转。
+- **PNG 角色卡改写的是文本块，不是整份文件**：保留 IHDR/IDAT 等全部块与像素数据，
+  只替换 `chara` / `ccv3` 两个 `tEXt` 块的 base64 文本并重算 CRC。两种块各自的形状
+  （v1 平铺 / v2-v3 带 `spec`+`data`）分别沿用，不能把一个的形状套给另一个。
+- **JSON 定点改键**：世界书与预设的字段远多于界面露出来的那几个（`insertion_order`、
+  `use_regex`、`prompt_order`…）。整体重建会把这些抹掉，所以只覆盖表单里有的键。
+- **序列化必须走 `Utf8JsonWriter`**：本项目关了反射式序列化，
+  `JsonNode.ToJsonString(options)` 会抛「must specify a TypeInfoResolver setting」。
+- **TextBox 要 `UpdateSourceTrigger=PropertyChanged`**：默认的 LostFocus 会让「输入即保存」
+  推迟到鼠标点到别处，防抖 700ms 等于白设。
+- **没有改动就不写盘**（`_dirty`）。打开看一眼再关掉，文件的字节与修改时间都该原样。
+- **预设的 `prompt_order` 是顺序的唯一真相**：保存时按原 order 更新 enabled，
+  删掉的提示词从 order 里去掉，新加的接在末尾；**原本不在 order 里的提示词不能顺手加进去**
+  （酒馆根本不会注入它，加进去等于替用户改了预设）。
+- **标记类提示词**（`marker: true`：chatHistory / worldInfoBefore / dialogueExamples…）在文件里
+  没有 `content`/`role`，保存时不要补这两个字段，补了就是脏数据。
+- **世界书的 `entries` 形状要沿用**：可能是 `{uid: {...}}` 字典也可能是数组，保存时按原形状写回，
+  字典的键不能重新生成。另外世界书用 `disable`（true = 停用），角色卡内嵌条目用 `enabled`，
+  两者语义相反，写错会让所有条目开关翻转。
+- **换卡面是「换图不换卡」**：取新 PNG 的块表、丢掉它自带的 `chara`/`ccv3`、
+  接上这张卡自己的文本块，再整体写回。直接覆盖原图会让角色设定全部丢失。
+  JSON 卡没有卡面，按钮是禁用的。
+- **离开页面要补一次保存**：防抖计时器不会在页面卸载后继续跑，`OnNavigatedFrom` 与
+  「完成 / 返回」都会调 `CommitSave()`。
+
+### 打开速度（实测，改之前先看这张表）
+
+工作台的打开耗时几乎全在**首帧布局**上，不是读文件：`WorkbenchDocument.Open` 只要 10 ms 上下，
+剩下的都是 XAML 在量控件。长文本输入框尤其贵（一张卡 40–90 ms），列表项一多就成倍放大。
+
+| 场景 | 优化前 | 现在 |
+|---|---|---|
+| 预设 171 条提示词 | 420 ms | **44 ms** |
+| 世界书 6 条 | 535 ms | **83 ms** |
+| 世界书 120 条 | 1104 ms | **94 ms** |
+| 角色卡（简介 3009 字） | 183 ms | 183 ms（本就要显示四个编辑器） |
+
+做法（改列表时别退回去）：
+
+- **列表项里不要放长文本 TextBox**。预设卡片改成「名称 + 角色 + 正文预览（4 行截断）+
+  笔形按钮」，正文在弹窗里改；世界书条目改成可折叠——收起时只有序号、标题、正文预览、
+  关键词数、开关，点开才铺编辑区（一张展开卡约 90 ms，所以默认全收起）。
+- **列表分页**：预设一页 6 条、世界书一页 6 条。120 条的书写如果全铺，光是收起状态也要 1.1 秒。
+- **页码条不要「每页一个按钮」**：171 条 = 29 个按钮 = 380 ms。页数 > 6 时收成
+  「x / y」一个按钮，点开才用 MenuFlyout 生成页面列表。
+- **首帧只画框架**：预设的卡片列表改到 `Loaded` 之后才铺，先显示「正在准备提示词…」。
+- 计时办法：临时在构造函数与 `Loaded` 里打 `Stopwatch` 段（init / load / paint / toLoaded），
+  定位到具体是哪一段慢，别凭感觉改。
+
+### 长文本编辑区（角色卡简介 / 性格 / 场景 / 开场白）
+
+- **卡片高度写死 252**，不是 `MinHeight`。工作台整页在 ScrollViewer 里，高度约束是无限的，
+  一旦只给 `MinHeight`，3000 字的简介会把输入框一路撑高、把整页拉成一条竖线——
+  现在内容只在框内滚动，四块对齐、页面高度稳定。
+- 真要仔细改就点表头的放大按钮（`ExpandText_Click`）：弹窗里给 420 高的大框 + 实时字数，
+  关掉才写回模型（边打字边写回会让防抖保存每 700ms 触发一次）。
+- **`TextBox.Text` 必须在挂进可视树之后（Loaded）再赋值**：构造时直接 `new TextBox { Text = 多行 }`，
+  文末第一个换行之后的内容会被丢掉（实测 3009 字的简介只剩 369 字）。
+  这条对所有「代码里临时造的多行 TextBox」都适用。
+- 卡里的正文常是 CRLF：喂进框之前统一成 LF，保存时按原风格还原，避免「只是打开看一眼」
+  就把整段换行改掉。
+
+## 代理（系统代理状态）
+
+读取系统代理只有一处：`Services/SystemProxy.cs`。设置页的「系统代理状态」行、
+`TavernRuntime` 起酒馆时注入的 `--requestProxyUrl`，读的都是它。
+
+- **「跟随系统」必须把 Windows 的真实状态摆出来**：这四个字本身不传递信息——
+  系统那边很可能压根没开代理，用户却以为流量已经走了代理。所以选中「系统代理」时
+  多出一行：绿色「已开启」+ 实际地址，或灰色「未开启」+ 「选这一项等于直连」。
+- **三种开启形态要分开**：手动代理（`ProxyEnable=1` + `ProxyServer`）、PAC 脚本
+  （`AutoConfigURL`，即使 `ProxyEnable=0` 也生效）、自动检测（`AutoDetect=1`，WPAD）。
+  只有三者都不成立才是未开启；PAC 与 WPAD 拿不到固定地址，要说清楚而不是留空白。
+- **`ProxyServer` 的四种写法都要归一**：`host:port`、`http://host:port`、
+  `http=…;https=…`、`socks=…`。给 node / git 用时只认 http(s)，所以优先挑 http 段；
+  socks 段要补 `socks5://`，否则会被当成 http 代理连。
+- 这一行只在「系统代理」被选中、且不是小白版时出现（小白版整组收起）；
+  旁边给「刷新」（重新读注册表）与「去设置」（`ms-settings:network-proxy`）。
+- **每次 `RefreshDerived` 都重读**：用户在 Windows 设置里改了代理，回到启动器就该看到新状态。
+
+## GitHub 连通性测试
+
+数据层是 `Services/GithubConnectivity.cs`，弹窗在 `Views/SettingsPage.xaml.cs`
+（`ShowGithubTestAsync` / `ProbeGithubAsync`）。
+
+- **每个数字都是这次请求实测的**。以前是四条写死的延迟（412/268/0/168），
+  换了代理、断了网，点「重新测试」照样一片绿——那种「测试」比没有更糟。
+- 探测的节点：`github.com` 仓库页、`api.github.com` releases、`codeload.github.com`
+  的 tar.gz、`raw.githubusercontent.com` 的 start.sh；**加速开着才多探一条**
+  `gh-proxy.org`（真实加速地址），**装了 Git 才多探一条** `git ls-remote`。
+- 延迟 = 从发请求到拿到响应头。只读到响应头就断开（`ResponseHeadersRead` + `Range: 0-2048`），
+  不能为了测连通性把几十 MB 的压缩包拖下来。
+- 代理走 `ProxyHttpClient`，与版本列表、安装器同一套规则；弹窗顶部把「当前出口」写出来，
+  免得用户猜到底有没有用代理。
+- **中转 4xx 要说成「这条加速地址不可用」**，不能等同于「GitHub 不通」：两者处置完全不同。
+- 网络异常要翻成人话（`DescribeHttpError`）：`The SSL connection could not be established…`
+  对用户毫无意义，界面写「TLS 握手失败（域名可能被阻断）」。
+- 「最快」只统计 GitHub 自己的域名：中转与 git 通道不是同一维度的数字。
+  结果写回 `LauncherSettings.SetGithubTestResult`，设置行显示「最佳 xxx ms」。
+- 测试并发跑（`Task.WhenAll`），单个超时 8 秒、git 20 秒；串行六条能让人等到关弹窗。
 
 ## 路径显示
 

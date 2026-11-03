@@ -284,6 +284,7 @@
                                         <ComboBoxItem Content="谷歌浏览器" />
                                         <ComboBoxItem Content="Edge" />
                                         <ComboBoxItem Content="火狐浏览器" />
+                                        <ComboBoxItem Content="系统默认" />
                                     </ComboBox>
                                 </Grid>
                             </Border>
@@ -325,7 +326,7 @@
                                     Text="IP 白名单" />
                                 <TextBlock
                                     Style="{StaticResource FieldHintTextStyle}"
-                                    Text="只有名单里的地址能连上酒馆；localhost 和 127.0.0.1 默认锁定、删不掉。" />
+                                    Text="只有名单里的地址能连上酒馆；127.0.0.1 和 ::1 默认锁定、删不掉。" />
                             </StackPanel>
 
                             <TextBlock
@@ -646,6 +647,7 @@
                                         <ComboBoxItem Content="谷歌浏览器" />
                                         <ComboBoxItem Content="Edge" />
                                         <ComboBoxItem Content="火狐浏览器" />
+                                        <ComboBoxItem Content="系统默认" />
                                     </ComboBox>
                                 </Grid>
                             </Border>
