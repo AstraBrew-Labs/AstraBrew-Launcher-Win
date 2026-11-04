@@ -163,11 +163,25 @@ namespace AstraBrew_Launcher.Services
         /// <summary>资源导出目录。</summary>
         public static string ExportPath => _exportPath;
 
-        /// <summary>服务器模式：允许局域网 / 公网访问。</summary>
-        public static bool ServerMode => _serverMode;
+        /// <summary>
+        /// 服务器模式：允许局域网 / 公网访问。
+        ///
+        /// 它就是「启动方式 = 服务器模式」的另一种说法——以前存成独立开关，
+        /// 于是出现「启动方式选了服务器模式、服务器选项却没展开」这种自相矛盾的状态。
+        /// 现在只有一个真值来源（<see cref="StartMode"/>），这里是推导出来的。
+        /// </summary>
+        public static bool ServerMode => _startMode == QuickStartMode.Server;
 
         /// <summary>服务器模式下的可见范围。</summary>
         public static ServiceScopeSetting ServiceScope => _serviceScope;
+
+        /// <summary>
+        /// 普通 / 桌面模式下用户自己维护的 IP 白名单（逗号分隔）。
+        ///
+        /// 必须单独存一份：服务器模式会把 config.yaml 的 whitelist 整份换成推导结果，
+        /// 只靠那个文件的话，切回普通模式时用户加的条目早被冲掉了。
+        /// </summary>
+        public static string UserWhitelist => _userWhitelist;
 
         /// <summary>关闭窗口后酒馆继续在后台跑（依赖 PM2）。</summary>
         public static bool AllowBackground => _allowBackground;
@@ -270,9 +284,10 @@ namespace AstraBrew_Launcher.Services
 
         public static void SetExportPath(string value) => Set(ref _exportPath, value);
 
-        public static void SetServerMode(bool value) => Set(ref _serverMode, value);
 
         public static void SetServiceScope(ServiceScopeSetting value) => Set(ref _serviceScope, value);
+
+        public static void SetUserWhitelist(string value) => Set(ref _userWhitelist, value ?? string.Empty);
 
         public static void SetAllowBackground(bool value) => Set(ref _allowBackground, value);
 
@@ -342,8 +357,8 @@ namespace AstraBrew_Launcher.Services
             _startMode = QuickStartMode.Normal;
             _stopTavernOnWindowClose = true;
             _exportPath = DefaultExportPath;
-            _serverMode = false;
             _serviceScope = ServiceScopeSetting.Lan;
+            _userWhitelist = string.Empty;
             _allowBackground = true;
             _dataLocation = DataLocationMode.CurrentInstance;
             _globalDataPath = DefaultDataPath;
@@ -372,8 +387,8 @@ namespace AstraBrew_Launcher.Services
         private static QuickStartMode _startMode = QuickStartMode.Normal;
         private static bool _stopTavernOnWindowClose = true;
         private static string _exportPath = DefaultExportPath;
-        private static bool _serverMode;
         private static ServiceScopeSetting _serviceScope = ServiceScopeSetting.Lan;
+        private static string _userWhitelist = string.Empty;
         private static bool _allowBackground = true;
         private static DataLocationMode _dataLocation = DataLocationMode.CurrentInstance;
         private static string _globalDataPath = DefaultDataPath;

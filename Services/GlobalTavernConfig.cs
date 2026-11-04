@@ -1,6 +1,7 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -304,17 +305,16 @@ namespace AstraBrew_Launcher.Services
         }
 
         /// <summary>
-        /// 修正全局配置里酒馆不认的白名单条目。
+        /// 把白名单整体写进 <c>config.yaml</c>，并确保 <c>whitelistMode</c> 是开的。
         ///
-        /// SillyTavern 的白名单只接受 IP / CIDR，<c>localhost</c> 这种主机名会被它判成
-        /// 「Invalid IP」直接忽略；而浏览器打开 localhost 常常走 IPv6 回环，
-        /// 于是服务明明起来了，页面却被白名单挡在门外。这里把主机名换成 <c>::1</c>
-        /// 并补齐两个回环地址，只在真的需要改时写盘。
+        /// 白名单现在由「服务范围」推导（局域网 = 放行本机所在网段，互联网 = 全开放），
+        /// 界面不再手工编辑，所以这里是唯一的写入点。内容没变就不写盘，
+        /// 免得每次启动都改一遍文件时间。
         /// </summary>
-        /// <returns>改过返回 true；文件不在、没问题、写不进去都返回 false。</returns>
-        public static bool NormalizeWhitelist()
+        /// <returns>真的写了文件返回 true。</returns>
+        public static bool ApplyWhitelist(IReadOnlyList<string> hosts)
         {
-            if (!HasGlobalConfig)
+            if (!HasGlobalConfig || hosts.Count == 0)
             {
                 return false;
             }
@@ -324,51 +324,56 @@ namespace AstraBrew_Launcher.Services
                 string text = ReadGlobal();
                 List<string> current = YamlConfig.ReadList(text, "whitelist");
 
-                if (current.Count == 0)
+                bool same = current.Count == hosts.Count;
+                if (same)
+                {
+                    for (int index = 0; index < hosts.Count; index++)
+                    {
+                        if (!string.Equals(current[index], hosts[index], StringComparison.OrdinalIgnoreCase))
+                        {
+                            same = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (same)
                 {
                     return false;
                 }
 
-                var next = new List<string>();
-                bool changed = false;
+                string updated = YamlConfig.SetList(text, "whitelist", hosts);
 
-                foreach (string host in current)
-                {
-                    string value = host.Trim();
+                // 白名单不打开等于没写：顺手把开关置真
+                updated = YamlConfig.SetScalar(updated, "whitelistMode", "true");
 
-                    if (value.Equals("localhost", StringComparison.OrdinalIgnoreCase))
-                    {
-                        value = "::1";
-                        changed = true;
-                    }
-
-                    if (value.Length > 0 && !next.Exists(item =>
-                        string.Equals(item, value, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        next.Add(value);
-                    }
-                }
-
-                foreach (string required in new[] { "127.0.0.1", "::1" })
-                {
-                    if (!next.Exists(item => string.Equals(item, required, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        next.Add(required);
-                        changed = true;
-                    }
-                }
-
-                if (!changed)
-                {
-                    return false;
-                }
-
-                SaveGlobal(YamlConfig.SetList(text, "whitelist", next));
+                SaveGlobal(updated);
                 return true;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 return false;
+            }
+        }
+
+        /// <summary>读 config.yaml 里现有的白名单（读不到就是空表）。</summary>
+        public static IReadOnlyList<string> ReadWhitelist()
+        {
+            if (!HasGlobalConfig)
+            {
+                return Array.Empty<string>();
+            }
+
+            try
+            {
+                return YamlConfig.ReadList(ReadGlobal(), "whitelist")
+                    .Where(item => !string.IsNullOrWhiteSpace(item))
+                    .Select(item => item.Trim())
+                    .ToList();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return Array.Empty<string>();
             }
         }
 

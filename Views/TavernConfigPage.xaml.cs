@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
@@ -9,9 +9,11 @@ using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Windows.Storage;
+using Windows.System;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
 
@@ -82,6 +84,7 @@ namespace AstraBrew_Launcher.Views
             SyncBrowserSelection();
             SyncPorts(SimplePortBox.Value);
             SyncWhitelistMeta();
+            SyncWhitelistUi();
             _syncing = false;
 
             HookFieldEvents();
@@ -135,7 +138,9 @@ namespace AstraBrew_Launcher.Views
             VersionHint.Text = simple
                 ? "只放最常用的几项，其余按官方推荐值跑就好。"
                 : "官方 config.yaml 的全部选项，逐项标注对应字段。";
-            VersionCount.Text = simple ? "5 项" : "9 组";
+            VersionCount.Text = simple
+                ? (TavernSettings.IsNormalMode ? "5 项" : "3 项")
+                : "9 组";
         }
 
         // ==================== 分组折叠 ====================
@@ -292,7 +297,10 @@ namespace AstraBrew_Launcher.Views
             _syncing = false;
         }
 
-        /// <summary>自动打开浏览器 / 默认浏览器只在普通模式下出现。</summary>
+        /// <summary>
+        /// 自动打开浏览器 / 默认浏览器只在普通模式下出现：桌面模式由启动器自己开窗口，
+        /// 服务器模式根本不弹页面，这两项对它们没有任何作用，摆出来只会让人以为要配。
+        /// </summary>
         private void SyncBrowserRows()
         {
             if (SimpleAutoBrowserRow is null)
@@ -308,11 +316,62 @@ namespace AstraBrew_Launcher.Views
             AdvAutoBrowserRow.Visibility = visibility;
             AdvBrowserRow.Visibility = visibility;
 
-            BrowserModeHint.IsOpen = !normal;
-            BrowserModeHint.Message = $"当前为{TavernSettings.ModeName}，浏览器相关选项已隐藏，切换回普通模式后自动恢复。";
+            // 副标题与项数跟着变：选项都没了还说「含默认浏览器」「5 项」会显得自相矛盾
+            if (NetworkSectionHint is not null)
+            {
+                NetworkSectionHint.Text = normal
+                    ? "端口、监听地址、协议栈与默认浏览器"
+                    : "端口、监听地址与协议栈";
+            }
+
+            if (VersionCount is not null && LauncherSettings.IsSimpleLevel)
+            {
+                VersionCount.Text = normal ? "5 项" : "3 项";
+            }
         }
 
         // ==================== 白名单 ====================
+
+        /// <summary>
+        /// 服务器模式下白名单由服务范围推导并锁死：输入框、添加按钮与删除按钮全部收起；
+        /// 普通 / 桌面模式下放开编辑，只保留两个回环地址不能删。
+        /// </summary>
+        private void SyncWhitelistUi()
+        {
+            if (SimpleWhitelistInputRow is null)
+            {
+                return;
+            }
+
+            var editable = TavernSettings.WhitelistLocked ? Visibility.Collapsed : Visibility.Visible;
+
+            SimpleWhitelistInputRow.Visibility = editable;
+            AdvWhitelistInputRow.Visibility = editable;
+
+            SimpleWhitelistError.Visibility = Visibility.Collapsed;
+            AdvWhitelistError.Visibility = Visibility.Collapsed;
+
+            string note = TavernSettings.WhitelistLocked
+                ? $"名单按「{TavernSettings.ScopeName}」自动生成，不可手动修改。"
+                : "只有名单里的地址能连上酒馆；127.0.0.1 与 ::1 固定保留，其余可以增删。";
+
+            SimpleWhitelistNote.Text = note;
+            AdvWhitelistNote.Text = note;
+
+            if (SimpleWhitelistSubtitle is not null)
+            {
+                SimpleWhitelistSubtitle.Text = TavernSettings.WhitelistLocked
+                    ? "服务器模式下按「服务范围」自动生成：局域网放行本机网段，互联网全开放。"
+                    : "只有名单里的地址能连上酒馆；127.0.0.1 与 ::1 固定保留，其余可以增删。";
+            }
+
+            if (AdvWhitelistSubtitle is not null)
+            {
+                AdvWhitelistSubtitle.Text = TavernSettings.WhitelistLocked
+                    ? "开启后只有名单内的地址能连接。名单按「服务范围」自动生成，对应 whitelistMode。"
+                    : "开启后只有名单内的地址能连接；127.0.0.1 与 ::1 固定保留。对应 whitelistMode。";
+            }
+        }
 
         private void AddWhitelistSimple_Click(object sender, RoutedEventArgs e)
             => AddWhitelist(SimpleWhitelistInput, SimpleWhitelistError);
@@ -320,17 +379,50 @@ namespace AstraBrew_Launcher.Views
         private void AddWhitelistAdvanced_Click(object sender, RoutedEventArgs e)
             => AddWhitelist(AdvWhitelistInput, AdvWhitelistError);
 
+        /// <summary>
+        /// 输入框里按回车＝点「添加」。
+        /// 电脑上的输入框本来就该这样：填完一个直接回车接着填下一个，不用每次去找按钮。
+        /// </summary>
+        private void WhitelistInput_KeyDown(object sender, KeyRoutedEventArgs e)
+        {
+            if (e.Key != VirtualKey.Enter || sender is not TextBox input)
+            {
+                return;
+            }
+
+            // 处理掉，别再冒到外层去触发别的默认动作
+            e.Handled = true;
+
+            AddWhitelist(
+                input,
+                ReferenceEquals(input, AdvWhitelistInput) ? AdvWhitelistError : SimpleWhitelistError);
+        }
+
         private void AddWhitelist(TextBox input, TextBlock error)
         {
-            if (TavernSettings.TryAddWhitelist(input?.Text, out var message))
+            if (TavernSettings.TryAddWhitelist(input?.Text, out string message))
             {
                 if (input is not null)
                 {
                     input.Text = string.Empty;
+
+                    // 焦点留在输入框：连着加几条时不用再点回来
+                    input.Focus(FocusState.Programmatic);
                 }
 
                 error.Visibility = Visibility.Collapsed;
                 MarkDirty();
+
+                // 新条目接在末尾，列表限高后会看不见——排到布局之后再滚到底
+                ScrollViewer? scroll = ReferenceEquals(input, AdvWhitelistInput)
+                    ? AdvWhitelistScroll
+                    : SimpleWhitelistScroll;
+
+                if (scroll is not null)
+                {
+                    DispatcherQueue.TryEnqueue(() =>
+                        scroll.ChangeView(null, scroll.ScrollableHeight, null));
+                }
             }
             else
             {
@@ -364,13 +456,14 @@ namespace AstraBrew_Launcher.Views
         {
             SyncBrowserRows();
             SyncBrowserSelection();
+            SyncWhitelistMeta();
+            SyncWhitelistUi();
         }
 
         private void Shared_WhitelistChanged(object? sender, EventArgs e)
         {
             SyncWhitelistMeta();
-            SimpleWhitelistError.Visibility = Visibility.Collapsed;
-            AdvWhitelistError.Visibility = Visibility.Collapsed;
+            SyncWhitelistUi();
 
             if (!_syncing && !_loading)
             {
@@ -441,13 +534,11 @@ namespace AstraBrew_Launcher.Views
 
             string text;
             Dictionary<string, string> scalars;
-            List<string> whitelist;
 
             try
             {
                 text = GlobalTavernConfig.ReadGlobal();
                 scalars = YamlConfig.ReadScalars(text);
-                whitelist = YamlConfig.ReadList(text, "whitelist");
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -512,10 +603,9 @@ namespace AstraBrew_Launcher.Views
                 LoadExtraFields(scalars, text);
                 _syncing = false;
 
-                if (whitelist.Count > 0)
-                {
-                    TavernSettings.SetWhitelist(whitelist);
-                }
+                // 白名单由服务范围推导，文件里那份只是结果：这里重算一遍，
+                // 顺带把「换过网络、网段变了」的情况补正
+                TavernSettings.ApplyWhitelist(persist: false);
             }
             finally
             {

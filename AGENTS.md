@@ -101,6 +101,37 @@
   窗口几何是静默写入的（不发 `Changed`），漏了这一步「记住窗口位置」永远存不下来。
 - 设置页右上角的「已保存」徽章读 `SettingsStore.Saved` 事件，不要再用定时器假装保存成功。
 
+### 启动模式只有一个真值
+
+- `LauncherSettings.StartMode`（普通 / 桌面 / 服务器）是**唯一**的模式来源。
+  曾经还有一个独立的 `server_mode` 开关，于是出现「启动方式选了服务器模式、服务器选项却没展开」这种
+  自相矛盾的状态；现在 `ServerMode` 是 `StartMode == Server` 的推导属性，设置页那个开关已删除，
+  服务器子行（服务范围、后台常驻）跟着启动方式展开。
+- 旧配置里 `mode = browser` + `server_mode = true` 的，读取时升到服务器模式（只升不降：
+  桌面模式有自己的含义）。写回时 `server_mode` 仍写一份，但只是「给人看的推导值」。
+- **服务范围（局域网 / 互联网）写入 `config.yaml` 的 `listen` / `listenAddress.ipv4`**，
+  统一走 `TavernSettings.SetScope(...)`：仪表盘的 chip 与设置里的「服务范围」以前各写各的
+  （设置页只写 settings.toml，对酒馆毫无影响），现在两边同一入口、读的也是同一份
+  （`TavernSettings.Scope`，启动时从 config.yaml 读）。
+- **写状态要在写文件之前**：`TavernSettings.SetScope` 先更新 `_scope`，再 `PatchScalar`。
+  反过来（先写文件）时，`PatchScalar` 触发的 `LauncherSettings.Changed` 会让设置页按**旧的**
+  `TavernSettings.Scope` 回填分段选择器，把用户刚点的选项改回去；RadioButton 的 `Checked`
+  还可能晚一拍派发，于是又被当成一次用户点击——表现就是「服务范围来回点，偶尔才能切换成功」。
+- **`SegmentedPicker` 先点亮目标、再关掉其余**：反过来会先让另一个分段短暂进入选中态。
+  每个分段都写了 `AutomationProperties.Name`（Content 是面板时 RadioButton 自己算不出名字）。
+  自动化测试按名字点分段，别按坐标点空白处。
+- **网卡地址带缓存**（`NetworkInfo.LocalAddresses`）：`NetworkInterface` 枚举在 Windows 上
+  一次 100 ms 出头。仪表盘切换服务范围时原来一次点击要枚举 **4 次**（`LocalAddresses` 一次、
+  `HttpUrl(port)` 内部再一次，而 `SyncServiceScope` 被 handler 与 `Changed` 各调一次），
+  于是点击后要卡半秒才切过去；设置页不查网卡，所以那边一直是顺的。
+  现在结果缓存 30 s、过期先返回旧值再后台重新枚举，`HttpUrl(port, v4)` 复用已有的 v4。
+  任何「每次刷新都要查硬件/网络」的信息都按这个模式做，别在 UI 线程上直接枚举。
+- 「反向代理」行属于 `InternetRows`：**只有服务器模式 + 互联网**才显示，
+  判断读 `TavernSettings.Scope`（唯一状态），别再读 settings.toml 里的镜像值。
+- **两个页面要双向同步**：仪表盘改模式/范围 → `TavernSettings.Changed` → 设置页
+  `RefreshDerived` → `SyncExternalChoices()` 把分段选择器与开关拉回当前值（滑杆/输入框不碰，
+  免得打断正在拖动或输入的操作）；反向由仪表盘的 `SyncFromShared` 负责。
+
 ## 设置版本（小白版 / 高手版）
 
 设置页有两种呈现，和酒馆配置页同一套交互：`Services/LauncherSettings.cs` 的 `Level`
@@ -405,6 +436,61 @@ git config --global --unset url."https://gh-proxy.org/https://github.com/".inste
 - **各行的 `Node` 是同一套运行环境**：启动器只有一个 Node（设置里选内置还是系统），
   不是每个目录各自带一个。探测一次后由 `SetRuntimeLabel` 铺到所有行，探不到就写「Node 未检测」，
   不要按目录名猜版本。
+
+## 浏览器选项只在普通模式出现
+
+酒馆配置页的「自动打开浏览器」「默认浏览器」两行（小白版与高手版各一份）只在**普通模式**下显示：
+桌面模式由启动器自己开窗口、服务器模式根本不弹页面，这两项对它们没有作用。
+
+- 判断走 `TavernSettings.IsNormalMode`（= `LauncherSettings.StartMode == Normal`），
+  在 `SyncBrowserRows()` 里统一处理，`Loaded` 与 `TavernSettings.Changed` 都会调它。
+- **连解释条一起去掉**：以前还留着一条「当前不是普通模式，浏览器相关选项已隐藏」的 InfoBar，
+  摆在那反而像还留着选项。现在整行消失，什么都不说。
+- 副标题与项数要跟着变，否则「端口、监听地址、协议栈与默认浏览器」「5 项」会和界面自相矛盾：
+  高手版分组副标题切到「端口、监听地址与协议栈」，小白版项数 5 → 3。
+
+## IP 白名单（两份，服务器模式推导；普通模式记住用户那份）
+
+`TavernSettings` 是唯一入口，内部其实有**两份名单**，谁都不覆盖谁：
+
+| 名单 | 存在哪 | 谁在用 |
+|---|---|---|
+| 用户名单 `_userHosts` | `settings.toml` 的 `tavern.user_whitelist`（逗号分隔） | 普通 / 桌面模式，可加删，回环不可删 |
+| 推导名单 `BuildServerWhitelist()` | 只写 `config.yaml` | 服务器模式，全部锁定 |
+
+| 启动模式 | 名单 | 能否编辑 |
+|---|---|---|
+| 服务器 · 局域网 | `127.0.0.1`、`::1`、本机 IP、本机网段（如 `192.168.8.0/24`） | 锁死 |
+| 服务器 · 互联网 | `127.0.0.1`、`::1`、`0.0.0.0/0`、`::/0`（全开放） | 锁死 |
+| 普通 / 桌面 | 用户名单（首次从 config.yaml 迁移，没有则本机 IP + 网段做底） | 可加删 |
+
+- **切到服务器模式不许写用户名单**，切回来才能原样恢复。以前只有 config.yaml 一份，
+  服务器模式一写就把用户条目冲掉，切回来要么丢了、要么残留 `0.0.0.0/0`——这是最容易复发的坑。
+- 模式一变（`LauncherSettings.Changed` + `_whitelistMode` 比较）就 `ApplyWhitelist()`：
+  只切换视图，两份数据都不动。只有用户自己增删才走 `SyncUserHosts()`（同时写 settings.toml 与 config.yaml）。
+- **去重与规范化**（`NormalizeHost` / `NormalizeHosts` / `Covers`）：
+  CIDR 主机位归零（`192.168.8.21/24` → `192.168.8.0/24`）、`/32`、`/128` 折成单个地址、
+  完全相同的合并、**被更宽网段覆盖的条目删掉**（有 `192.168.8.0/24` 时 `192.168.8.21` 是废话）。
+  添加时两个方向都判：新条目被已有网段覆盖 → 拒绝并说明；新条目覆盖了已有条目 → 清掉那些。
+  启动与每次重建都会做一遍，规范化结果写回 settings.toml。
+- 只收 IP / CIDR：**`localhost` 会被 SillyTavern 判成 Invalid IP 丢掉**，等价物是 `::1`；
+  `0.0.0.0` 单条不匹配任何地址，全开放要写 `0.0.0.0/0`，IPv6 还要 `::/0`。
+- 界面：`SyncWhitelistUi()` 按 `WhitelistLocked` 显隐输入框与说明；条目自带 `IsLocked`，
+  锁定项不出删除按钮。
+- **标签（Tags）而不是列表**：IP / 网段都很短，一行横着能放五六个，竖列表纯属浪费横向空间。
+  两个 `ItemsControl`（小白版 / 高手版）都用 `ItemsPanelTemplate` + `panels:WrapPanel`
+  （`Views/Controls/EditorPanels.cs` 里的最小实现，WinUI 3 没有 FlexLayout），
+  条目模板是页面资源里的 `WhitelistTagTemplate`：锁定项 = 中性底 + 小锁（`LockedTagChipStyle`），
+  自定义项 = 强调色淡底 + 小叉（`EditTagChipStyle` + `ChipCloseButtonStyle`）。
+- **外层仍限高**（`ScrollViewer MaxHeight="150"`，约 5 行标签）：极端情况（几十条）也不拉长页面。
+  别把 `MaxHeight` 改成 `MinHeight`：外层页面本来就是 ScrollViewer，高度约束是无限的。
+  添加成功后 `ChangeView` 滚到底（新条目接在末尾），用 `DispatcherQueue.TryEnqueue` 等布局完成再滚。
+- **回车即添加**：两个输入框都挂 `KeyDown="WhitelistInput_KeyDown"`，`VirtualKey.Enter` 时
+  按屏幕上的「添加」同一条路径走，并 `e.Handled = true`；成功后清空文本、焦点留在框里，
+  好连着填下一个。提示文字写「输入 IP 或网段，回车即可添加」，别只写示例。
+- 起服务前 `TavernRuntime` 读 `WhitelistHosts` 快照写盘并打一行
+  `白名单（普通模式）：127.0.0.1、::1、…`——排查「连不上」先看它。
+- 集合绑在 ItemsControl 上，**改集合必须在 UI 线程**：`ReplaceWhitelist` 会自己转投。
 
 ## 全局酒馆配置（首次获取）
 

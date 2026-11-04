@@ -1,6 +1,7 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 
@@ -120,6 +121,10 @@ namespace AstraBrew_Launcher.Views.Controls
                     Tag = i,
                 };
 
+                // Content 是面板（图标 + 文字）时，RadioButton 算不出可读名字，
+                // 读屏软件与自动化都只能拿到一个空名字——这里补上
+                AutomationProperties.SetName(button, labels[i]);
+
                 if (Application.Current.Resources.TryGetValue("SegmentRadioStyle", out object radioStyle)
                     && radioStyle is Style style)
                 {
@@ -171,9 +176,17 @@ namespace AstraBrew_Launcher.Views.Controls
             _syncing = true;
             try
             {
+                // 先点亮目标、再关掉其余：反过来会先让「另一个」短暂进入选中态，
+                // 而 RadioButton 的 Checked 有可能晚一拍才派发——那时 _syncing 已经复位，
+                // 就会被当成用户又点了一次，把刚选的值改回去（表现为「切换偶尔才生效」）
+                _buttons[index].IsChecked = true;
+
                 for (var i = 0; i < _buttons.Count; i++)
                 {
-                    _buttons[i].IsChecked = i == index;
+                    if (i != index)
+                    {
+                        _buttons[i].IsChecked = false;
+                    }
                 }
             }
             finally

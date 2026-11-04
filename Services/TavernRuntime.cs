@@ -374,14 +374,16 @@ namespace AstraBrew_Launcher.Services
             {
                 AddLog(TavernLogKind.Info, $"数据目录 {dataRoot}");
 
-                // 旧配置里白名单写着 localhost：酒馆会忽略它，浏览器按 IPv6 回环打开就被挡。
-                // 起服务前顺手修正，比让用户对着「无法访问」自己猜要好。
-                if (GlobalTavernConfig.NormalizeWhitelist())
-                {
-                    AddLog(
-                        TavernLogKind.Warning,
-                        "白名单里的 localhost 不是合法 IP（酒馆只认 IP/CIDR），已换成 ::1 并补齐回环地址。");
-                }
+                // 白名单跟着服务范围走：局域网放行本机网段，互联网全开放。
+                // 每次启动都对一遍，换过 Wi-Fi、改过服务范围之后不会留下过期的名单。
+                IReadOnlyList<string> whitelistHosts = TavernSettings.WhitelistHosts;
+                bool whitelistWritten = GlobalTavernConfig.ApplyWhitelist(whitelistHosts);
+
+                // 每次都打一行：白名单决定了谁能连上来，出问题时要能一眼看到当时放行了哪些
+                AddLog(
+                    TavernLogKind.Info,
+                    $"白名单（{TavernSettings.ModeName}）：{string.Join("、", whitelistHosts)}"
+                        + (whitelistWritten ? " · 已写入 config.yaml" : string.Empty));
             }
 
             // ---------- 5. 端口 ----------

@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Page
     x:Class="AstraBrew_Launcher.Views.SettingsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -412,20 +412,7 @@
                                 </controls:SettingRow>
                             </StackPanel>
 
-                            <Rectangle x:Name="DividerBeforeServerMode" Style="{StaticResource RowDividerStyle}" />
-
-                            <controls:SettingRow
-                                x:Name="ServerModeRow"
-                                Description="允许局域网 / 公网访问酒馆；关闭时只有本机能连。"
-                                Glyph="&#xE968;"
-                                Title="服务器模式"
-                                WrapAt="0">
-                                <ToggleSwitch
-                                    x:Name="ServerModeSwitch"
-                                    Style="{StaticResource RowSwitchStyle}"
-                                    Toggled="ServerModeSwitch_Toggled" />
-                            </controls:SettingRow>
-
+                            <!--  服务器模式的子选项：启动方式选了「服务器模式」才展开  -->
                             <StackPanel x:Name="ServerRows" Visibility="Collapsed">
                                 <Rectangle Style="{StaticResource RowDividerStyle}" />
 

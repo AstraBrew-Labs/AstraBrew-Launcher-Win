@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AstraBrew_Launcher.Services;
+using AstraBrew_Launcher.Views.Controls;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -139,8 +140,8 @@ namespace AstraBrew_Launcher.Views
                 StopOnCloseSwitch.IsOn = LauncherSettings.StopTavernOnWindowClose;
                 ShowPath(ExportPathText, Expand(LauncherSettings.ExportPath));
 
-                ServerModeSwitch.IsOn = LauncherSettings.ServerMode;
-                ScopePicker.SelectedIndex = (int)LauncherSettings.ServiceScope;
+                // 服务范围的真值在 config.yaml（listen），不是 settings.toml
+                ScopePicker.SelectedIndex = (int)TavernSettings.Scope;
                 BackgroundSwitch.IsOn = LauncherSettings.AllowBackground;
 
                 DataLocationPicker.SelectedIndex = (int)LauncherSettings.DataLocation;
@@ -173,6 +174,7 @@ namespace AstraBrew_Launcher.Views
         /// </summary>
         private void RefreshDerived()
         {
+            SyncExternalChoices();
             ApplyLevel();
             ApplyConditions();
             ApplyEnvironment();
@@ -180,6 +182,60 @@ namespace AstraBrew_Launcher.Views
             UpdateProxyUi();
             UpdateGithubTestUi();
             UpdateFontHint();
+        }
+
+        /// <summary>
+        /// 把「别处改过的离散选项」拉回当前设置。
+        ///
+        /// 仪表盘上换启动模式、配置页改服务范围，都会经 <see cref="LauncherSettings.Changed"/> 回到这里。
+        /// 以前这里只重画条件行、不回写控件，于是设置页的下拉还停在旧值——
+        /// 仪表盘写着「服务器模式」，设置里却是「普通模式」。
+        ///
+        /// 只同步离散选择（分段选择器、开关）：滑杆与输入框不碰，
+        /// 那会把正在拖动的位置、正在输入的文本打断。
+        /// </summary>
+        private void SyncExternalChoices()
+        {
+            if (StartModePicker is null)
+            {
+                return;
+            }
+
+            bool wasSyncing = _sync;
+            _sync = true;
+            try
+            {
+                Pick(StartModePicker, (int)LauncherSettings.StartMode);
+                Pick(CpuPicker, (int)LauncherSettings.CpuCores);
+                Pick(ScopePicker, (int)TavernSettings.Scope);
+                Pick(DataLocationPicker, (int)LauncherSettings.DataLocation);
+                Pick(ProxyPicker, (int)LauncherSettings.Proxy);
+
+                Toggle(StopOnCloseSwitch, LauncherSettings.StopTavernOnWindowClose);
+                Toggle(BackgroundSwitch, LauncherSettings.AllowBackground);
+                Toggle(StartupCommandSwitch, LauncherSettings.ShowStartupCommand);
+            }
+            finally
+            {
+                _sync = wasSyncing;
+            }
+        }
+
+        /// <summary>只在值真的不同时才赋值：否则每次刷新都会重放一次 SelectionChanged。</summary>
+        private static void Pick(SegmentedPicker picker, int index)
+        {
+            if (picker is not null && picker.SelectedIndex != index)
+            {
+                picker.SelectedIndex = index;
+            }
+        }
+
+        private static void Toggle(ToggleSwitch toggle, bool value)
+        {
+            if (toggle is not null && toggle.IsOn != value)
+            {
+                toggle.IsOn = value;
+            }
         }
 
         private void OnSettingsChanged(object? sender, EventArgs e)
@@ -261,8 +317,6 @@ namespace AstraBrew_Launcher.Views
             // 基础：留开机自启、启动方式、关窗停服与资源目录
             SetShown(CpuRow, !simple);
             SetShown(DividerAfterCpu, !simple);
-            SetShown(DividerBeforeServerMode, !simple);
-            SetShown(ServerModeRow, !simple);
             SetShown(DividerBeforeDataLocation, !simple);
             SetShown(DataLocationRow, !simple);
             SetShown(DividerBeforeGlobalData, !simple);
@@ -295,14 +349,19 @@ namespace AstraBrew_Launcher.Views
                 ? Visibility.Visible
                 : Visibility.Collapsed;
 
-            // 小白版没有服务器模式入口：旧配置里开着它也不能把子行顶出来
-            ServerRows.Visibility = !simple && LauncherSettings.ServerMode
+            // 「服务器模式」就是启动方式的一种，没有第二个开关：
+            // 启动方式选到它，服务范围、后台常驻这些子行才展开
+            bool server = LauncherSettings.StartMode == QuickStartMode.Server;
+
+            ServerRows.Visibility = !simple && server
                 ? Visibility.Visible
                 : Visibility.Collapsed;
 
+            // 反向代理只在「服务器模式 + 互联网」下才出现：
+            // 局域网走的是直连，套一层反代没有意义，摆出来只会让人以为必须配
             InternetRows.Visibility = !simple
-                && LauncherSettings.ServerMode
-                && LauncherSettings.ServiceScope == ServiceScopeSetting.Internet
+                && server
+                && TavernSettings.Scope == ServiceScope.Wan
                     ? Visibility.Visible
                     : Visibility.Collapsed;
 
@@ -1029,19 +1088,6 @@ namespace AstraBrew_Launcher.Views
             MarkDirty();
         }
 
-        private void ServerModeSwitch_Toggled(object sender, RoutedEventArgs e)
-        {
-            if (_sync)
-            {
-                return;
-            }
-
-            LauncherSettings.SetServerMode(ServerModeSwitch.IsOn);
-            ApplyConditions();
-            ApplyEnvironment();
-            MarkDirty();
-        }
-
         private void ScopePicker_SelectionChanged(object sender, EventArgs e)
         {
             if (_sync)
@@ -1049,7 +1095,10 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            LauncherSettings.SetServiceScope((ServiceScopeSetting)ScopePicker.SelectedIndex);
+            // 与仪表盘同一个入口：写 config.yaml 的 listen，并同步 settings.toml
+            TavernSettings.SetScope(
+                ScopePicker.SelectedIndex == (int)ServiceScope.Lan ? ServiceScope.Lan : ServiceScope.Wan);
+
             ApplyConditions();
             MarkDirty();
         }

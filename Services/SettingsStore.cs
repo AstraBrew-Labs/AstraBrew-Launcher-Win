@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -248,14 +248,23 @@ namespace AstraBrew_Launcher.Services
 
         private static void ApplyTavern(TomlDocument document)
         {
-            if (document.Bool("tavern", "server_mode") is { } serverMode)
+            // 「服务器模式」不再是独立开关，它是启动方式的一种。旧文件里可能两个值互相矛盾
+            // （mode = browser 但 server_mode = true），以「用户当初确实开了服务器模式」为准做一次迁移：
+            // 只把普通模式升到服务器模式，不反向降级——桌面模式有自己的含义，不动它。
+            if (document.Bool("tavern", "server_mode") == true
+                && LauncherSettings.StartMode == QuickStartMode.Normal)
             {
-                LauncherSettings.SetServerMode(serverMode);
+                LauncherSettings.SetStartMode(QuickStartMode.Server);
             }
 
             if (ParseId(ServiceScopes, document.String("tavern", "scope")) is { } scope)
             {
                 LauncherSettings.SetServiceScope(scope);
+            }
+
+            if (document.String("tavern", "user_whitelist") is { Length: > 0 } userWhitelist)
+            {
+                LauncherSettings.SetUserWhitelist(userWhitelist);
             }
 
             if (document.Bool("tavern", "allow_background") is { } background)
@@ -443,13 +452,17 @@ namespace AstraBrew_Launcher.Services
 
             writer.Section("startup");
             writer.Bool("auto_launch", LauncherSettings.AutoLaunch, "登录 Windows 后自动启动");
-            writer.String("mode", IdOf(StartModes, LauncherSettings.StartMode), "browser | desktop");
+            writer.String("mode", IdOf(StartModes, LauncherSettings.StartMode), "browser | desktop | server");
             writer.Bool("stop_tavern_on_close", LauncherSettings.StopTavernOnWindowClose);
             writer.String("cpu_cores", IdOf(CpuCores, LauncherSettings.CpuCores), "auto | half | all");
 
             writer.Section("tavern");
-            writer.Bool("server_mode", LauncherSettings.ServerMode);
+            writer.Bool("server_mode", LauncherSettings.ServerMode, "由 startup.mode 推导，仅供阅读");
             writer.String("scope", IdOf(ServiceScopes, LauncherSettings.ServiceScope), "lan | internet");
+            writer.String(
+                "user_whitelist",
+                LauncherSettings.UserWhitelist,
+                "普通 / 桌面模式的 IP 白名单，逗号分隔；服务器模式的白名单由服务范围推导，不写在这里");
             writer.Bool("allow_background", LauncherSettings.AllowBackground);
             writer.String(
                 "data_location",

@@ -698,18 +698,17 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            if (!_syncing)
+            // 外部同步引起的选中：Shared_Changed 已经刷过地址了，别再算一遍
+            if (_syncing)
             {
-                bool lan = LanRadio.IsChecked == true;
-                TavernSettings.Scope = lan ? ServiceScope.Lan : ServiceScope.Wan;
-
-                // 服务范围就是酒馆配置里的 listen：写进文件，配置页下次进来读到的是同一份
-                GlobalTavernConfig.PatchScalar("listen", lan ? "true" : "false");
-                GlobalTavernConfig.PatchScalar("listenAddress.ipv4", lan ? "0.0.0.0" : "127.0.0.1");
+                return;
             }
 
-            SyncServiceScope();
-            SyncEndpoint();
+            // 写文件这一步收在 TavernSettings.SetScope 里，
+            // 与「设置 → 服务范围」走同一条路，两边不会再各写各的。
+            // 值真的变了它会发 Changed，由 Shared_Changed 统一刷新地址——
+            // 这里再调一次 SyncServiceScope 等于把同一件事做两遍。
+            TavernSettings.SetScope(LanRadio.IsChecked == true ? ServiceScope.Lan : ServiceScope.Wan);
         }
 
         /// <summary>局域网 / 互联网：都显示本机真实地址，区别只在于「能不能从外面连进来」。</summary>
@@ -725,7 +724,8 @@ namespace AstraBrew_Launcher.Views
 
             (string? v4, _) = NetworkInfo.LocalAddresses();
 
-            AccessAddressText.Text = NetworkInfo.HttpUrl(port);
+            // 复用这次读到的 v4：HttpUrl(port) 会再枚举一遍网卡（100 ms 起步）
+            AccessAddressText.Text = NetworkInfo.HttpUrl(port, v4);
             ServiceScopeHint.Text = lan
                 ? "同一 Wi-Fi 下的设备可直接访问，无需额外配置。"
                 : v4 is null
