@@ -114,11 +114,20 @@ namespace AstraBrew_Launcher.Services
         /// <summary>本次停止是用户要求的（停止 / 重启 / 退出）：进程退出不该再报「异常」。</summary>
         private static bool _stopRequested;
 
+        /// <summary>
+        /// 本次启动的输出里出现过 ESM 路径格式错误。
+        /// 这种退出和「酒馆代码坏了」不是一回事，报错要指到真正的原因上。
+        /// </summary>
+        private static bool _esmSchemeSeen;
+
         /// <summary>运行状态变化，始终在 UI 线程触发。</summary>
         public static event EventHandler? Changed;
 
         /// <summary>新增一行日志，始终在 UI 线程触发。</summary>
         public static event EventHandler<TavernLogEntry>? Logged;
+
+        /// <summary>日志被整体清空（每次启动前都会清），界面要重建列表而不是追加一行。</summary>
+        public static event EventHandler? Cleared;
 
         public static TavernProcessState State => _state;
 
@@ -245,6 +254,7 @@ namespace AstraBrew_Launcher.Services
 
                 _queue ??= DispatcherQueue.GetForCurrentThread();
                 _stopRequested = false;
+                _esmSchemeSeen = false;
                 _state = _state with
                 {
                     State = TavernRunState.Starting,
@@ -252,6 +262,10 @@ namespace AstraBrew_Launcher.Services
                     StartedAt = null,
                 };
             }
+
+            // 先清掉上一次的日志再起：两次启动的输出接在一起，出错时根本分不清哪一行是这次的。
+            // 必须在 StartCoreAsync 之前做——那边一进去就开始写日志了。
+            ResetLogs();
 
             Raise();
 
@@ -446,6 +460,8 @@ namespace AstraBrew_Launcher.Services
             // 内置 node 不在 PATH 里：不显式前置，酒馆自己的子进程（npm、扩展脚本）会找不到 node
             startInfo.Environment["PATH"] = BuildPath(node, git);
 
+            ApplyNodeOptions(startInfo);
+
             if (proxy is not null)
             {
                 foreach (string key in new[] { "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy" })
@@ -487,7 +503,7 @@ namespace AstraBrew_Launcher.Services
                     Pid = process.Id,
                     Port = port,
                     Url = $"http://127.0.0.1:{port}",
-                    Mode = $"Direct · {envLabel}",
+                    Mode = $"{TavernSettings.ModeName} · {envLabel}",
                     VersionLabel = instance.KernelLabel,
                 };
             }
@@ -639,12 +655,44 @@ namespace AstraBrew_Launcher.Services
         {
             await StopAsync().ConfigureAwait(false);
 
+            // 停止的收尾（FinishStopped）是投递到 UI 线程执行的，而这里跑在后台线程上。
+            // 不等它落地，下面 StartAsync 会看到状态还是「停止中」并直接返回——
+            // 表现成「点了重启，日志停在已停止，服务没起来」。
+            await WaitSettledAsync().ConfigureAwait(false);
+
             if (_process is { } process)
             {
                 await WaitExitAsync(process, TimeSpan.FromSeconds(10)).ConfigureAwait(false);
             }
 
             await StartAsync().ConfigureAwait(false);
+        }
+
+        /// <summary>等「停止中」这个过渡状态结束；超时就自己补一次收尾。</summary>
+        private static async Task WaitSettledAsync()
+        {
+            DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+
+            while (DateTime.UtcNow < deadline)
+            {
+                if (_state.State is not TavernRunState.Stopping)
+                {
+                    return;
+                }
+
+                await Task.Delay(50).ConfigureAwait(false);
+            }
+
+            // 进程已经等过退出了，还卡在「停止中」只会让重启一直失败
+            Post(() =>
+            {
+                if (_state.State == TavernRunState.Stopping)
+                {
+                    FinishStopped();
+                }
+            });
+
+            await Task.Delay(120).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -733,6 +781,16 @@ namespace AstraBrew_Launcher.Services
 
             string line = AnsiPattern.Replace(raw, string.Empty).TrimEnd();
 
+            // 这条错误在老版本上把用户困死过：报错本身只说「协议不对」，
+            // 看不出是环境变量里的 --import 在捣鬼，这里补一句能照做的说明。
+            // 同一条错误会连着刷好几行（throw 行、Error 行、code 行），说明只补一次
+            if (!_esmSchemeSeen
+                && line.Contains("ERR_UNSUPPORTED_ESM_URL_SCHEME", StringComparison.Ordinal))
+            {
+                _esmSchemeSeen = true;
+                AddLog(TavernLogKind.Error, ESM_SCHEME_HINT);
+            }
+
             // 酒馆自己的输出按「有内容的行」入日志；错误级别靠关键字粗判，
             // 这里不做颜色回放——终端里的色块进界面只会变成噪声
             TavernLogKind kind = line.Contains("error", StringComparison.OrdinalIgnoreCase)
@@ -742,6 +800,12 @@ namespace AstraBrew_Launcher.Services
 
             AddLog(kind, line);
         }
+
+        /// <summary>ESM 路径格式出错时给的说明：说清原因、来源与怎么改。</summary>
+        private const string ESM_SCHEME_HINT =
+            "Node 把 Windows 盘符当成了 URL 协议。ESM 加载器只认 file:// —— "
+            + "这来自某个 --import / --loader 参数传的是文件路径，常见来源是环境变量 NODE_OPTIONS 里"
+            + "别的 Node 工具留下的 --import。启动器会在启动前自动改写；仍报这个错就清掉它再启动。";
 
         private static void OnExited(Process process)
         {
@@ -792,6 +856,17 @@ namespace AstraBrew_Launcher.Services
 
                 Raise();
                 AddLog(TavernLogKind.Error, $"酒馆进程异常退出（代码 {code}），向上翻看最后几行输出。");
+
+                // 抓不到的成因就别硬猜：能识别的按真实原因给建议，其余保持通用说明
+                if (_esmSchemeSeen)
+                {
+                    AppNotify.Error(
+                        "酒馆没能启动：Node 的模块路径格式不对",
+                        "ESM 加载器把 Windows 路径当成了 URL。检查系统环境变量 NODE_OPTIONS 里的 "
+                        + "--import / --loader，路径必须是 file:// URL；清掉它再启动即可。");
+                    return;
+                }
+
                 AppNotify.Error(
                     "酒馆异常退出",
                     $"进程以代码 {code} 结束。控制台里有完整输出，常见原因是端口冲突或依赖缺失。");
@@ -1018,6 +1093,40 @@ namespace AstraBrew_Launcher.Services
             return SystemProxy.ResolveEffectiveUrl();
         }
 
+        /// <summary>
+        /// 修正继承来的 <c>NODE_OPTIONS</c>。
+        ///
+        /// 用户机器上装了别的 Node 工具时，系统环境变量里常会留下
+        /// <c>--import C:\some\hook.mjs</c>。子进程会原样继承它，Node 的 ESM 加载器又把
+        /// 盘符当协议名，于是酒馆刚起来就以 ERR_UNSUPPORTED_ESM_URL_SCHEME 退出——
+        /// 在用户的视角里就是「什么都没干，酒馆启动不了」。
+        /// 这里把裸路径改写成 file:// URL，并如实记一行日志。
+        /// </summary>
+        private static void ApplyNodeOptions(ProcessStartInfo startInfo)
+        {
+            string? inherited = startInfo.Environment.TryGetValue("NODE_OPTIONS", out string? value)
+                ? value
+                : null;
+
+            if (string.IsNullOrWhiteSpace(inherited))
+            {
+                return;
+            }
+
+            AddLog(TavernLogKind.Info, $"继承的 NODE_OPTIONS：{inherited}");
+
+            (string? fixedOptions, string? note) = NodeEnvironment.SanitizeNodeOptions(inherited);
+
+            if (note is null || fixedOptions is null)
+            {
+                return;
+            }
+
+            startInfo.Environment["NODE_OPTIONS"] = fixedOptions;
+            AddLog(TavernLogKind.Warning, note);
+            AddLog(TavernLogKind.Info, $"改写为：{fixedOptions}");
+        }
+
         /// <summary>回显用的命令行。参数里有空格就加引号，粘到终端里能直接跑。</summary>
         private static string BuildCommandText(string executable, IEnumerable<string> arguments)
         {
@@ -1138,6 +1247,27 @@ namespace AstraBrew_Launcher.Services
             _logs.Clear();
             Raise();
             AddLog(TavernLogKind.System, "已清空本次会话日志");
+        }
+
+        /// <summary>
+        /// 每次启动前重置日志：清空后留一行时间分隔，既不残留上一次的输出，
+        /// 也能一眼看出这是第几次启动、什么时候起的。
+        /// </summary>
+        private static void ResetLogs()
+        {
+            // 走 Post 而不是直接改：重启流程是在后台线程上推进的，
+            // 直接清表并触发 Cleared（页面会重画日志列表）就是跨线程改控件，会抛异常，
+            // 表现成「点了重启，停在已停止，什么也没发生」。
+            Post(() =>
+            {
+                _logs.Clear();
+                _logs.Add(new TavernLogEntry(
+                    DateTime.Now,
+                    TavernLogKind.System,
+                    $"新的启动 · {DateTime.Now:HH:mm:ss}"));
+
+                Cleared?.Invoke(null, EventArgs.Empty);
+            });
         }
 
         private static void AddLog(TavernLogKind kind, string text)

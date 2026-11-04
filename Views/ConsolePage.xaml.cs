@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -43,6 +44,12 @@ namespace AstraBrew_Launcher.Views
             TavernRuntime.Changed += Runtime_Changed;
             TavernRuntime.Logged -= Runtime_Logged;
             TavernRuntime.Logged += Runtime_Logged;
+            TavernRuntime.Cleared -= Runtime_Cleared;
+            TavernRuntime.Cleared += Runtime_Cleared;
+
+            // 启动模式 / 服务范围改了也要立刻反映到网络胶囊上
+            TavernSettings.Changed -= Settings_Changed;
+            TavernSettings.Changed += Settings_Changed;
 
             RenderLogs();
             ApplyState();
@@ -52,11 +59,18 @@ namespace AstraBrew_Launcher.Views
         {
             TavernRuntime.Changed -= Runtime_Changed;
             TavernRuntime.Logged -= Runtime_Logged;
+            TavernRuntime.Cleared -= Runtime_Cleared;
+            TavernSettings.Changed -= Settings_Changed;
         }
+
+        private void Settings_Changed(object? sender, EventArgs e) => ApplyState();
 
         private void Runtime_Changed(object? sender, EventArgs e) => ApplyState();
 
         private void Runtime_Logged(object? sender, TavernLogEntry entry) => AppendLine(entry);
+
+        /// <summary>启动前日志被整体清空：列表要重画，否则旧行会一直留在界面上。</summary>
+        private void Runtime_Cleared(object? sender, EventArgs e) => RenderLogs();
 
         // ==================== 状态 ====================
 
@@ -97,12 +111,21 @@ namespace AstraBrew_Launcher.Views
 
             NetworkButton.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
 
-            bool lan = TavernSettings.Scope == ServiceScope.Lan;
-            NetworkGlyph.Glyph = lan ? "\uE701" : "\uE774";
-            NetworkText.Text = lan ? "局域网" : "互联网";
-            var networkBrush = new SolidColorBrush(lan ? SuccessColor : ErrorColor);
+            // 胶囊说的是「现在这台机器能从哪儿访问」，跟着启动模式走：
+            // 普通 / 桌面模式只绑本机，显示「局域网」会让人以为手机能连上，点开还是空的。
+            AccessScope scope = CurrentScope();
+            bool lan = scope == AccessScope.Lan;
+            bool local = scope == AccessScope.Local;
+
+            NetworkGlyph.Glyph = local ? "\uE72E" : lan ? "\uE701" : "\uE774";
+            NetworkText.Text = local ? "本机" : lan ? "局域网" : "互联网";
+
+            var networkBrush = new SolidColorBrush(local ? MutedColor : lan ? SuccessColor : ErrorColor);
             NetworkGlyph.Foreground = networkBrush;
             NetworkText.Foreground = networkBrush;
+            ToolTipService.SetToolTip(NetworkButton, local
+                ? "查看本机地址（普通模式不对外提供访问）"
+                : "查看手机 / 平板访问地址");
 
             // 没启动过也要显示当前实例的版本：标题写着「未安装」而侧边栏显示内置 v1.19.2
             // 会让人以为实例挂了
@@ -114,8 +137,26 @@ namespace AstraBrew_Launcher.Views
                 : $"SillyTavern {kernel}";
         }
 
-        private Color MutedColor => IsLight ? Color.FromArgb(255, 96, 96, 96) : Color.FromArgb(255, 160, 160, 160);
+        /// <summary>当前实例能被谁访问：决定胶囊文字与访问弹窗的内容。</summary>
+        private enum AccessScope
+        {
+            Local,
+            Lan,
+            Wan,
+        }
 
+        /// <summary>
+        /// 访问范围由启动模式决定，不是由 config.yaml 的 <c>listen</c> 决定。
+        /// 「服务范围」这个设置只在服务器模式里有意义；普通 / 桌面模式就是本机自用，
+        /// 拿 listen 的值去显示「局域网」只会误导人。
+        /// </summary>
+        private static AccessScope CurrentScope() => TavernSettings.Mode switch
+        {
+            LaunchMode.Server => TavernSettings.Scope == ServiceScope.Lan ? AccessScope.Lan : AccessScope.Wan,
+            _ => AccessScope.Local,
+        };
+
+        private Color MutedColor => IsLight ? Color.FromArgb(255, 96, 96, 96) : Color.FromArgb(255, 160, 160, 160);
         private Color InfoColor => IsLight ? Color.FromArgb(255, 15, 95, 191) : Color.FromArgb(255, 92, 176, 255);
 
         private Color SuccessColor => IsLight ? Color.FromArgb(255, 12, 107, 38) : Color.FromArgb(255, 95, 208, 122);
@@ -380,8 +421,14 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            bool lan = TavernSettings.Scope == ServiceScope.Lan;
-            (string? v4, string? v6) = NetworkInfo.LocalAddresses();
+            AccessScope scope = CurrentScope();
+            bool local = scope == AccessScope.Local;
+
+            // 本机模式只列回环地址：普通模式下酒馆就绑在 127.0.0.1，
+            // 把网卡地址摆出来等于承诺一个打不开的链接。
+            (string? v4, string? v6) = local
+                ? ("127.0.0.1", null)
+                : NetworkInfo.LocalAddresses();
 
             var body = new StackPanel { Spacing = 14 };
 
@@ -389,7 +436,9 @@ namespace AstraBrew_Launcher.Views
             {
                 body.Children.Add(new TextBlock
                 {
-                    Text = "没有检测到可用的局域网地址。请确认这台机器已连上网络（或已开启 Wi-Fi / 网线）。",
+                    Text = local
+                        ? "没有读到本机回环地址，这通常意味着服务绑定的地址不是 127.0.0.1。"
+                        : "没有检测到可用的局域网地址。请确认这台机器已连上网络（或已开启 Wi-Fi / 网线）。",
                     FontSize = 12.5,
                     TextWrapping = TextWrapping.Wrap,
                     Foreground = new SolidColorBrush(PrimaryTextColor),
@@ -414,14 +463,16 @@ namespace AstraBrew_Launcher.Views
 
                 if (v4 is not null)
                 {
-                    FrameworkElement card = BuildAccessCard("IPv4", v4, $"http://{v4}:{state.Port}/");
+                    FrameworkElement card = BuildAccessCard(
+                        local ? "本机" : "IPv4",
+                        $"http://{v4}:{state.Port}/");
                     Grid.SetColumn(card, column++);
                     cards.Children.Add(card);
                 }
 
                 if (v6 is not null)
                 {
-                    FrameworkElement card = BuildAccessCard("IPv6", v6, $"http://[{v6}]:{state.Port}/");
+                    FrameworkElement card = BuildAccessCard("IPv6", $"http://[{v6}]:{state.Port}/");
                     Grid.SetColumn(card, column);
                     cards.Children.Add(card);
                 }
@@ -431,9 +482,14 @@ namespace AstraBrew_Launcher.Views
 
             body.Children.Add(new TextBlock
             {
-                Text = lan
-                    ? "手机、平板与这台电脑连同一个 Wi-Fi 就能打开上面的地址；访问不了时先看防火墙是否放行。"
-                    : "公网访问需要路由器端口映射或反向代理，地址那一栏填的是本机网卡地址。",
+                Text = scope switch
+                {
+                    AccessScope.Local => LocalScopeHint(),
+                    AccessScope.Lan =>
+                        "手机、平板与这台电脑连同一个 Wi-Fi 就能打开上面的地址；访问不了时先看防火墙是否放行。",
+                    _ =>
+                        "公网访问需要路由器端口映射或反向代理，地址那一栏填的是本机网卡地址。",
+                },
                 FontSize = 11.5,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = new SolidColorBrush(MutedColor),
@@ -442,9 +498,10 @@ namespace AstraBrew_Launcher.Views
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = BuildAccessHeader(lan, state.Port),
+                Title = BuildAccessHeader(scope, state.Port),
             };
-            dialog.Resources["ContentDialogMaxWidth"] = 780.0;
+            // 本机只有一张卡，780 宽会空出大半屏；按内容收窄
+            dialog.Resources["ContentDialogMaxWidth"] = local ? 520.0 : 780.0;
             dialog.Resources["ControlCornerRadius"] = new CornerRadius(8);
 
             // 自建底栏：ContentDialog 自带的按钮区会把唯一那颗按钮拉成整行宽条
@@ -476,19 +533,34 @@ namespace AstraBrew_Launcher.Views
             await dialog.ShowAsync();
         }
 
-        private UIElement BuildAccessHeader(bool lan, int port)
+        /// <summary>本机模式下的说明。配置里的「局域网访问」开着时如实点出来，别让人以为手机一定连不上。</summary>
+        private static string LocalScopeHint()
         {
+            const string basic =
+                "普通模式用这台电脑的浏览器打开酒馆。要让手机、平板也能打开，把启动模式切成「服务器模式」并选「局域网」。";
+
+            return TavernSettings.Scope == ServiceScope.Lan
+                ? basic + "当前配置里开着「局域网访问」，同一 Wi-Fi 的设备其实也能连上这个端口。"
+                : basic;
+        }
+
+        private UIElement BuildAccessHeader(AccessScope scope, int port)
+        {
+            bool local = scope == AccessScope.Local;
+
             var title = new StackPanel { Spacing = 2 };
             title.Children.Add(new TextBlock
             {
-                Text = "设备访问",
+                Text = local ? "本机访问" : "设备访问",
                 FontSize = 17,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = new SolidColorBrush(PrimaryTextColor),
             });
             title.Children.Add(new TextBlock
             {
-                Text = $"{(lan ? "局域网" : "互联网")} · 端口 {port} · 把地址复制到手机浏览器",
+                Text = local
+                    ? $"普通模式 · 端口 {port} · 只有这台电脑能打开"
+                    : $"{(scope == AccessScope.Lan ? "局域网" : "互联网")} · 端口 {port} · 把地址复制到手机浏览器",
                 FontSize = 11.5,
                 Foreground = new SolidColorBrush(MutedColor),
             });
@@ -509,7 +581,7 @@ namespace AstraBrew_Launcher.Views
                 VerticalAlignment = VerticalAlignment.Center,
                 Child = new FontIcon
                 {
-                    Glyph = lan ? "\uE701" : "\uE774",
+                    Glyph = local ? "\uE72E" : scope == AccessScope.Lan ? "\uE701" : "\uE774",
                     FontSize = 16,
                     Foreground = new SolidColorBrush(InfoColor),
                     HorizontalAlignment = HorizontalAlignment.Center,
@@ -521,7 +593,13 @@ namespace AstraBrew_Launcher.Views
             return header;
         }
 
-        private FrameworkElement BuildAccessCard(string label, string address, string url)
+        /// <summary>
+        /// 一张地址卡：完整 URL + 复制 / 打开两个动作。
+        ///
+        /// 以前框里只放 IP，旁边只有「复制地址」——用户拿到 192.168.8.21 还得自己补协议和端口；
+        /// 现在框里就是能直接粘进地址栏的地址，「打开」用默认浏览器打开它。
+        /// </summary>
+        private FrameworkElement BuildAccessCard(string label, string url)
         {
             var content = new StackPanel { Spacing = 10 };
 
@@ -533,15 +611,24 @@ namespace AstraBrew_Launcher.Views
                 Foreground = new SolidColorBrush(PrimaryTextColor),
             });
 
-            content.Children.Add(new TextBox
+            var box = new TextBox
             {
-                Text = address,
+                Text = url,
                 IsReadOnly = true,
                 FontFamily = new FontFamily("Consolas"),
                 FontSize = 12,
                 Padding = new Thickness(10, 7, 10, 8),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
-            });
+            };
+
+            // 只读框也要能选中：UIA / 键盘复制之外，鼠标拖选是最直觉的
+            box.IsTabStop = true;
+            box.SelectionStart = box.Text.Length;
+            content.Children.Add(box);
+
+            var actions = new Grid { ColumnSpacing = 8 };
+            actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             var copy = new Button
             {
@@ -549,14 +636,42 @@ namespace AstraBrew_Launcher.Views
                 HorizontalContentAlignment = HorizontalAlignment.Center,
                 Content = BuildCopyLabel(),
             };
+
             copy.Click += (_, _) =>
             {
                 var package = new DataPackage();
                 package.SetText(url);
                 Clipboard.SetContent(package);
-                copy.Content = BuildCopyLabel("已复制到剪贴板");
+                copy.Content = BuildCopyLabel("已复制");
             };
-            content.Children.Add(copy);
+
+            var open = new Button
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                Style = (Style)Application.Current.Resources["AccentActionButtonStyle"],
+
+                // 强调色由系统决定，浅色主题下白字会糊在背景上：明确用「强调色上的文字」刷子
+                Content = BuildOpenLabel(Res("TextOnAccentFillColorPrimaryBrush", Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF))),
+            };
+
+            open.Click += (_, _) =>
+            {
+                try
+                {
+                    // 明确要「默认浏览器」：不走设置里选的那个
+                    Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    AppNotify.Error("打不开浏览器", ex.Message);
+                }
+            };
+
+            actions.Children.Add(copy);
+            Grid.SetColumn(open, 1);
+            actions.Children.Add(open);
+            content.Children.Add(actions);
 
             return new Border
             {
@@ -574,7 +689,7 @@ namespace AstraBrew_Launcher.Views
             };
         }
 
-        private static UIElement BuildCopyLabel(string text = "复制地址")
+        private static UIElement BuildCopyLabel(string text = "复制")
         {
             var row = new StackPanel
             {
@@ -584,6 +699,25 @@ namespace AstraBrew_Launcher.Views
             };
             row.Children.Add(new FontIcon { Glyph = "\uE8C8", FontSize = 12 });
             row.Children.Add(new TextBlock { Text = text, FontSize = 12 });
+            return row;
+        }
+
+        /// <summary>取主题资源里的刷子；取不到就用兜底色（控件没有主题资源时也不会崩）。</summary>
+        private static Brush Res(string key, Color fallback)
+            => Application.Current.Resources.TryGetValue(key, out object value) && value is Brush brush
+                ? brush
+                : new SolidColorBrush(fallback);
+
+        private static UIElement BuildOpenLabel(Brush foreground)
+        {
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+            row.Children.Add(new FontIcon { Glyph = "\uE8A7", FontSize = 12, Foreground = foreground });
+            row.Children.Add(new TextBlock { Text = "打开", FontSize = 12, Foreground = foreground });
             return row;
         }
     }

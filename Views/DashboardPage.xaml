@@ -16,7 +16,8 @@
                     </VisualState.StateTriggers>
                     <VisualState.Setters>
                         <Setter Target="MetricsGrid.RowSpacing" Value="0" />
-                        <Setter Target="QuickGrid.RowSpacing" Value="0" />
+                        <!--  快捷操作在宽屏是 2 行 3 列：行间距必须给，否则两排按钮上下贴死  -->
+                        <Setter Target="QuickGrid.RowSpacing" Value="10" />
                         <Setter Target="HeroContent.RowSpacing" Value="0" />
                     </VisualState.Setters>
                 </VisualState>

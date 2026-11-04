@@ -90,8 +90,18 @@ namespace AstraBrew_Launcher.Services
         /// <summary>上一次成功响应带的 ETag；条件请求用它换 304，不消耗额度。</summary>
         private static string? _etag;
 
+        /// <summary>
+        /// 这个 ETag 是哪条出口给的。
+        /// 中转端（前面挂着 CDN）与 GitHub 直连给出的 ETag 是两套，混着用只会换来无意义的
+        /// 200 全量响应——所以只把 ETag 发回给当初那条出口。
+        /// </summary>
+        private static string? _etagSource;
+
         private static DateTimeOffset _lastFailureAt = DateTimeOffset.MinValue;
         private static string? _lastFailure;
+
+        /// <summary>上次失败时的出口配置（开关 / 代理）。配置变了，冷却期就该作废。</summary>
+        private static string? _lastFailureExit;
 
         /// <summary>缓存文件；删掉只会让下次多请求一次，不影响任何配置。</summary>
         public static string CachePath { get; } =
@@ -123,15 +133,21 @@ namespace AstraBrew_Launcher.Services
                     return cached with { FromCache = true, Error = null };
                 }
 
-                if (!force && _lastFailure is { Length: > 0 }
+                // 冷却期只在「手里有列表可看」时才生效：没有缓存还压着不请求，
+                // 用户看到的就是一个既要不到数据、又不会去要的死页面。
+                // 出口配置变了也要立即作废——刚打开加速却还在吃上一次直连失败的冷却，
+                // 表现就是「开了加速还是那个 403」。
+                string exit = ExitSignature();
+                if (!force
+                    && cached is not null
+                    && _lastFailure is { Length: > 0 }
+                    && string.Equals(_lastFailureExit, exit, StringComparison.Ordinal)
                     && DateTimeOffset.Now - _lastFailureAt < FailureCooldown)
                 {
-                    return (cached ?? ReleaseResult.Empty) with
+                    return cached with
                     {
-                        FromCache = cached is not null,
-                        Error = cached is null
-                            ? _lastFailure
-                            : $"刚才没能刷新，先看缓存的列表。{_lastFailure}",
+                        FromCache = true,
+                        Error = $"刚才没能刷新，先看缓存的列表。{_lastFailure}",
                     };
                 }
 
@@ -171,6 +187,7 @@ namespace AstraBrew_Launcher.Services
                 {
                     _lastFailure = Describe(ex);
                     _lastFailureAt = DateTimeOffset.Now;
+                    _lastFailureExit = exit;
 
                     // 刷新失败时不要把手里的旧列表也弄丢：用户至少还能看到上一次的结果
                     ReleaseResult? fallback = cached ?? _memory;
@@ -222,84 +239,116 @@ namespace AstraBrew_Launcher.Services
             var throttled = new List<string>();
             string? resumeHint = null;
 
-            // 只有手里确实有列表时条件请求才有意义（304 时要拿它顶上）
-            bool conditional = known is { Count: > 0 } && _etag is { Length: > 0 };
-
             foreach (SourceTarget target in GithubAccel.Targets(ApiUrl))
             {
                 token.ThrowIfCancellationRequested();
 
-                try
+                // 中转端偶发的 403 值得再来一次：它前面挂着 CDN（响应带 60 秒缓存），
+                // 换个时间点常常就命中缓存直接成了。
+                // 直连不信这一套——GitHub 的 403 是「这一小时的 60 次用完了」，重试只是再花一次额度。
+                int attempts = target.Name == GithubAccel.AccelName ? 2 : 1;
+
+                for (int attempt = 1; attempt <= attempts; attempt++)
                 {
-                    using HttpClient client = ProxyHttpClient.Create(RequestTimeout);
-                    using var request = new HttpRequestMessage(HttpMethod.Get, target.Url);
-                    request.Headers.Accept.ParseAdd("application/vnd.github+json");
-                    request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
-
-                    if (conditional)
+                    if (attempt > 1)
                     {
-                        request.Headers.TryAddWithoutValidation("If-None-Match", _etag);
+                        await Task.Delay(TimeSpan.FromMilliseconds(1200), token).ConfigureAwait(false);
                     }
 
-                    using HttpResponseMessage response =
-                        await client.SendAsync(request, token).ConfigureAwait(false);
+                    // ETag 只发回给当初那条出口：中转端和直连给的 ETag 是两套
+                    bool conditional = known is { Count: > 0 }
+                        && _etag is { Length: > 0 }
+                        && string.Equals(_etagSource, target.Name, StringComparison.Ordinal);
 
-                    if (response.StatusCode == HttpStatusCode.NotModified)
+                    try
                     {
-                        // 304 按 GitHub 的规定不计入额度：这次「刷新」几乎不花钱
-                        return (known!, target.Name, true);
-                    }
+                        using HttpClient client = ProxyHttpClient.Create(RequestTimeout);
+                        using var request = new HttpRequestMessage(HttpMethod.Get, target.Url);
+                        request.Headers.Accept.ParseAdd("application/vnd.github+json");
+                        request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
 
-                    // 限流只针对这一条出口：中转端有自己的 Token 池，直连是 60 次/小时。
-                    // 一条被拒不代表另一条也不行，所以这里记一笔继续试，绝不直接放弃。
-                    if ((int)response.StatusCode is 403 or 429)
+                        if (conditional)
+                        {
+                            request.Headers.TryAddWithoutValidation("If-None-Match", _etag);
+                        }
+
+                        using HttpResponseMessage response =
+                            await client.SendAsync(request, token).ConfigureAwait(false);
+
+                        if (response.StatusCode == HttpStatusCode.NotModified)
+                        {
+                            // 304 按 GitHub 的规定不计入额度：这次「刷新」几乎不花钱
+                            return (known!, target.Name, true);
+                        }
+
+                        if ((int)response.StatusCode is 403 or 429)
+                        {
+                            // 限流只针对这一条出口：中转端有自己的 Token 池，直连是 60 次/小时。
+                            // 一条被拒不代表另一条也不行，所以继续试，绝不直接放弃。
+                            if (attempt < attempts)
+                            {
+                                continue;
+                            }
+
+                            throttled.Add(target.Name);
+                            resumeHint ??= ResumeHint(response);
+                            failures.Add($"{target.Name} 被限流（HTTP {(int)response.StatusCode}）");
+                            break;
+                        }
+
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            failures.Add($"{target.Name} HTTP {(int)response.StatusCode}");
+                            break;
+                        }
+
+                        string json = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+                        ApiRelease[]? payload = JsonSerializer.Deserialize(
+                            json,
+                            ReleaseJsonContext.Default.ApiReleaseArray);
+
+                        if (payload is null)
+                        {
+                            failures.Add($"{target.Name} 返回的内容无法解析");
+                            break;
+                        }
+
+                        IReadOnlyList<TavernRelease> releases = Map(payload);
+                        if (releases.Count == 0)
+                        {
+                            failures.Add($"{target.Name} 返回的发布列表为空");
+                            break;
+                        }
+
+                        _etag = ReadEtag(response);
+                        _etagSource = target.Name;
+                        return (releases, target.Name, false);
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
                     {
-                        throttled.Add(target.Name);
-                        resumeHint ??= ResumeHint(response);
-                        failures.Add($"{target.Name} 被限流（HTTP {(int)response.StatusCode}）");
-                        continue;
+                        throw;
                     }
-
-                    if (!response.IsSuccessStatusCode)
+                    catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
                     {
-                        failures.Add($"{target.Name} HTTP {(int)response.StatusCode}");
-                        continue;
+                        if (attempt < attempts)
+                        {
+                            continue;
+                        }
+
+                        failures.Add($"{target.Name} 连接失败");
+                        break;
                     }
-
-                    string json = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
-                    ApiRelease[]? payload = JsonSerializer.Deserialize(
-                        json,
-                        ReleaseJsonContext.Default.ApiReleaseArray);
-
-                    if (payload is null)
-                    {
-                        failures.Add($"{target.Name} 返回的内容无法解析");
-                        continue;
-                    }
-
-                    IReadOnlyList<TavernRelease> releases = Map(payload);
-                    if (releases.Count == 0)
-                    {
-                        failures.Add($"{target.Name} 返回的发布列表为空");
-                        continue;
-                    }
-
-                    _etag = ReadEtag(response);
-                    return (releases, target.Name, false);
-                }
-                catch (OperationCanceledException) when (token.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
-                {
-                    failures.Add($"{target.Name} 连接失败");
                 }
             }
 
             if (throttled.Count > 0)
             {
-                throw new FetchException(BuildThrottleMessage(throttled, failures, resumeHint));
+                // 只有真的存在加速出口时才说「两条都试过了」：
+                // 开关开着但链接不是 GitHub 的（或开关关着）时，那样说是不符合事实的
+                bool accelerated = GithubAccel.Targets(ApiUrl)
+                    .Any(target => target.Name == GithubAccel.AccelName);
+
+                throw new FetchException(BuildThrottleMessage(throttled, failures, resumeHint, accelerated));
             }
 
             throw new FetchException(
@@ -308,7 +357,18 @@ namespace AstraBrew_Launcher.Services
                     : "拿不到版本列表。");
         }
 
-        private static string BuildThrottleMessage(List<string> throttled, List<string> failures, string? resumeHint)
+        /// <summary>
+        /// 出口特征：加速开关 + 代理方式。
+        /// 用它判断「上次的失败还作不作数」——用户刚打开加速，就不该继续吃直连失败的冷却。
+        /// </summary>
+        private static string ExitSignature()
+            => $"{(GithubAccel.Enabled ? "accel" : "direct")}|{(int)LauncherSettings.Proxy}|{LauncherSettings.CustomProxy}";
+
+        private static string BuildThrottleMessage(
+            List<string> throttled,
+            List<string> failures,
+            string? resumeHint,
+            bool accelerated)
         {
             string when = resumeHint is null ? string.Empty : $"额度大约 {resumeHint}恢复。";
 
@@ -318,8 +378,11 @@ namespace AstraBrew_Launcher.Services
                 .ToList();
 
             string detail = others.Count > 0 ? $"另外{string.Join("；", others)}。" : string.Empty;
-            string advice = GithubAccel.Enabled
-                ? "加速与直连两条出口都试过了，只能等一会儿再试。"
+            // 中转端的 403 往往是它自己的频率限制（响应带 60 秒 CDN 缓存），
+            // 和「配置错了」不是一回事，别让用户去翻设置
+            string advice = accelerated
+                ? "加速与直连都试过了：中转端对同一 IP 有频率限制，隔一两分钟再点「刷新版本列表」通常就能过；"
+                    + "直连那边则是 GitHub 的每小时 60 次。"
                 : "打开「设置 → 网络 → GitHub 加速服务」可以换一条出口——中转端有自己的配额，不用等直连那 60 次/小时恢复。";
 
             return $"GitHub 接口限流（{string.Join("、", throttled)} 被拒）。{when}{detail}{advice}";
@@ -442,6 +505,7 @@ namespace AstraBrew_Launcher.Services
                 }
 
                 _etag = string.IsNullOrWhiteSpace(file.Etag) ? null : file.Etag;
+                _etagSource = string.IsNullOrWhiteSpace(file.Source) ? null : file.Source;
 
                 return new ReleaseResult(
                     releases,
