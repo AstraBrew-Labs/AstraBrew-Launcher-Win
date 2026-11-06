@@ -138,6 +138,12 @@ namespace AstraBrew_Launcher.Views
                 CpuPicker.SelectedIndex = (int)LauncherSettings.CpuCores;
                 StartModePicker.SelectedIndex = (int)LauncherSettings.StartMode;
                 StopOnCloseSwitch.IsOn = LauncherSettings.StopTavernOnWindowClose;
+                RememberTavernSwitch.IsOn = LauncherSettings.RememberTavernWindow;
+
+                // 先给上限再给值：反过来的话，旧上限（默认 4096）会先把值夹一次
+                MemorySlider.Maximum = LauncherSettings.MaxWebViewMemoryMb;
+                MemorySlider.Value = LauncherSettings.WebViewMemoryMb;
+                MemoryValueText.Text = FormatMemory(LauncherSettings.WebViewMemoryMb);
                 ShowPath(ExportPathText, Expand(LauncherSettings.ExportPath));
 
                 // 服务范围的真值在 config.yaml（listen），不是 settings.toml
@@ -145,7 +151,8 @@ namespace AstraBrew_Launcher.Views
                 BackgroundSwitch.IsOn = LauncherSettings.AllowBackground;
 
                 DataLocationPicker.SelectedIndex = (int)LauncherSettings.DataLocation;
-                ShowPath(GlobalDataPathText, Expand(LauncherSettings.GlobalDataPath));
+                // 显示的是酒馆真正在用的那层目录（配置所在目录），不是另存的一份偏好值
+                ShowPath(GlobalDataPathText, GlobalTavernConfig.GlobalDataRoot);
 
                 StartupCommandSwitch.IsOn = LauncherSettings.ShowStartupCommand;
 
@@ -212,6 +219,7 @@ namespace AstraBrew_Launcher.Views
                 Pick(ProxyPicker, (int)LauncherSettings.Proxy);
 
                 Toggle(StopOnCloseSwitch, LauncherSettings.StopTavernOnWindowClose);
+                Toggle(RememberTavernSwitch, LauncherSettings.RememberTavernWindow);
                 Toggle(BackgroundSwitch, LauncherSettings.AllowBackground);
                 Toggle(StartupCommandSwitch, LauncherSettings.ShowStartupCommand);
             }
@@ -350,20 +358,19 @@ namespace AstraBrew_Launcher.Views
                 : Visibility.Collapsed;
 
             // 「服务器模式」就是启动方式的一种，没有第二个开关：
-            // 启动方式选到它，服务范围、后台常驻这些子行才展开
+            // 启动方式选到它，服务范围、后台常驻这些子行才展开。
+            // 小白版也要给——选了服务器模式却拿不到「服务范围」，等于把人锁在局域网里没法改。
             bool server = LauncherSettings.StartMode == QuickStartMode.Server;
 
-            ServerRows.Visibility = !simple && server
+            ServerRows.Visibility = server
                 ? Visibility.Visible
                 : Visibility.Collapsed;
 
             // 反向代理只在「服务器模式 + 互联网」下才出现：
             // 局域网走的是直连，套一层反代没有意义，摆出来只会让人以为必须配
-            InternetRows.Visibility = !simple
-                && server
-                && TavernSettings.Scope == ServiceScope.Wan
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
+            InternetRows.Visibility = server && TavernSettings.Scope == ServiceScope.Wan
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
             CustomProxyRows.Visibility = !simple && LauncherSettings.Proxy == ProxyModeSetting.Custom
                 ? Visibility.Visible
@@ -1088,6 +1095,49 @@ namespace AstraBrew_Launcher.Views
             MarkDirty();
         }
 
+        /// <summary>滑杆单位是 MB，显示成 GB；不是整 GB 时保留一位小数（如 2.5 GB）。</summary>
+        private static string FormatMemory(int mb) => $"{mb / 1024.0:0.#} GB";
+
+        /// <summary>
+        /// WebView 内存上限。滑杆步进 512 MB，范围是 1 GB ~ 本机物理内存减去系统预留，
+        /// 上限值在 <see cref="LauncherSettings.MaxWebViewMemoryMb"/> 里算，页面不重复推导。
+        /// </summary>
+        private void MemorySlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+        {
+            if (MemoryValueText is null)
+            {
+                return;
+            }
+
+            int megabytes = (int)Math.Round(MemorySlider.Value);
+
+            // 文字总是跟着滑杆走：程序回填时也要显示当前值
+            MemoryValueText.Text = FormatMemory(megabytes);
+
+            if (_sync)
+            {
+                return;
+            }
+
+            LauncherSettings.SetWebViewMemoryMb(megabytes);
+            MarkDirty();
+        }
+
+        /// <summary>
+        /// 记住酒馆窗口的位置：只改开关，不动已经存下的坐标——
+        /// 用户临时关掉它再打开，上次的位置还在，不用重新摆一遍。
+        /// </summary>
+        private void RememberTavernSwitch_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_sync)
+            {
+                return;
+            }
+
+            LauncherSettings.SetRememberTavernWindow(RememberTavernSwitch.IsOn);
+            MarkDirty();
+        }
+
         private void ScopePicker_SelectionChanged(object sender, EventArgs e)
         {
             if (_sync)
@@ -1352,21 +1402,8 @@ namespace AstraBrew_Launcher.Views
         private void OpenExportPath_Click(object sender, RoutedEventArgs e) =>
             RevealInExplorer(Expand(LauncherSettings.ExportPath));
 
-        private async void PickGlobalDataPath_Click(object sender, RoutedEventArgs e)
-        {
-            var folder = await PickFolderAsync();
-            if (folder is null)
-            {
-                return;
-            }
-
-            LauncherSettings.SetGlobalDataPath(folder);
-            ShowPath(GlobalDataPathText, folder);
-            MarkDirty();
-        }
-
         private void OpenGlobalDataPath_Click(object sender, RoutedEventArgs e) =>
-            RevealInExplorer(Expand(LauncherSettings.GlobalDataPath));
+            RevealInExplorer(GlobalTavernConfig.GlobalDataRoot);
 
         // ==================== 系统交互 ====================
 

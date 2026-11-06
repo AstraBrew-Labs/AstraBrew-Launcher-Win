@@ -154,7 +154,9 @@ namespace AstraBrew_Launcher.Services
                 LauncherSettings.Reset();
                 ApplyUi(document);
                 ApplyWindow(document);
+                ApplyTavernWindow(document);
                 ApplyStartup(document);
+                ApplyDesktop(document);
                 ApplyTavern(document);
                 ApplyConsole(document);
                 ApplyRuntime(document);
@@ -223,6 +225,27 @@ namespace AstraBrew_Launcher.Services
                 dpi is > 0 ? dpi.Value : 96));
         }
 
+        /// <summary>
+        /// 酒馆桌面窗口的几何。读不到就保持 null —— 第一次开窗照旧居中 1600×900。
+        /// 这里只负责存值，用不用由 startup.remember_tavern_window 决定（见 <see cref="DesktopWindow"/>）。
+        /// </summary>
+        private static void ApplyTavernWindow(TomlDocument document)
+        {
+            var x = document.Int("tavern_window", "x");
+            var y = document.Int("tavern_window", "y");
+            var width = document.Int("tavern_window", "width");
+            var height = document.Int("tavern_window", "height");
+
+            if (x is null || y is null || width is null || height is null || width <= 0 || height <= 0)
+            {
+                return;
+            }
+
+            LauncherSettings.SetTavernWindowRect(
+                new TavernWindowRect(x.Value, y.Value, width.Value, height.Value),
+                persist: false);
+        }
+
         private static void ApplyStartup(TomlDocument document)
         {
             if (document.Bool("startup", "auto_launch") is { } autoLaunch)
@@ -240,9 +263,26 @@ namespace AstraBrew_Launcher.Services
                 LauncherSettings.SetStopTavernOnWindowClose(stopOnClose);
             }
 
+            if (document.Bool("startup", "remember_tavern_window") is { } rememberTavern)
+            {
+                LauncherSettings.SetRememberTavernWindow(rememberTavern);
+            }
+
             if (ParseId(CpuCores, document.String("startup", "cpu_cores")) is { } cores)
             {
                 LauncherSettings.SetCpuCores(cores);
+            }
+        }
+
+        /// <summary>
+        /// 桌面模式（WebView2）自身的偏好。内存上限在这里只是读进来，
+        /// 取值会被 <see cref="LauncherSettings.SetWebViewMemoryMb"/> 夹到本机允许的区间。
+        /// </summary>
+        private static void ApplyDesktop(TomlDocument document)
+        {
+            if (document.Int("desktop", "webview_memory_mb") is { } limit)
+            {
+                LauncherSettings.SetWebViewMemoryMb(limit);
             }
         }
 
@@ -335,10 +375,8 @@ namespace AstraBrew_Launcher.Services
                 LauncherSettings.SetExportPath(export);
             }
 
-            if (document.String("paths", "data") is { Length: > 0 } data)
-            {
-                LauncherSettings.SetGlobalDataPath(data);
-            }
+            // paths.data 已废弃：全局数据目录由配置文件位置推导（见 GlobalTavernConfig.GlobalDataRoot），
+            // 旧配置里残留这个键也没人读，留着只会让人以为能改
         }
 
         // ==================== 写 ====================
@@ -450,11 +488,38 @@ namespace AstraBrew_Launcher.Services
                 writer.Raw("# [window] 尚未记录：勾选「记住窗口位置」后正常退出一次即写入");
             }
 
+            writer.Blank();
+            if (LauncherSettings.TavernWindowRect is { } tavernWindow)
+            {
+                writer.Raw("# 酒馆桌面窗口上次关闭时的位置与大小（物理像素）；");
+                writer.Raw("# startup.remember_tavern_window = false 时不读取这段。");
+                writer.Section("tavern_window");
+                writer.Int("x", tavernWindow.X);
+                writer.Int("y", tavernWindow.Y);
+                writer.Int("width", tavernWindow.Width);
+                writer.Int("height", tavernWindow.Height);
+            }
+            else
+            {
+                writer.Raw("# [tavern_window] 尚未记录：桌面模式开关一次窗口即写入");
+            }
+
             writer.Section("startup");
             writer.Bool("auto_launch", LauncherSettings.AutoLaunch, "登录 Windows 后自动启动");
             writer.String("mode", IdOf(StartModes, LauncherSettings.StartMode), "browser | desktop | server");
             writer.Bool("stop_tavern_on_close", LauncherSettings.StopTavernOnWindowClose);
+            writer.Bool(
+                "remember_tavern_window",
+                LauncherSettings.RememberTavernWindow,
+                "桌面模式：下次打开回到上次关闭前的位置");
             writer.String("cpu_cores", IdOf(CpuCores, LauncherSettings.CpuCores), "auto | half | all");
+
+            writer.Section("desktop");
+            writer.Int(
+                "webview_memory_mb",
+                LauncherSettings.WebViewMemoryMb,
+                $"WebView 内存上限（MB），最小 {LauncherSettings.MinWebViewMemoryMb}，"
+                    + $"本机最大 {LauncherSettings.MaxWebViewMemoryMb}");
 
             writer.Section("tavern");
             writer.Bool("server_mode", LauncherSettings.ServerMode, "由 startup.mode 推导，仅供阅读");
@@ -493,7 +558,6 @@ namespace AstraBrew_Launcher.Services
 
             writer.Section("paths");
             writer.String("export", LauncherSettings.ExportPath, "资源导出目录（可用环境变量）");
-            writer.String("data", LauncherSettings.GlobalDataPath, "全局数据目录（可用环境变量）");
 
             return writer.ToString();
         }

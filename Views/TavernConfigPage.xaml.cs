@@ -351,25 +351,35 @@ namespace AstraBrew_Launcher.Views
             SimpleWhitelistError.Visibility = Visibility.Collapsed;
             AdvWhitelistError.Visibility = Visibility.Collapsed;
 
-            string note = TavernSettings.WhitelistLocked
-                ? $"名单按「{TavernSettings.ScopeName}」自动生成，不可手动修改。"
-                : "只有名单里的地址能连上酒馆；127.0.0.1 与 ::1 固定保留，其余可以增删。";
+            // 桌面模式的白名单固定为回环，别再说「按服务范围生成」——它没有服务范围
+            bool desktop = TavernSettings.IsDesktopMode;
+            bool locked = TavernSettings.WhitelistLocked;
+
+            string note = desktop
+                ? "桌面模式只允许本机通过内置窗口访问，名单固定为 127.0.0.1 与 ::1，无需修改。"
+                : locked
+                    ? $"名单按「{TavernSettings.ScopeName}」自动生成，不可手动修改。"
+                    : "只有名单里的地址能连上酒馆；127.0.0.1 与 ::1 固定保留，其余可以增删。";
 
             SimpleWhitelistNote.Text = note;
             AdvWhitelistNote.Text = note;
 
             if (SimpleWhitelistSubtitle is not null)
             {
-                SimpleWhitelistSubtitle.Text = TavernSettings.WhitelistLocked
-                    ? "服务器模式下按「服务范围」自动生成：局域网放行本机网段，互联网全开放。"
-                    : "只有名单里的地址能连上酒馆；127.0.0.1 与 ::1 固定保留，其余可以增删。";
+                SimpleWhitelistSubtitle.Text = desktop
+                    ? "桌面模式由启动器的内置窗口打开酒馆，只有本机能访问。"
+                    : locked
+                        ? "服务器模式下按「服务范围」自动生成：局域网放行本机网段，互联网全开放。"
+                        : "只有名单里的地址能连上酒馆；127.0.0.1 与 ::1 固定保留，其余可以增删。";
             }
 
             if (AdvWhitelistSubtitle is not null)
             {
-                AdvWhitelistSubtitle.Text = TavernSettings.WhitelistLocked
-                    ? "开启后只有名单内的地址能连接。名单按「服务范围」自动生成，对应 whitelistMode。"
-                    : "开启后只有名单内的地址能连接；127.0.0.1 与 ::1 固定保留。对应 whitelistMode。";
+                AdvWhitelistSubtitle.Text = desktop
+                    ? "桌面模式只允许本机访问，白名单固定为 127.0.0.1 与 ::1。对应 whitelistMode。"
+                    : locked
+                        ? "开启后只有名单内的地址能连接。名单按「服务范围」自动生成，对应 whitelistMode。"
+                        : "开启后只有名单内的地址能连接；127.0.0.1 与 ::1 固定保留。对应 whitelistMode。";
             }
         }
 

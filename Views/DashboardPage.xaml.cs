@@ -77,10 +77,14 @@ namespace AstraBrew_Launcher.Views
             GlobalTavernConfig.Saved -= Config_Saved;
             GlobalTavernConfig.Saved += Config_Saved;
 
+            DesktopWindow.Changed -= Desktop_Changed;
+            DesktopWindow.Changed += Desktop_Changed;
+
             SyncFromCatalog();
             SyncFromShared();
             ApplyModeVisibility();
             SyncServiceScope();
+            SyncOpenTavernAction();
             SetServiceRunning();
 
             StartStatusPulse();
@@ -97,6 +101,7 @@ namespace AstraBrew_Launcher.Views
             TavernRuntime.Changed -= Runtime_Changed;
             LauncherSettings.Changed -= Settings_Changed;
             GlobalTavernConfig.Saved -= Config_Saved;
+            DesktopWindow.Changed -= Desktop_Changed;
 
             _tick.Stop();
 
@@ -263,10 +268,9 @@ namespace AstraBrew_Launcher.Views
 
             _syncing = false;
 
-            if (OpenTavernHint is not null)
-            {
-                OpenTavernHint.Text = $"用 {TavernSettings.BrowserName} 打开";
-            }
+            // 「打开酒馆」的说法跟着启动模式变（浏览器 / 独立窗口 / 地址弹窗），
+            // 以前这里写死「用 xxx 浏览器打开」，桌面模式下点下去开的是内嵌窗口
+            SyncOpenTavernAction();
 
             if (BrowserHint is not null)
             {
@@ -793,7 +797,85 @@ namespace AstraBrew_Launcher.Views
 
         // ==================== 快捷操作 ====================
 
-        private void OpenTavern_Click(object sender, RoutedEventArgs e)
+        /// <summary>桌面窗口开了 / 关了：说明文字与主卡上的入口跟着变。</summary>
+        private void Desktop_Changed(object? sender, EventArgs e) => SyncOpenTavernAction();
+
+        /// <summary>
+        /// 「打开酒馆」在三种模式下是三件事，说明文字必须跟着改：
+        /// 普通模式交给浏览器、桌面模式开（或唤回）内嵌窗口、服务器模式弹地址表。
+        /// </summary>
+        private void SyncOpenTavernAction()
+        {
+            if (OpenTavernHint is null)
+            {
+                return;
+            }
+
+            switch (TavernSettings.Mode)
+            {
+                case LaunchMode.Desktop:
+                    OpenTavernHint.Text = DesktopWindow.IsOpen
+                        ? "窗口已打开 · 点击唤到前台"
+                        : "窗口已关闭 · 点击重新打开";
+                    break;
+
+                case LaunchMode.Server:
+                    OpenTavernHint.Text = "查看连接地址";
+                    break;
+
+                default:
+                    OpenTavernHint.Text = $"用 {TavernSettings.BrowserName} 打开";
+                    break;
+            }
+
+            if (HeroOpenButton is not null)
+            {
+                // 服务跑起来之后主卡上就得有入口：桌面模式开/唤回窗口，服务器模式弹访问地址，
+                // 普通模式用浏览器打开。停下时收起——没进程可开的时候点它只会弹一句「还没启动」
+                Visibility open = TavernRuntime.IsRunning ? Visibility.Visible : Visibility.Collapsed;
+
+                HeroOpenButton.Visibility = open;
+
+                // 分隔线只是这颗按钮的陪衬：按钮不在，它就跟着收起，别在启停两颗按钮右边留一根孤线
+                if (OpenDivider is not null)
+                {
+                    OpenDivider.Visibility = open;
+                }
+
+                // 三种模式都是「访问酒馆」这一个动作，区别只体现在图标与提示上：
+                // 图标沿用「默认启动方式」里那三颗（地球 = 浏览器、窗口 = 桌面、设备 = 服务器），
+                // 用户在同一套界面里看到的是同一套符号，不会以为点了别的东西。
+                string glyph = TavernSettings.Mode switch
+                {
+                    LaunchMode.Desktop => "\uE7F4",
+                    LaunchMode.Server => "\uE968",
+                    _ => "\uE774",
+                };
+
+                if (HeroOpenText is not null && HeroOpenGlyph is not null)
+                {
+                    HeroOpenText.Text = "访问酒馆";
+                    HeroOpenGlyph.Glyph = glyph;
+
+                    ToolTipService.SetToolTip(
+                        HeroOpenButton,
+                        TavernSettings.Mode switch
+                        {
+                            LaunchMode.Desktop => "打开酒馆窗口（已开着就唤到前台）",
+                            LaunchMode.Server => "查看手机 / 平板的访问地址与二维码",
+                            _ => "用浏览器打开酒馆",
+                        });
+                }
+
+                if (Qa1Text is not null && Qa1Glyph is not null)
+                {
+                    Qa1Text.Text = "访问酒馆";
+                    Qa1Glyph.Glyph = glyph;
+                }
+            }
+        }
+
+        private async void OpenTavern_Click(object sender, RoutedEventArgs e)
         {
             if (!TavernRuntime.IsRunning)
             {
@@ -807,13 +889,27 @@ namespace AstraBrew_Launcher.Views
 
             string url = EndpointText.Text;
 
-            if (BrowserLauncher.Open(url, TavernSettings.Browser, out string detail))
+            // 服务器模式：酒馆本来就是给别的设备用的，在本机再开一个页面不如把地址摆出来
+            if (TavernSettings.Mode == LaunchMode.Server)
             {
-                AppNotify.Success("已在浏览器中打开酒馆", $"{url} · {detail}");
+                await TavernAccessDialog.ShowAsync(XamlRoot, ActualTheme);
                 return;
             }
 
-            AppNotify.Error("打开浏览器失败", $"{url} · {detail}");
+            bool windowOpen = DesktopWindow.IsOpen;
+
+            // 桌面模式开内嵌窗口（已经在跑就只唤到前台），普通模式仍用浏览器
+            if (DesktopWindow.OpenTavern(url, out string detail))
+            {
+                string title = TavernSettings.Mode == LaunchMode.Desktop
+                    ? windowOpen ? "桌面窗口已在前台" : "已打开桌面窗口"
+                    : "已在浏览器中打开酒馆";
+
+                AppNotify.Success(title, $"{url} · {detail}");
+                return;
+            }
+
+            AppNotify.Error("打开失败", $"{url} · {detail}");
         }
 
         private void OpenDataDir_Click(object sender, RoutedEventArgs e)
@@ -992,6 +1088,7 @@ namespace AstraBrew_Launcher.Views
             UpdateProcessMetrics();
             SyncEndpoint();
             UpdateEnvironmentText();
+            SyncOpenTavernAction();
         }
 
         /// <summary>运行状态只有一份：控制台在跑什么，仪表盘的徽标就显示什么。</summary>

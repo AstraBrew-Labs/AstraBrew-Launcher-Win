@@ -46,6 +46,15 @@ namespace AstraBrew_Launcher.Services
         /// <summary>操作配置时永远用这个路径，不要因为全局缺失就退到默认路径。</summary>
         public static string ActivePath => GlobalPath;
 
+        /// <summary>
+        /// 全局数据目录：<c>data/sillytavern</c>，角色卡、预设、世界书、扩展都在这下面。
+        ///
+        /// 它由配置文件位置**推导**出来（酒馆的数据根就是配置所在那一层），不是另一个可以单独改的设置。
+        /// 设置页要显示「实际用的路径」就取这里——显示另一份配置值只会让人以为能改。
+        /// </summary>
+        public static string GlobalDataRoot =>
+            Path.GetDirectoryName(GlobalPath) ?? AppPaths.RoamingRoot;
+
         /// <summary>全局配置是否存在（决定界面要不要出「先取一份」的遮罩）。</summary>
         public static bool HasGlobalConfig => File.Exists(GlobalPath);
 

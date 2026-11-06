@@ -579,6 +579,23 @@ namespace AstraBrew_Launcher.Services
             AppNotify.Success(
                 "酒馆已启动",
                 $"{_state.VersionLabel} · http://127.0.0.1:{port}。运行日志可在控制台查看。");
+
+            // 桌面模式：启动完成后自动开窗。建窗必须在 UI 线程，这里只负责投递。
+            // 普通模式不做这一步——酒馆自己会拉起浏览器，再开一次就成两个页面了。
+            if (TavernSettings.Mode == LaunchMode.Desktop)
+            {
+                string url = $"http://127.0.0.1:{port}";
+
+                Post(() =>
+                {
+                    if (!DesktopWindow.Open(url, out string detail))
+                    {
+                        AppNotify.Warning(
+                            "桌面窗口没能打开",
+                            $"{detail}。可以改用普通模式，或点「访问酒馆」用浏览器看。");
+                    }
+                });
+            }
         }
 
         // ==================== 停止 ====================
@@ -856,6 +873,8 @@ namespace AstraBrew_Launcher.Services
                     };
                 }
 
+                DesktopWindow.Close();
+
                 Raise();
                 AddLog(TavernLogKind.Error, $"酒馆进程异常退出（代码 {code}），向上翻看最后几行输出。");
 
@@ -889,6 +908,9 @@ namespace AstraBrew_Launcher.Services
                     StartedAt = null,
                 };
             }
+
+            // 酒馆没了，桌面窗口里的页面也活不了：一起关掉，别留个白屏窗口
+            DesktopWindow.Close();
 
             Raise();
         }

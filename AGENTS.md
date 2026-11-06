@@ -106,7 +106,9 @@
 - `LauncherSettings.StartMode`（普通 / 桌面 / 服务器）是**唯一**的模式来源。
   曾经还有一个独立的 `server_mode` 开关，于是出现「启动方式选了服务器模式、服务器选项却没展开」这种
   自相矛盾的状态；现在 `ServerMode` 是 `StartMode == Server` 的推导属性，设置页那个开关已删除，
-  服务器子行（服务范围、后台常驻）跟着启动方式展开。
+  服务器子行（服务范围、后台常驻、互联网下的反向代理）跟着启动方式展开，
+  **小白版也给**：选了服务器模式却拿不到「服务范围」，等于把人锁在局域网里没法改；
+  判定里不要写 `!simple`（`.cs` 里 `ApplyConditions` 的 `ServerRows` / `InternetRows`）。
 - 旧配置里 `mode = browser` + `server_mode = true` 的，读取时升到服务器模式（只升不降：
   桌面模式有自己的含义）。写回时 `server_mode` 仍写一份，但只是「给人看的推导值」。
 - **服务范围（局域网 / 互联网）写入 `config.yaml` 的 `listen` / `listenAddress.ipv4`**，
@@ -462,7 +464,11 @@ git config --global --unset url."https://gh-proxy.org/https://github.com/".inste
 |---|---|---|
 | 服务器 · 局域网 | `127.0.0.1`、`::1`、本机 IP、本机网段（如 `192.168.8.0/24`） | 锁死 |
 | 服务器 · 互联网 | `127.0.0.1`、`::1`、`0.0.0.0/0`、`::/0`（全开放） | 锁死 |
-| 普通 / 桌面 | 用户名单（首次从 config.yaml 迁移，没有则本机 IP + 网段做底） | 可加删 |
+| 桌面 | 只有 `127.0.0.1`、`::1`（页面由启动器 WebView2 从本机打开） | 锁死 |
+| 普通 | 用户名单（首次从 config.yaml 迁移，没有则本机 IP + 网段做底） | 可加删 |
+
+`WhitelistLocked` 是「服务器 **或** 桌面」，`BuildDerivedWhitelist()` 里桌面模式直接返回回环两条——
+它没有「服务范围」可讲，界面文案也不该再说「按服务范围生成」。
 
 - **切到服务器模式不许写用户名单**，切回来才能原样恢复。以前只有 config.yaml 一份，
   服务器模式一写就把用户条目冲掉，切回来要么丢了、要么残留 `0.0.0.0/0`——这是最容易复发的坑。
@@ -482,6 +488,11 @@ git config --global --unset url."https://gh-proxy.org/https://github.com/".inste
   （`Views/Controls/EditorPanels.cs` 里的最小实现，WinUI 3 没有 FlexLayout），
   条目模板是页面资源里的 `WhitelistTagTemplate`：锁定项 = 中性底 + 小锁（`LockedTagChipStyle`），
   自定义项 = 强调色淡底 + 小叉（`EditTagChipStyle` + `ChipCloseButtonStyle`）。
+- **`WrapPanel` 的 Arrange 必须沿用 Measure 的宽度**：外层 ScrollViewer 可能把 `finalSize.Width`
+  传成「内容想要的宽度」（比视口宽），拿它换行等于不换行——标签会一路排到卡片外被裁掉。
+  面板里记下 `_limit`，Arrange 取 `Math.Min(finalSize.Width, _limit)`。
+  同时 ScrollViewer 要写 `HorizontalScrollMode="Disabled"`（只设 `HorizontalScrollBarVisibility`
+  仍会按无限宽测量）。改标签布局时先测「刚好比一行多一条」的数量，最容易暴露这个坑。
 - **外层仍限高**（`ScrollViewer MaxHeight="150"`，约 5 行标签）：极端情况（几十条）也不拉长页面。
   别把 `MaxHeight` 改成 `MinHeight`：外层页面本来就是 ScrollViewer，高度约束是无限的。
   添加成功后 `ChangeView` 滚到底（新条目接在末尾），用 `DispatcherQueue.TryEnqueue` 等布局完成再滚。
@@ -491,6 +502,16 @@ git config --global --unset url."https://gh-proxy.org/https://github.com/".inste
 - 起服务前 `TavernRuntime` 读 `WhitelistHosts` 快照写盘并打一行
   `白名单（普通模式）：127.0.0.1、::1、…`——排查「连不上」先看它。
 - 集合绑在 ItemsControl 上，**改集合必须在 UI 线程**：`ReplaceWhitelist` 会自己转投。
+
+## 全局数据目录（只显示、不可改）
+
+设置页「全局数据目录」显示的是 `GlobalTavernConfig.GlobalDataRoot` —— 由配置文件位置推导的
+`…\AstraBrew Launcher\data\sillytavern`，也就是酒馆真正读写的 `--dataRoot`。
+
+以前这里读的是 `LauncherSettings.GlobalDataPath`（默认 `…\data`，还能「更改」），
+但**没人用它**：真实路径只由 `GlobalTavernConfig.GlobalPath` 决定。于是界面显示 `…\data`、
+实际用的是 `…\data\sillytavern`，改也没反应。现在这个死设置连同 `settings.toml` 的
+`paths.data` 一起删掉，行里只留「打开目录」，说明文字写明「位置固定，随配置文件走」。
 
 ## 全局酒馆配置（首次获取）
 
@@ -611,14 +632,103 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
   直接清表就是跨线程改控件，会抛异常，表现成「点了重启停在已停止，什么也没发生」。
 - **重启要等「停止中」结束**（`WaitSettledAsync`）：停止的收尾是投到 UI 线程的，
   后台线程抢在它前面调 `StartAsync`，会被「正在启停」的守卫直接挡回去。
-- **网络胶囊说的是「能被谁访问」，跟着启动模式走**：普通 / 桌面模式 → 「本机」+
-  本机访问弹窗（只列回环地址）；服务器模式才按服务范围显示「局域网 / 互联网」。
-  拿 `config.yaml` 的 `listen` 直接当显示依据，会让普通模式的用户看到一个用不上的局域网入口。
+- **网络胶囊说的是「能被谁访问」，跟着启动模式走**：普通模式 → 「本机」+ 本机访问弹窗
+  （只列回环地址）；服务器模式才按服务范围显示「局域网 / 互联网」；桌面模式整颗换成
+  「打开酒馆」（页面在 WebView2 里，地址对它没有意义）。拿 `config.yaml` 的 `listen`
+  直接当显示依据，会让普通模式的用户看到一个用不上的局域网入口。
+- **设备访问弹窗只有一份实现**（`Views/TavernAccessDialog.cs`）：控制台与仪表盘服务器模式共用
+  `ShowAsync(XamlRoot, theme)`，访问范围判定也在里面（`CurrentScope()`）。两边各画一套时，
+  改了一边另一边就会走偏。
+- **弹窗里必须有二维码**（局域网 / 互联网）：手机是这套功能的主要使用者，让用户手抄 IP 不现实。
+  QR 用 `QRCoder` 的模块矩阵画成**一块尺寸精确的 `Canvas` + 同行合并的 `Rectangle`**，不生成位图。
+  **不要用 `Path` / `GeometryGroup` 画码**：`Path` 自己量 GeometryGroup 时量出来的比实际几何小，
+  码面会在白框里偏移并被裁掉一截（表现就是「二维码没居中」，踩过）；`Stretch.Fill` 只会把
+  码面拉满、吃掉静区。模块边长取整数 DIP（`Math.Floor(132/dim)`），非整数会糊成灰边。
+  白框 = 6 DIP 内边距 + 码面自身 4 模块静区；白底黑码写死，不吃主题色。
+  本机模式（127.0.0.1）不画码——手机连不上回环地址，画了只会误导。
+- **互联网模式要公网 IP**（`Services/PublicIp.cs`）：`https://api-ipv4.ip.sb/ip` 与
+  `https://api-ipv6.ip.sb/ip` 分别请求、各自 5 秒超时、失败互不影响（家用宽带多数只有 v4，
+  硬等 v6 只会卡住弹窗）；结果里的内网 / 回环 / 链路本地地址一律丢弃（运营商 NAT 有时回内网地址）。
+  成功缓存 5 分钟、全失败只压 30 秒。弹窗**先显示再填充**（`ShowAsync` 拿到 operation 后
+  `_ = FillPublicAsync(...)`），别让人对着空窗等接口。只有一个都取不到时，才退回显示内网地址并说明。
+- **弹窗布局**：卡片统一 `CardWidth = 500` 且 `HorizontalAlignment=Center`，卡片内左侧二维码方框
+  （码面 ≤132 DIP + 6 内边距）、右侧地址 + 复制/打开，几张卡叠起来左右边界才对得齐；
+  提示文字同样 500 宽居中。
+- **弹窗必须自带「关闭」按钮**：`BuildContentHost` 里画一颗右对齐的 `AccentActionButtonStyle`
+  按钮（`dialog.Hide()`）。不要依赖 ContentDialog 自带的按钮区——只有一颗按钮时它会被拉成
+  整行宽的横条，跟卡片宽度对不上；更不能像上一版那样把底栏整个丢掉，触摸屏上等于关不掉。
 - **继承来的 `NODE_OPTIONS` 要修正**（`NodeEnvironment`）：`--import` / `--loader` 的
   模块说明符只认 `file:` / `data:` / `node:` 协议，传 Windows 路径（`C:\…`）时 Node 把盘符
   当协议名，进程立刻以退出码 1 退出（`ERR_UNSUPPORTED_ESM_URL_SCHEME`，旧版本让用户卡在这）。
   启动前把裸路径改写成 `file://` URL 并记一行日志；真报出这个错时补一句成因说明，
   别让人以为是酒馆代码坏了。
+
+## 桌面模式（内嵌 WebView2）
+
+启动方式选「桌面模式」时，酒馆启动成功后由启动器开一个装着 WebView2 的独立窗口，
+不再交给系统浏览器。实现全在 `Services/DesktopWindow.cs`。
+
+- **不要照搬旧版的自建 Win32 消息循环**：Rust 版之所以手写 `CreateWindowExW`，是因为 winit
+  的事件循环一个进程只能建一次；WinUI 3 的 `Window` 本来就是自己的窗口，直接
+  `new Window { Content = WebView2 }` 即可。
+- **用户数据目录必须可写**：默认会落到 exe 旁边，装在 Program Files 下时那是只读目录，
+  窗口会一直白着。用 `%LocalAppData%\AstraBrew Launcher\WebView2`。
+  WebView2 的 C#/WinRT 投影只有 `CreateAsync()` 与 `CreateWithOptionsAsync(folder, userData, options)`，
+  **没有** 2/3 参数版的 `CreateAsync`（写了会 CS1501）。
+- **生命周期**：`MarkRunning` 里按模式开门（普通模式不开——酒馆自己会拉浏览器，开两次就是两个页面）；
+  `FinishStopped` / 进程异常退出 / 主窗口关闭都会收掉它。
+- **用户自己关窗看 `LauncherSettings.StopTavernOnWindowClose`**：开着 → `TavernRuntime.StopAsync()`
+  （窗口关了就等于本次用完，不留占端口的后台进程），关着 → 酒馆继续跑，全局消息给「重新打开」，
+  走 `DesktopWindow.Open` 重建。这个开关同时管启动器主窗口的关闭——两处都读同一个值，
+  不要再出现「只挂在主窗口关闭上、关桌面窗口却不停」的半截实现（踩过）。
+- **只有一个窗口**：`Open` 已有窗口时只切地址 + `Activate`；「打开酒馆」按钮和访问弹窗的
+  「打开」都走 `OpenTavern`（桌面模式开窗、其余模式仍用浏览器，WebView2 初始化失败时回退浏览器）。
+- **窗口被关掉要有地方找回来**：`DesktopWindow.Changed` 在开窗 / 关窗时触发（UI 线程），
+  仪表盘的「打开酒馆」说明跟着在「窗口已打开 · 点击唤到前台」与「窗口已关闭 · 点击重新打开」
+  之间切换；**服务在跑时**主卡就多一颗 `HeroOpenButton`（不再只限桌面模式）——排在
+  「重启服务」「停止」右侧，两者之间一条 `OpenDivider` 竖线（20×1，`DividerStrokeColorDefaultBrush`）。
+  **文案统一是「访问酒馆」**，三种模式的差别只用图标区分：普通模式 `\uE774`（地球 / 浏览器）、
+  桌面模式 `\uE7F4`（显示器 / 内嵌窗口）、服务器模式 `\uE968`（设备 / 地址弹窗）——
+  和「默认启动方式」选择器里那三颗图标是同一套，用户不用重新学。行为不变：
+  浏览器 / 开窗口 / 弹地址弹窗。服务停下时按钮与竖线一起收起。
+  **竖线的可见性跟按钮同一个布尔值**：按钮收起时线也得收起，否则启停两颗按钮右边会剩一根孤线。
+  控制台那颗运行态胶囊在桌面模式下也变成**「打开酒馆」**（普通 / 服务器模式仍是本机 / 局域网 / 互联网）。
+  **不要**把重开入口只放在关窗时那条全局消息上——消息一滑走就再没有入口了。
+- **「访问酒馆」在三种模式里是三件事**：普通模式交给浏览器（`BrowserLauncher`，按设置的浏览器）、
+  桌面模式开 / 唤回内嵌窗口、服务器模式弹设备访问弹窗（地址比在本机再开一页有用）。
+  按钮文案三处统一为「访问酒馆」（主卡 `HeroOpenButton`、快捷操作 `Qa1`、控制台运行态胶囊），
+  靠图标区分模式；分支只有 `DashboardPage.OpenTavern_Click` 与 `ConsolePage.NetworkButton_Click`。
+  改文案时三处一起改，别又出现「打开酒馆 / 访问地址 / 打开酒馆」各说各话。
+- **记住酒馆窗口的位置**（`startup.remember_tavern_window`，默认开）：关窗时把 `AppWindow`
+  的 `Position`/`Size`（物理像素）写进 `LauncherSettings.TavernWindowRect` → `settings.toml`
+  的 `[tavern_window]`，开窗时由 `PlaceWindow` 还原。三条硬规则：
+  A. 存的时候要在窗口销毁之前（`Close()` 里先 `SaveBounds` 再清引用；用户点叉走的
+  `OnWindowClosed` 也存一次），最小化的 `-32000` 哨兵坐标要跳过；
+  B. 还原时必须过 `ClampToWorkArea`——用户可能拔了副屏或改了分辨率，坐标一律夹到最近那块屏的
+  工作区里，尺寸按工作区收窄，保证标题栏可达；
+  C. 开关关掉时既不存也不读（关掉后开窗回到居中 1600×900），但**不清已存的坐标**——
+  用户临时关一下再打开，上次的位置还在。
+  这一项只在「默认启动方式 = 桌面模式」时显示（`DesktopRows`），普通模式没有宿主窗口。
+- **窗口图标必须给 .ico**：`AppWindow.SetIcon` 收下 `Sillytavern.png` 的路径时**不抛异常**，
+  但窗口拿到的是一张空白图标（标题栏变成系统默认的页面图标）——这点很坑，实测过。
+  现在的做法：`Assets\Sillytavern.ico` 由同目录的 `Sillytavern.png` 生成（16/24/32/48/64/128/256 七档），
+  `ApplyIcon` 按 `Sillytavern.ico` → `app.ico` 的顺序取第一个存在的。换掉 PNG 后要重新生成 ico：
+  在 `Assets` 目录下跑 `python -c "from PIL import Image; ..."`（sizes 给 16~256 七档），
+  或直接把生成的 ico 覆盖进去。
+- **WebView 内存上限**（`desktop.webview_memory_mb`，默认 2048）：Chromium 没有「整体内存上限」
+  这种开关，实际能约束的是 V8 堆，所以走 `CoreWebView2EnvironmentOptions.AdditionalBrowserArguments`
+  传 `--js-flags=--max-old-space-size=<MB>`（渲染进程命令行里能直接验证到）。取值夹在
+  `LauncherSettings.MinWebViewMemoryMb`（1024）与 `MaxWebViewMemoryMb`（`SystemMemory.MaxLimitMb`：
+  物理内存减去「20% 或 2 GB 取大者」，向下取整到整 GB）。**环境是每次开窗新建的**，
+  所以改完必须重开窗口才生效——设置页那句「改完下次打开窗口生效」不能删。
+- **下载与导出**：`DownloadStarting` 统一改到设置的导出目录、同名加 `_1` 后缀；
+  页面里 `a[download]` 指向 blob / 大 data URL 的情况，由注入脚本经 IPC 频道 `fileDownloader`
+  把 base64 交给原生层落盘（超过 64 MB 直接提示，不走 base64）。
+- **文件选择兜底**：注入脚本在 `change` 后按 accept 检查扩展名，选错类型时给出中文说明，
+  避免「选了文件但页面毫无反应」。
+- **窗口**：1600×900 居中（小屏按工作区收窄）、图标用 `Assets\Sillytavern.ico`（酒馆自己的 ST 标志，
+  取不到才退回 `app.ico`）、标题跟随页面 `DocumentTitle`；导航失败自动重试一次，
+  仍失败给可点击的「重新加载」；浏览器进程退出也提示重开，而不是停在白屏。
 
 ## 快捷操作区
 
@@ -658,10 +768,11 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
 - **主按钮随状态变**：没在跑是「启动服务」，跑起来才是「重启服务」；「停止」只在运行时出现。
   停止状态点「重启」什么都不会发生，那是以前的问题。
 
-**快捷操作是真的会做事**：打开酒馆走 `BrowserLauncher.Open`（按 App Paths 找 chrome/edge/firefox，
-找不到退回系统默认浏览器）；数据目录开资源管理器；导入角色卡把选中的 PNG/JSON 复制进
-`characters`（同名加 `(2)` 后缀），复制完刷新指标。地址一律取自
-`NetworkInfo.LocalAddresses()` + 实际端口，别再写示例 IP。
+**快捷操作是真的会做事**：「打开酒馆」按启动模式分流——普通模式走 `BrowserLauncher.Open`
+（按 App Paths 找 chrome/edge/firefox，找不到退回系统默认浏览器）、桌面模式开或唤回内嵌窗口
+（说明文字读 `DesktopWindow.IsOpen`）、服务器模式弹设备访问弹窗；数据目录开资源管理器；
+导入角色卡把选中的 PNG/JSON 复制进 `characters`（同名加 `(2)` 后缀），复制完刷新指标。
+地址一律取自 `NetworkInfo.LocalAddresses()` + 实际端口，别再写示例 IP。
 
 ### config.yaml 写入的三个坑（都踩过）
 

@@ -878,8 +878,19 @@
     -->
     <Style x:Key="LockedTagChipStyle" TargetType="Border">
         <Setter Property="Background" Value="{ThemeResource ControlFillColorSecondaryBrush}" />
-        <Setter Property="CornerRadius" Value="4" />
-        <Setter Property="Padding" Value="6,2,7,2" />
+        <Setter Property="CornerRadius" Value="5" />
+        <Setter Property="Padding" Value="10,4,11,4" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!--
+        白名单的可编辑标签。比编辑器里的 EditTagChipStyle 大一档：
+        那一排是顺手扫一眼的输入辅助，这里的 IP 是要核对的对象，字太小不好认。
+    -->
+    <Style x:Key="WhitelistEditChipStyle" TargetType="Border">
+        <Setter Property="Background" Value="#1A2B88D8" />
+        <Setter Property="CornerRadius" Value="5" />
+        <Setter Property="Padding" Value="10,4,4,4" />
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 

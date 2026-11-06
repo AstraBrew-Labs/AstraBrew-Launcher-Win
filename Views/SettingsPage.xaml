@@ -365,12 +365,12 @@
                                     SelectionChanged="StartModePicker_SelectionChanged" />
                             </controls:SettingRow>
 
-                            <!--  仅桌面模式与这两项有关：普通模式在浏览器里跑，没有可停止的宿主窗口  -->
+                            <!--  仅桌面模式与这几项有关：普通模式在浏览器里跑，没有可停止 / 可记位置的宿主窗口  -->
                             <StackPanel x:Name="DesktopRows" Visibility="Collapsed">
                                 <Rectangle Style="{StaticResource RowDividerStyle}" />
 
                                 <controls:SettingRow
-                                    Description="关闭桌面窗口时顺带结束后台进程，避免留下占端口的孤儿进程。"
+                                    Description="关掉桌面窗口或启动器时顺带结束酒馆进程，避免留下占端口的孤儿进程；关掉这个开关则窗口关闭后酒馆继续在后台运行。"
                                     Glyph="&#xE71A;"
                                     Title="关闭窗口时停止酒馆"
                                     WrapAt="0">
@@ -378,6 +378,46 @@
                                         x:Name="StopOnCloseSwitch"
                                         Style="{StaticResource RowSwitchStyle}"
                                         Toggled="StopOnCloseSwitch_Toggled" />
+                                </controls:SettingRow>
+
+                                <Rectangle Style="{StaticResource RowDividerStyle}" />
+
+                                <controls:SettingRow
+                                    Description="下次打开回到上次关闭前的位置和大小；关掉则总是居中显示。"
+                                    Glyph="&#xE707;"
+                                    Title="记住酒馆窗口的位置"
+                                    WrapAt="0">
+                                    <ToggleSwitch
+                                        x:Name="RememberTavernSwitch"
+                                        Style="{StaticResource RowSwitchStyle}"
+                                        Toggled="RememberTavernSwitch_Toggled" />
+                                </controls:SettingRow>
+
+                                <Rectangle Style="{StaticResource RowDividerStyle}" />
+
+                                <controls:SettingRow
+                                    Description="桌面窗口里网页能占用的内存上限，默认 2 GB；最大值按本机物理内存推算（已给系统留出余量）。改完下次打开窗口生效。"
+                                    Glyph="&#xE950;"
+                                    Title="WebView 内存上限"
+                                    WrapAt="620">
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <Slider
+                                            x:Name="MemorySlider"
+                                            Width="200"
+                                            Minimum="1024"
+                                            Maximum="4096"
+                                            StepFrequency="512"
+                                            Value="2048"
+                                            ValueChanged="MemorySlider_ValueChanged" />
+                                        <TextBlock
+                                            x:Name="MemoryValueText"
+                                            Width="64"
+                                            VerticalAlignment="Center"
+                                            FontSize="13"
+                                            FontWeight="SemiBold"
+                                            Text="2 GB"
+                                            TextAlignment="Right" />
+                                    </StackPanel>
                                 </controls:SettingRow>
 
                                 <Rectangle Style="{StaticResource RowDividerStyle}" />
@@ -486,7 +526,7 @@
 
                             <controls:SettingRow
                                 x:Name="GlobalDataRow"
-                                Description="全局共享模式下，角色卡与设置实际存放在这里。"
+                                Description="全局共享模式下，角色卡与设置实际存放在这里（位置固定，随配置文件走）。"
                                 Glyph="&#xE8E5;"
                                 Title="全局数据目录"
                                 WrapAt="720">
@@ -500,10 +540,6 @@
                                             Style="{StaticResource MonoTextStyle}"
                                             TextTrimming="CharacterEllipsis" />
                                     </Border>
-                                    <Button
-                                        Click="PickGlobalDataPath_Click"
-                                        Content="更改"
-                                        Style="{StaticResource RowButtonStyle}" />
                                     <Button
                                         AutomationProperties.Name="打开数据目录"
                                         Click="OpenGlobalDataPath_Click"

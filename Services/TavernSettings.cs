@@ -246,7 +246,9 @@ namespace AstraBrew_Launcher.Services
         /// · <b>服务器模式</b>：由服务范围推导、全部锁定——局域网放行本机网段，
         ///   互联网全开放（<c>0.0.0.0/0</c> 与 <c>::/0</c>）。推导结果只写进 config.yaml，
         ///   **不碰**用户自己那份，所以切回来时不会残留 <c>0.0.0.0/0</c> 或本机网段。
-        /// · <b>普通 / 桌面模式</b>：显示用户自己维护的那份
+        /// · <b>桌面模式</b>：固定只有 <c>127.0.0.1</c> 与 <c>::1</c>——页面是由启动器的
+        ///   WebView2 从本机打开的，别人本来就不该连进来，名单没有可调之处。
+        /// · <b>普通模式</b>：显示用户自己维护的那份
         ///   （存在 settings.toml 的 <c>tavern.user_whitelist</c>），只锁住两个回环地址。
         ///
         /// 不写 <c>localhost</c>：SillyTavern 只认 IP / CIDR，主机名会被判成 Invalid IP 丢掉；
@@ -258,8 +260,8 @@ namespace AstraBrew_Launcher.Services
         private static IReadOnlyList<string> _hosts = Array.Empty<string>();
 
         /// <summary>
-        /// 用户自己维护的那份（普通 / 桌面模式用，含两个回环）。
-        /// 服务器模式的推导绝不写进这里——那正是「切回来能恢复」的关键。
+        /// 用户自己维护的那份（普通模式用，含两个回环）。
+        /// 服务器 / 桌面模式的推导绝不写进这里——那正是「切回来能恢复」的关键。
         /// </summary>
         private static List<string> _userHosts = new();
 
@@ -273,19 +275,32 @@ namespace AstraBrew_Launcher.Services
         public static IReadOnlyList<string> WhitelistHosts =>
             _hosts.Count > 0
                 ? _hosts
-                : WhitelistLocked ? BuildServerWhitelist() : LocalDefaults();
+                : WhitelistLocked ? BuildDerivedWhitelist() : LocalDefaults();
 
-        /// <summary>服务器模式下白名单锁定，其余模式可编辑。</summary>
-        public static bool WhitelistLocked => Mode == LaunchMode.Server;
+        /// <summary>服务器与桌面模式下白名单锁定，只有普通模式可编辑。</summary>
+        public static bool WhitelistLocked => Mode is LaunchMode.Server or LaunchMode.Desktop;
+
+        /// <summary>是不是桌面模式：它的白名单固定为回环，没有「服务范围」可讲。</summary>
+        public static bool IsDesktopMode => Mode == LaunchMode.Desktop;
 
         /// <summary>是不是回环地址：这两条永远保留，删掉就连不上本机了。</summary>
         public static bool IsLoopbackHost(string value) =>
             value is "127.0.0.1" or "::1";
 
-        /// <summary>按当前服务范围算出的白名单条目（服务器模式用）。</summary>
-        public static IReadOnlyList<string> BuildServerWhitelist()
+        /// <summary>
+        /// 按启动模式算出的白名单条目（服务器 / 桌面模式用）。
+        ///
+        /// 桌面模式只放行回环：页面是启动器用 WebView2 从本机打开的，没有任何外部设备需要连进来；
+        /// 服务器模式才按服务范围展开。
+        /// </summary>
+        public static IReadOnlyList<string> BuildDerivedWhitelist()
         {
             var hosts = new List<string> { "127.0.0.1", "::1" };
+
+            if (Mode == LaunchMode.Desktop)
+            {
+                return hosts;
+            }
 
             if (_scope == ServiceScope.Wan)
             {
@@ -361,7 +376,7 @@ namespace AstraBrew_Launcher.Services
         }
 
         /// <summary>
-        /// 重建白名单：服务器模式按服务范围推导，普通 / 桌面模式用用户自己那份。
+        /// 重建白名单：服务器模式按服务范围推导、桌面模式固定回环，普通模式用用户自己那份。
         /// 结果写回 <c>config.yaml</c>（白名单是酒馆实际执行的策略，界面只是它的视图）。
         /// </summary>
         /// <param name="persist">true 时同时写进 config.yaml。</param>
@@ -372,7 +387,7 @@ namespace AstraBrew_Launcher.Services
 
             if (locked)
             {
-                entries = ComposeEntries(BuildServerWhitelist(), locked: true);
+                entries = ComposeEntries(BuildDerivedWhitelist(), locked: true);
             }
             else
             {

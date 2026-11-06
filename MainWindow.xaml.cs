@@ -270,6 +270,9 @@ namespace AstraBrew_Launcher
         {
             AppNotify.Raised -= OnNotifyRaised;
 
+            // 桌面窗口是独立顶层窗口，主窗口关了它不会自己退：先收掉，免得留下孤儿窗口
+            DesktopWindow.Close();
+
             _placement?.PersistBounds();
 
             // 关窗口要不要连酒馆一起停：运行时活在静态状态里，这里不收它就会变成孤儿进程，

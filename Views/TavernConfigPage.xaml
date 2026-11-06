@@ -20,34 +20,36 @@
                 <Border Style="{StaticResource LockedTagChipStyle}" Visibility="{x:Bind LockVisibility}">
                     <StackPanel Orientation="Horizontal" Spacing="5">
                         <FontIcon
-                            FontSize="9"
+                            FontSize="11"
                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                             Glyph="&#xE72E;" />
                         <TextBlock
                             AutomationProperties.Name="{x:Bind AutomationName}"
                             FontFamily="Consolas"
-                            FontSize="11.5"
+                            FontSize="13"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             Text="{x:Bind Value}" />
                     </StackPanel>
                 </Border>
 
                 <!--  自定义项：强调色淡底 + 小叉  -->
-                <Border Style="{StaticResource EditTagChipStyle}" Visibility="{x:Bind DeleteVisibility}">
-                    <StackPanel Orientation="Horizontal" Spacing="2">
+                <Border Style="{StaticResource WhitelistEditChipStyle}" Visibility="{x:Bind DeleteVisibility}">
+                    <StackPanel Orientation="Horizontal" Spacing="3">
                         <TextBlock
                             VerticalAlignment="Center"
                             AutomationProperties.Name="{x:Bind AutomationName}"
                             FontFamily="Consolas"
-                            FontSize="11.5"
+                            FontSize="13"
                             Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
                             Text="{x:Bind Value}" />
                         <Button
+                            Width="18"
+                            Height="18"
                             AutomationProperties.Name="移除该项"
                             Click="RemoveWhitelist_Click"
                             Style="{StaticResource ChipCloseButtonStyle}"
                             ToolTipService.ToolTip="从白名单移除">
-                            <FontIcon FontSize="8" Glyph="&#xE711;" />
+                            <FontIcon FontSize="9" Glyph="&#xE711;" />
                         </Button>
                     </StackPanel>
                 </Border>
@@ -386,6 +388,7 @@
                                 MaxHeight="150"
                                 Padding="0,0,4,0"
                                 HorizontalScrollBarVisibility="Disabled"
+                                HorizontalScrollMode="Disabled"
                                 VerticalScrollBarVisibility="Auto">
                                 <ItemsControl
                                     x:Name="SimpleWhitelistList"
@@ -844,6 +847,7 @@
                                     MaxHeight="150"
                                     Padding="0,0,4,0"
                                     HorizontalScrollBarVisibility="Disabled"
+                                    HorizontalScrollMode="Disabled"
                                     VerticalScrollBarVisibility="Auto">
                                     <ItemsControl
                                         x:Name="AdvWhitelistList"

@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -12,7 +11,6 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
-using Windows.ApplicationModel.DataTransfer;
 using Windows.UI;
 
 namespace AstraBrew_Launcher.Views
@@ -111,21 +109,36 @@ namespace AstraBrew_Launcher.Views
 
             NetworkButton.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
 
-            // 胶囊说的是「现在这台机器能从哪儿访问」，跟着启动模式走：
-            // 普通 / 桌面模式只绑本机，显示「局域网」会让人以为手机能连上，点开还是空的。
-            AccessScope scope = CurrentScope();
-            bool lan = scope == AccessScope.Lan;
-            bool local = scope == AccessScope.Local;
+            // 桌面模式下这颗按钮不是「看地址」而是「访问酒馆」：页面装在内嵌窗口里，
+            // 列出 127.0.0.1 对用户毫无用处；而窗口被手滑关掉时，这里得有个入口把它找回来。
+            if (TavernSettings.Mode == LaunchMode.Desktop)
+            {
+                NetworkGlyph.Glyph = "\uE7F4";
+                NetworkText.Text = "访问酒馆";
 
-            NetworkGlyph.Glyph = local ? "\uE72E" : lan ? "\uE701" : "\uE774";
-            NetworkText.Text = local ? "本机" : lan ? "局域网" : "互联网";
+                var openBrush = new SolidColorBrush(InfoColor);
+                NetworkGlyph.Foreground = openBrush;
+                NetworkText.Foreground = openBrush;
+                ToolTipService.SetToolTip(NetworkButton, "酒馆在独立窗口中打开；窗口被关掉时可以在这里重新打开");
+            }
+            else
+            {
+                // 胶囊说的是「现在这台机器能从哪儿访问」，跟着启动模式走：
+                // 普通模式只绑本机，显示「局域网」会让人以为手机能连上，点开还是空的。
+                AccessScope scope = TavernAccessDialog.CurrentScope();
+                bool lan = scope == AccessScope.Lan;
+                bool local = scope == AccessScope.Local;
 
-            var networkBrush = new SolidColorBrush(local ? MutedColor : lan ? SuccessColor : ErrorColor);
-            NetworkGlyph.Foreground = networkBrush;
-            NetworkText.Foreground = networkBrush;
-            ToolTipService.SetToolTip(NetworkButton, local
-                ? "查看本机地址（普通模式不对外提供访问）"
-                : "查看手机 / 平板访问地址");
+                NetworkGlyph.Glyph = local ? "\uE72E" : lan ? "\uE701" : "\uE774";
+                NetworkText.Text = local ? "本机" : lan ? "局域网" : "互联网";
+
+                var networkBrush = new SolidColorBrush(local ? MutedColor : lan ? SuccessColor : ErrorColor);
+                NetworkGlyph.Foreground = networkBrush;
+                NetworkText.Foreground = networkBrush;
+                ToolTipService.SetToolTip(NetworkButton, local
+                    ? "查看本机地址（普通模式不对外提供访问）"
+                    : "查看手机 / 平板访问地址");
+            }
 
             // 没启动过也要显示当前实例的版本：标题写着「未安装」而侧边栏显示内置 v1.19.2
             // 会让人以为实例挂了
@@ -136,25 +149,6 @@ namespace AstraBrew_Launcher.Views
                 ? $"SillyTavern {kernel} · 127.0.0.1:{state.Port}"
                 : $"SillyTavern {kernel}";
         }
-
-        /// <summary>当前实例能被谁访问：决定胶囊文字与访问弹窗的内容。</summary>
-        private enum AccessScope
-        {
-            Local,
-            Lan,
-            Wan,
-        }
-
-        /// <summary>
-        /// 访问范围由启动模式决定，不是由 config.yaml 的 <c>listen</c> 决定。
-        /// 「服务范围」这个设置只在服务器模式里有意义；普通 / 桌面模式就是本机自用，
-        /// 拿 listen 的值去显示「局域网」只会误导人。
-        /// </summary>
-        private static AccessScope CurrentScope() => TavernSettings.Mode switch
-        {
-            LaunchMode.Server => TavernSettings.Scope == ServiceScope.Lan ? AccessScope.Lan : AccessScope.Wan,
-            _ => AccessScope.Local,
-        };
 
         private Color MutedColor => IsLight ? Color.FromArgb(255, 96, 96, 96) : Color.FromArgb(255, 160, 160, 160);
         private Color InfoColor => IsLight ? Color.FromArgb(255, 15, 95, 191) : Color.FromArgb(255, 92, 176, 255);
@@ -408,317 +402,34 @@ namespace AstraBrew_Launcher.Views
 
         // ==================== 设备访问 ====================
 
+        /// <summary>
+        /// 运行中才显示的那颗胶囊。桌面模式下它是「打开酒馆」（唤回或重建内嵌窗口），
+        /// 其余模式是「本机 / 局域网 / 互联网」，点开地址列表。
+        /// </summary>
         private async void NetworkButton_Click(object sender, RoutedEventArgs e)
         {
-            await ShowAccessDialogAsync();
-        }
-
-        private async Task ShowAccessDialogAsync()
-        {
             TavernProcessState state = TavernRuntime.State;
+
             if (!state.IsRunning)
             {
                 return;
             }
 
-            AccessScope scope = CurrentScope();
-            bool local = scope == AccessScope.Local;
-
-            // 本机模式只列回环地址：普通模式下酒馆就绑在 127.0.0.1，
-            // 把网卡地址摆出来等于承诺一个打不开的链接。
-            (string? v4, string? v6) = local
-                ? ("127.0.0.1", null)
-                : NetworkInfo.LocalAddresses();
-
-            var body = new StackPanel { Spacing = 14 };
-
-            if (v4 is null && v6 is null)
+            if (TavernSettings.Mode == LaunchMode.Desktop)
             {
-                body.Children.Add(new TextBlock
-                {
-                    Text = local
-                        ? "没有读到本机回环地址，这通常意味着服务绑定的地址不是 127.0.0.1。"
-                        : "没有检测到可用的局域网地址。请确认这台机器已连上网络（或已开启 Wi-Fi / 网线）。",
-                    FontSize = 12.5,
-                    TextWrapping = TextWrapping.Wrap,
-                    Foreground = new SolidColorBrush(PrimaryTextColor),
-                });
-            }
-            else
-            {
-                // 用等分列而不是定宽卡片：弹窗宽度由主题决定，写死 316 会在窄屏上被裁掉一半
-                var cards = new Grid { ColumnSpacing = 12 };
+                string url = state.Url.Length > 0 ? state.Url : $"http://127.0.0.1:{state.Port}";
 
-                if (v4 is not null)
+                // 窗口还在就唤到前台，被关掉过就重建一个；建不出来时退回浏览器，别让人对着空白页干等
+                if (DesktopWindow.OpenTavern(url, out string detail))
                 {
-                    cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    return;
                 }
 
-                if (v6 is not null)
-                {
-                    cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                }
-
-                int column = 0;
-
-                if (v4 is not null)
-                {
-                    FrameworkElement card = BuildAccessCard(
-                        local ? "本机" : "IPv4",
-                        $"http://{v4}:{state.Port}/");
-                    Grid.SetColumn(card, column++);
-                    cards.Children.Add(card);
-                }
-
-                if (v6 is not null)
-                {
-                    FrameworkElement card = BuildAccessCard("IPv6", $"http://[{v6}]:{state.Port}/");
-                    Grid.SetColumn(card, column);
-                    cards.Children.Add(card);
-                }
-
-                body.Children.Add(cards);
+                AppNotify.Error("打不开酒馆页面", $"{url} · {detail}");
+                return;
             }
 
-            body.Children.Add(new TextBlock
-            {
-                Text = scope switch
-                {
-                    AccessScope.Local => LocalScopeHint(),
-                    AccessScope.Lan =>
-                        "手机、平板与这台电脑连同一个 Wi-Fi 就能打开上面的地址；访问不了时先看防火墙是否放行。",
-                    _ =>
-                        "公网访问需要路由器端口映射或反向代理，地址那一栏填的是本机网卡地址。",
-                },
-                FontSize = 11.5,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = new SolidColorBrush(MutedColor),
-            });
-
-            var dialog = new ContentDialog
-            {
-                XamlRoot = XamlRoot,
-                Title = BuildAccessHeader(scope, state.Port),
-            };
-            // 本机只有一张卡，780 宽会空出大半屏；按内容收窄
-            dialog.Resources["ContentDialogMaxWidth"] = local ? 520.0 : 780.0;
-            dialog.Resources["ControlCornerRadius"] = new CornerRadius(8);
-
-            // 自建底栏：ContentDialog 自带的按钮区会把唯一那颗按钮拉成整行宽条
-            var close = new Button
-            {
-                Content = "关闭",
-                Style = (Style)Application.Current.Resources["AccentActionButtonStyle"],
-            };
-            close.Click += (_, _) => dialog.Hide();
-
-            var footer = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 8,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 16, 0, 0),
-            };
-            footer.Children.Add(close);
-
-            var root = new Grid();
-            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            root.Children.Add(body);
-            Grid.SetRow(footer, 1);
-            root.Children.Add(footer);
-
-            dialog.Content = root;
-
-            await dialog.ShowAsync();
-        }
-
-        /// <summary>本机模式下的说明。配置里的「局域网访问」开着时如实点出来，别让人以为手机一定连不上。</summary>
-        private static string LocalScopeHint()
-        {
-            const string basic =
-                "普通模式用这台电脑的浏览器打开酒馆。要让手机、平板也能打开，把启动模式切成「服务器模式」并选「局域网」。";
-
-            return TavernSettings.Scope == ServiceScope.Lan
-                ? basic + "当前配置里开着「局域网访问」，同一 Wi-Fi 的设备其实也能连上这个端口。"
-                : basic;
-        }
-
-        private UIElement BuildAccessHeader(AccessScope scope, int port)
-        {
-            bool local = scope == AccessScope.Local;
-
-            var title = new StackPanel { Spacing = 2 };
-            title.Children.Add(new TextBlock
-            {
-                Text = local ? "本机访问" : "设备访问",
-                FontSize = 17,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(PrimaryTextColor),
-            });
-            title.Children.Add(new TextBlock
-            {
-                Text = local
-                    ? $"普通模式 · 端口 {port} · 只有这台电脑能打开"
-                    : $"{(scope == AccessScope.Lan ? "局域网" : "互联网")} · 端口 {port} · 把地址复制到手机浏览器",
-                FontSize = 11.5,
-                Foreground = new SolidColorBrush(MutedColor),
-            });
-
-            var header = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 12,
-                Margin = new Thickness(0, 4, 0, 2),
-            };
-
-            header.Children.Add(new Border
-            {
-                Width = 38,
-                Height = 38,
-                CornerRadius = new CornerRadius(8),
-                Background = new SolidColorBrush(Color.FromArgb(0x1F, 0x2B, 0x88, 0xD8)),
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = new FontIcon
-                {
-                    Glyph = local ? "\uE72E" : scope == AccessScope.Lan ? "\uE701" : "\uE774",
-                    FontSize = 16,
-                    Foreground = new SolidColorBrush(InfoColor),
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                },
-            });
-
-            header.Children.Add(title);
-            return header;
-        }
-
-        /// <summary>
-        /// 一张地址卡：完整 URL + 复制 / 打开两个动作。
-        ///
-        /// 以前框里只放 IP，旁边只有「复制地址」——用户拿到 192.168.8.21 还得自己补协议和端口；
-        /// 现在框里就是能直接粘进地址栏的地址，「打开」用默认浏览器打开它。
-        /// </summary>
-        private FrameworkElement BuildAccessCard(string label, string url)
-        {
-            var content = new StackPanel { Spacing = 10 };
-
-            content.Children.Add(new TextBlock
-            {
-                Text = label,
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(PrimaryTextColor),
-            });
-
-            var box = new TextBox
-            {
-                Text = url,
-                IsReadOnly = true,
-                FontFamily = new FontFamily("Consolas"),
-                FontSize = 12,
-                Padding = new Thickness(10, 7, 10, 8),
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-            };
-
-            // 只读框也要能选中：UIA / 键盘复制之外，鼠标拖选是最直觉的
-            box.IsTabStop = true;
-            box.SelectionStart = box.Text.Length;
-            content.Children.Add(box);
-
-            var actions = new Grid { ColumnSpacing = 8 };
-            actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-            var copy = new Button
-            {
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Center,
-                Content = BuildCopyLabel(),
-            };
-
-            copy.Click += (_, _) =>
-            {
-                var package = new DataPackage();
-                package.SetText(url);
-                Clipboard.SetContent(package);
-                copy.Content = BuildCopyLabel("已复制");
-            };
-
-            var open = new Button
-            {
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Center,
-                Style = (Style)Application.Current.Resources["AccentActionButtonStyle"],
-
-                // 强调色由系统决定，浅色主题下白字会糊在背景上：明确用「强调色上的文字」刷子
-                Content = BuildOpenLabel(Res("TextOnAccentFillColorPrimaryBrush", Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF))),
-            };
-
-            open.Click += (_, _) =>
-            {
-                try
-                {
-                    // 明确要「默认浏览器」：不走设置里选的那个
-                    Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-                }
-                catch (Exception ex)
-                {
-                    AppNotify.Error("打不开浏览器", ex.Message);
-                }
-            };
-
-            actions.Children.Add(copy);
-            Grid.SetColumn(open, 1);
-            actions.Children.Add(open);
-            content.Children.Add(actions);
-
-            return new Border
-            {
-                Padding = new Thickness(14),
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                CornerRadius = new CornerRadius(6),
-                Background = new SolidColorBrush(IsLight
-                    ? Color.FromArgb(0x0A, 0, 0, 0)
-                    : Color.FromArgb(0x0A, 255, 255, 255)),
-                BorderThickness = new Thickness(1),
-                BorderBrush = new SolidColorBrush(IsLight
-                    ? Color.FromArgb(0x14, 0, 0, 0)
-                    : Color.FromArgb(0x18, 255, 255, 255)),
-                Child = content,
-            };
-        }
-
-        private static UIElement BuildCopyLabel(string text = "复制")
-        {
-            var row = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 6,
-                HorizontalAlignment = HorizontalAlignment.Center,
-            };
-            row.Children.Add(new FontIcon { Glyph = "\uE8C8", FontSize = 12 });
-            row.Children.Add(new TextBlock { Text = text, FontSize = 12 });
-            return row;
-        }
-
-        /// <summary>取主题资源里的刷子；取不到就用兜底色（控件没有主题资源时也不会崩）。</summary>
-        private static Brush Res(string key, Color fallback)
-            => Application.Current.Resources.TryGetValue(key, out object value) && value is Brush brush
-                ? brush
-                : new SolidColorBrush(fallback);
-
-        private static UIElement BuildOpenLabel(Brush foreground)
-        {
-            var row = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 6,
-                HorizontalAlignment = HorizontalAlignment.Center,
-            };
-            row.Children.Add(new FontIcon { Glyph = "\uE8A7", FontSize = 12, Foreground = foreground });
-            row.Children.Add(new TextBlock { Text = "打开", FontSize = 12, Foreground = foreground });
-            return row;
+            await TavernAccessDialog.ShowAsync(XamlRoot, ActualTheme);
         }
     }
 }

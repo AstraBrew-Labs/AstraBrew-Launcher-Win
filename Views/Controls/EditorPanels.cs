@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.Foundation;
@@ -14,9 +14,18 @@ namespace AstraBrew_Launcher.Views.Controls
 
         public double VerticalSpacing { get; set; }
 
+        /// <summary>
+        /// 上一次测量时拿到的可用宽度。
+        ///
+        /// Arrange 必须按同一个宽度换行：外层 ScrollViewer 可能把 finalSize.Width 传成「内容想要的宽度」
+        /// （比视口宽），拿它来换行就等于没换行——标签会一路排到卡片外面被裁掉。
+        /// </summary>
+        private double _limit = double.PositiveInfinity;
+
         protected override Size MeasureOverride(Size availableSize)
         {
             double limit = double.IsInfinity(availableSize.Width) ? double.PositiveInfinity : availableSize.Width;
+            _limit = limit;
             double x = 0;
             double y = 0;
             double lineHeight = 0;
@@ -45,6 +54,8 @@ namespace AstraBrew_Launcher.Views.Controls
 
         protected override Size ArrangeOverride(Size finalSize)
         {
+            // 取测量宽度与最终宽度的较小者：谁更窄就按谁换行
+            double limit = Math.Min(finalSize.Width, _limit);
             double x = 0;
             double y = 0;
             double lineHeight = 0;
@@ -52,7 +63,7 @@ namespace AstraBrew_Launcher.Views.Controls
             foreach (UIElement child in Children)
             {
                 Size desired = child.DesiredSize;
-                if (x > 0 && x + desired.Width > finalSize.Width)
+                if (x > 0 && x + desired.Width > limit)
                 {
                     x = 0;
                     y += lineHeight + VerticalSpacing;

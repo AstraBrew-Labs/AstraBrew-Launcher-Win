@@ -106,6 +106,14 @@ namespace AstraBrew_Launcher.Services
     public readonly record struct WindowBounds(int X, int Y, int Width, int Height, int Dpi);
 
     /// <summary>
+    /// 酒馆桌面窗口关闭时的位置与大小（物理像素）。
+    ///
+    /// 与启动器主窗口的 <see cref="WindowBounds"/> 分开存：两者是两个独立窗口，
+    /// 用户常常把酒馆摆到副屏、启动器留在主屏，共用一个坐标只会互相踩。
+    /// </summary>
+    public readonly record struct TavernWindowRect(int X, int Y, int Width, int Height);
+
+    /// <summary>
     /// 启动器自身的偏好设置。
     ///
     /// 与 <see cref="TavernSettings"/> 同一套路：静态类持有一份状态，
@@ -119,7 +127,6 @@ namespace AstraBrew_Launcher.Services
         public static event EventHandler? Changed;
 
         private const string DefaultExportPath = @"%APPDATA%\AstraBrew Launcher\exports";
-        private const string DefaultDataPath = @"%APPDATA%\AstraBrew Launcher\data";
 
         /// <summary>外观。</summary>
         public static AppTheme Theme => _theme;
@@ -160,6 +167,22 @@ namespace AstraBrew_Launcher.Services
         /// <summary>关闭窗口时顺带停止酒馆服务。</summary>
         public static bool StopTavernOnWindowClose => _stopTavernOnWindowClose;
 
+        /// <summary>桌面模式：记住酒馆窗口关闭前的位置与大小。</summary>
+        public static bool RememberTavernWindow => _rememberTavernWindow;
+
+        /// <summary>上次关闭的酒馆窗口几何；null 表示还没记录过。</summary>
+        public static TavernWindowRect? TavernWindowRect => _tavernWindowRect;
+
+        /// <summary>WebView 内存上限的下限：1 GB —— 再小 Chromium 连页面都跑不起来。</summary>
+        public const int MinWebViewMemoryMb = 1024;
+
+        /// <summary>WebView 内存上限的最大值：本机物理内存减去给系统的预留（见 SystemMemory）。</summary>
+        public static int MaxWebViewMemoryMb => SystemMemory.MaxLimitMb;
+
+        /// <summary>桌面模式 WebView 的 JS 堆上限（MB），默认 2 GB；改完下次开窗生效。</summary>
+        public static int WebViewMemoryMb =>
+            Math.Clamp(_webViewMemoryMb, MinWebViewMemoryMb, MaxWebViewMemoryMb);
+
         /// <summary>资源导出目录。</summary>
         public static string ExportPath => _exportPath;
 
@@ -190,8 +213,6 @@ namespace AstraBrew_Launcher.Services
         public static DataLocationMode DataLocation => _dataLocation;
 
         /// <summary>全局数据目录。</summary>
-        public static string GlobalDataPath => _globalDataPath;
-
         /// <summary>控制台里回显实际执行的启动命令。</summary>
         public static bool ShowStartupCommand => _showStartupCommand;
 
@@ -282,6 +303,35 @@ namespace AstraBrew_Launcher.Services
 
         public static void SetStopTavernOnWindowClose(bool value) => Set(ref _stopTavernOnWindowClose, value);
 
+        public static void SetRememberTavernWindow(bool value) => Set(ref _rememberTavernWindow, value);
+
+        /// <summary>
+        /// 改内存上限。上下限都夹一次：换机器（内存变少）后旧配置里的 12 GB 不能照搬，
+        /// 否则 Chromium 会拿着一个比物理内存还大的堆上限去跑。
+        /// </summary>
+        public static void SetWebViewMemoryMb(int value) =>
+            Set(ref _webViewMemoryMb, Math.Clamp(value, MinWebViewMemoryMb, MaxWebViewMemoryMb));
+
+        /// <summary>
+        /// 记下酒馆窗口几何。不发 Changed（界面没有要跟着刷的东西），只把落盘排进防抖队列：
+        /// 关窗是常事，设置页不该为了一条坐标重画一遍。
+        /// </summary>
+        public static void SetTavernWindowRect(TavernWindowRect? value, bool persist = true)
+        {
+            if (_tavernWindowRect == value)
+            {
+                return;
+            }
+
+            _tavernWindowRect = value;
+
+            // 读配置时 persist = false：正在 Load 的途中再排一次写盘，等于刚读完就重写一遍
+            if (persist)
+            {
+                SettingsStore.Save();
+            }
+        }
+
         public static void SetExportPath(string value) => Set(ref _exportPath, value);
 
 
@@ -292,8 +342,6 @@ namespace AstraBrew_Launcher.Services
         public static void SetAllowBackground(bool value) => Set(ref _allowBackground, value);
 
         public static void SetDataLocation(DataLocationMode value) => Set(ref _dataLocation, value);
-
-        public static void SetGlobalDataPath(string value) => Set(ref _globalDataPath, value);
 
         public static void SetShowStartupCommand(bool value) => Set(ref _showStartupCommand, value);
 
@@ -356,12 +404,14 @@ namespace AstraBrew_Launcher.Services
             _cpuCores = CpuCorePreference.Auto;
             _startMode = QuickStartMode.Normal;
             _stopTavernOnWindowClose = true;
+            _rememberTavernWindow = true;
+            _tavernWindowRect = null;
+            _webViewMemoryMb = DefaultWebViewMemoryMb;
             _exportPath = DefaultExportPath;
             _serviceScope = ServiceScopeSetting.Lan;
             _userWhitelist = string.Empty;
             _allowBackground = true;
             _dataLocation = DataLocationMode.CurrentInstance;
-            _globalDataPath = DefaultDataPath;
             _showStartupCommand = true;
             _runtime = RuntimeSource.Builtin;
             _npmRegistry = NpmRegistrySource.Npmmirror;
@@ -386,12 +436,17 @@ namespace AstraBrew_Launcher.Services
         private static CpuCorePreference _cpuCores = CpuCorePreference.Auto;
         private static QuickStartMode _startMode = QuickStartMode.Normal;
         private static bool _stopTavernOnWindowClose = true;
+        private static bool _rememberTavernWindow = true;
+        private static TavernWindowRect? _tavernWindowRect;
+        private static int _webViewMemoryMb = DefaultWebViewMemoryMb;
+
+        /// <summary>WebView 内存上限的出厂值：2 GB —— 日常对话够用，也不至于把机器拖慢。</summary>
+        private const int DefaultWebViewMemoryMb = 2048;
         private static string _exportPath = DefaultExportPath;
         private static ServiceScopeSetting _serviceScope = ServiceScopeSetting.Lan;
         private static string _userWhitelist = string.Empty;
         private static bool _allowBackground = true;
         private static DataLocationMode _dataLocation = DataLocationMode.CurrentInstance;
-        private static string _globalDataPath = DefaultDataPath;
         private static bool _showStartupCommand = true;
         private static RuntimeSource _runtime = RuntimeSource.Builtin;
         private static NpmRegistrySource _npmRegistry = NpmRegistrySource.Npmmirror;
