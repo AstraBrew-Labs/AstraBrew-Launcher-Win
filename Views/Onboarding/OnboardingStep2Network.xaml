@@ -1,0 +1,104 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="AstraBrew_Launcher.Views.Onboarding.OnboardingStep2Network"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <StackPanel Spacing="10">
+        <!--  四项连通性  -->
+        <StackPanel Spacing="2">
+            <controls:CheckRow
+                x:Name="RowPing"
+                Detail="连 8.8.8.8 试一下"
+                Glyph="&#xE701;"
+                Title="能上网吗" />
+            <controls:CheckRow
+                x:Name="RowDns"
+                Detail="打开 www.baidu.com"
+                Glyph="&#xE774;"
+                Title="能打开网页吗" />
+            <controls:CheckRow
+                x:Name="RowApi"
+                Detail="GitHub 接口 · 被限流会回 403"
+                Glyph="&#xE8B7;"
+                Title="能取到酒馆列表吗" />
+            <controls:CheckRow
+                x:Name="RowRaw"
+                Detail="GitHub 文件地址"
+                Glyph="&#xE8A5;"
+                Title="能下载酒馆文件吗" />
+        </StackPanel>
+
+        <!--  API 被限流的专属提示  -->
+        <Border
+            x:Name="RateLimitCard"
+            Padding="12"
+            Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+            BorderBrush="{ThemeResource SystemFillColorCautionBrush}"
+            BorderThickness="1"
+            CornerRadius="8"
+            Visibility="Collapsed">
+            <StackPanel Spacing="8">
+                <Grid ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon
+                        FontSize="14"
+                        Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                        Glyph="&#xE7BA;" />
+                    <TextBlock
+                        x:Name="RateLimitText"
+                        Grid.Column="1"
+                        FontSize="12.5"
+                        TextWrapping="Wrap"
+                        Text="酒馆列表暂时取不到，GitHub 让你先等等。开加速就能继续。" />
+                </Grid>
+                <StackPanel
+                    Orientation="Horizontal"
+                    Spacing="8"
+                    HorizontalAlignment="Right">
+                    <Button
+                        x:Name="FixRouteButton"
+                        Click="FixRoute_Click"
+                        Style="{StaticResource AccentActionButtonStyle}"
+                        Content="开加速再试" />
+                    <Button x:Name="SkipGithubButton" Click="SkipGithub_Click" Content="跳过这项" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+        <!--  镜像测速  -->
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="1">
+                <TextBlock
+                    FontSize="13"
+                    FontWeight="SemiBold"
+                    Text="从哪下载最快" />
+                <TextBlock
+                    FontSize="11.5"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                    Text="四条线各真拉一次仓库（约 100 MB），谁先拉完用谁" />
+            </StackPanel>
+        </Grid>
+
+        <StackPanel x:Name="MirrorHost" Spacing="2" />
+
+        <TextBlock
+            x:Name="SummaryText"
+            FontSize="11.5"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            TextWrapping="Wrap" />
+    </StackPanel>
+</UserControl>

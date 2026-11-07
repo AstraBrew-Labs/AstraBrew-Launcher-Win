@@ -1,0 +1,172 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="AstraBrew_Launcher.Views.Onboarding.OnboardingStep1Migration"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <StackPanel Spacing="12">
+        <controls:SegmentedPicker
+            x:Name="SourcePicker"
+            Options="从别的启动器导入,从旧版导入"
+            SelectionChanged="SourcePicker_SelectionChanged" />
+
+        <!--  ==================== 从酒馆启动器 GUI 迁移 ====================  -->
+        <StackPanel x:Name="GuiPanel" Spacing="10">
+            <StackPanel Spacing="4">
+                <Grid ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock
+                        x:Name="GuiStatusText"
+                        VerticalAlignment="Center"
+                        FontSize="12.5"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Text="正在找旧数据…"
+                        TextWrapping="Wrap" />
+
+                    <Button
+                        x:Name="PickFolderButton"
+                        Grid.Column="1"
+                        Click="PickConfig_Click"
+                        ToolTipService.ToolTip="选酒馆根目录里的 config.yaml"
+                        Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon FontSize="12" Glyph="&#xE8E5;" />
+                            <TextBlock Text="自己选文件" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+
+                <!--  路径单独一行灰字：主句说人话，路径该多长就多长  -->
+                <TextBlock
+                    x:Name="GuiMetaText"
+                    FontSize="11"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                    TextTrimming="CharacterEllipsis"
+                    Visibility="Collapsed" />
+            </StackPanel>
+
+            <TextBlock
+                x:Name="GuiSummaryText"
+                FontSize="12"
+                Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                TextWrapping="Wrap"
+                Visibility="Collapsed" />
+
+            <Border
+                x:Name="GuiListCard"
+                MaxHeight="150"
+                Padding="4"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Visibility="Collapsed">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="GuiListHost" Spacing="1" />
+                </ScrollViewer>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button
+                    x:Name="GuiRescanButton"
+                    Click="GuiRescan_Click"
+                    Content="再找一次"
+                    Visibility="Collapsed" />
+                <Button
+                    x:Name="GuiRunButton"
+                    Click="GuiRun_Click"
+                    Style="{StaticResource AccentActionButtonStyle}"
+                    Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon FontSize="12" Glyph="&#xE72A;" />
+                        <TextBlock Text="开始搬" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+
+            <StackPanel x:Name="GuiProgressPanel" Spacing="6" Visibility="Collapsed">
+                <ProgressBar x:Name="GuiProgressBar" Height="4" Maximum="100" />
+                <TextBlock
+                    x:Name="GuiProgressText"
+                    FontSize="11.5"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                    TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+        </StackPanel>
+
+        <!--  ==================== 从旧版本迁移 ====================  -->
+        <StackPanel
+            x:Name="LegacyPanel"
+            Spacing="10"
+            Visibility="Collapsed">
+            <StackPanel Spacing="4">
+                <TextBlock
+                    x:Name="LegacyStatusText"
+                    FontSize="12.5"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    TextWrapping="Wrap" />
+
+                <TextBlock
+                    x:Name="LegacyMetaText"
+                    FontSize="11"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                    TextTrimming="CharacterEllipsis"
+                    Visibility="Collapsed" />
+            </StackPanel>
+
+            <Border
+                x:Name="LegacyListCard"
+                MaxHeight="150"
+                Padding="4"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Visibility="Collapsed">
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="LegacyListHost" Spacing="1" />
+                </ScrollViewer>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button
+                    x:Name="LegacyRescanButton"
+                    Click="LegacyRescan_Click"
+                    Content="再找一次"
+                    Visibility="Collapsed" />
+                <Button
+                    x:Name="LegacyRunButton"
+                    Click="LegacyRun_Click"
+                    Style="{StaticResource AccentActionButtonStyle}"
+                    Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon FontSize="12" Glyph="&#xE72A;" />
+                        <TextBlock Text="开始整理" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+
+            <StackPanel x:Name="LegacyProgressPanel" Spacing="6" Visibility="Collapsed">
+                <ProgressBar x:Name="LegacyProgressBar" Height="4" Maximum="100" />
+                <TextBlock
+                    x:Name="LegacyProgressText"
+                    FontSize="11.5"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                    TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+        </StackPanel>
+
+        <TextBlock
+            Style="{StaticResource FootnoteTextStyle}"
+            Text="不想搬就点「下一步」。搬的过程只复制和改名，不会删你的东西。"
+            TextWrapping="Wrap" />
+    </StackPanel>
+</UserControl>

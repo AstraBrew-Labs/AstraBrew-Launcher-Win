@@ -19,6 +19,10 @@ using Windows.Storage.Pickers;
 using Windows.UI;
 using WinRT.Interop;
 
+// 只取这两个形状：整包引 Shapes 会和 System.IO.Path 撞名（本文件里到处在用 Path.Combine）
+using Ellipse = Microsoft.UI.Xaml.Shapes.Ellipse;
+using Polygon = Microsoft.UI.Xaml.Shapes.Polygon;
+
 namespace AstraBrew_Launcher.Views
 {
     /// <summary>
@@ -1539,7 +1543,9 @@ namespace AstraBrew_Launcher.Views
             };
             dialog.Resources["ContentDialogMaxWidth"] = width;
 
-            // 没有底部按钮区时 ContentDialog 自己不吃 Esc，这里补一个快捷键
+            // 没有底部按钮区时 ContentDialog 自己不吃 Esc，这里补一个快捷键。
+            // 必须 Hidden：默认会在弹窗里飘一个「Esc」提示框，用户根本不知道那是什么
+            // （而且它跟进度气泡挤在同一片区域，看起来像自己长出来的）。
             var escape = new KeyboardAccelerator { Key = Windows.System.VirtualKey.Escape };
             escape.Invoked += (_, args) =>
             {
@@ -1547,6 +1553,7 @@ namespace AstraBrew_Launcher.Views
                 dialog.Hide();
             };
             dialog.KeyboardAccelerators.Add(escape);
+            dialog.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;
 
             return (dialog, body, footer);
         }
@@ -1574,7 +1581,7 @@ namespace AstraBrew_Launcher.Views
             };
 
         /// <summary>两列行：左侧「名称 / 说明」，右侧状态值。</summary>
-        private Grid ProbeRow(string name, string hint, TextBlock status)
+        private Grid ProbeRow(string name, string hint, FrameworkElement status)
         {
             var label = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 1 };
             label.Children.Add(new TextBlock { Text = name, FontSize = 13, FontWeight = FontWeights.SemiBold });
@@ -1589,14 +1596,322 @@ namespace AstraBrew_Launcher.Views
             return row;
         }
 
-        private TextBlock CreateStatus(string text) => new()
+        /// <summary>
+        /// 连通性测试一行右侧的「状态格」：普通行只有文字，克隆行多一个**环形进度**。
+        ///
+        /// 为什么给克隆配环：它是四项里唯一要真拉约 100 MB、跑几十秒的一项。
+        /// 之前把百分比和网速拼成「下载 45% · 1.2 MB/s」一串字，数字一变整行就抖一下，
+        /// 而且看不出「45% 是不是还在涨」——环的弧长是连续变化的，一眼就知道它在传，还是卡住了。
+        ///
+        /// 环用 <see cref="UIElement.Opacity"/> 收放而不是 <see cref="UIElement.Visibility"/>：
+        /// 折叠起来会让右边的文字左右跳，恢复时又跳回去。
+        /// </summary>
+        private sealed class ProbeStatusCell
         {
-            Text = text,
-            FontSize = 13,
-            FontWeight = FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = Secondary(),
-        };
+            private readonly FrameworkElement? _bubble;
+
+            private readonly TextBlock? _bubbleText;
+
+            private bool _hasProgress;
+
+            private ProbeStatusCell(
+                TextBlock text,
+                RingMeter? ring,
+                FrameworkElement element,
+                FrameworkElement? bubble,
+                TextBlock? bubbleText)
+            {
+                Text = text;
+                Ring = ring;
+                Element = element;
+                _bubble = bubble;
+                _bubbleText = bubbleText;
+            }
+
+            public TextBlock Text { get; }
+
+            private RingMeter? Ring { get; }
+
+            /// <summary>塞进行里的那个元素：没有环时就是文字本身。</summary>
+            public FrameworkElement Element { get; }
+
+            public static ProbeStatusCell Create(
+                string initial,
+                Brush textBrush,
+                Brush accent,
+                Brush track,
+                bool withRing)
+            {
+                var text = new TextBlock
+                {
+                    Text = initial,
+                    FontSize = 13,
+                    FontWeight = FontWeights.SemiBold,
+                    VerticalAlignment = VerticalAlignment.Center,
+
+                    // 固定占位：拉取中文字会被清空，不留宽度整格就会缩一下、环跟着右移；
+                    // 这段宽度同时是气泡胶囊的位置——气泡浮在它上面，不需要再挤空间
+                    MinWidth = 110,
+                    // 失败原因可能很长（Git 的原始报错），截断但保留完整内容在提示里
+                    MaxWidth = 260,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    Foreground = textBrush,
+                };
+
+                if (!withRing)
+                {
+                    return new ProbeStatusCell(text, null, text, null, null);
+                }
+
+                var ring = new RingMeter(accent, track);
+
+                // 气泡：拉取中自动浮在环的右侧，做成「对话气泡」——左边一个小尖角指着环。
+                // 不挡命中（IsHitTestVisible=false）：它只是读数，不是可点的东西。
+                //
+                // 底色用 accent 兑淡（15%）：卡片色跟弹窗背景只差几个明度，做成气泡根本看不出来；
+                // 兑一点环的颜色，既看得见框，也和进度条是一套。
+                Color accentColor = (accent as SolidColorBrush)?.Color ?? Color.FromArgb(0xFF, 0x0E, 0x9A, 0xA7);
+                Brush bubbleFill = new SolidColorBrush(
+                    Color.FromArgb(0x26, accentColor.R, accentColor.G, accentColor.B));
+
+                var bubbleText = new TextBlock
+                {
+                    FontSize = 11,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = accent,
+                    TextWrapping = TextWrapping.NoWrap,
+                    MaxWidth = 200,
+                };
+
+                // 尖角与胶囊同色、无缝拼在一起：Border 加描边的话这一小块就对不上，
+                // 所以整枚气泡都不描边，靠底色区分。
+                var tail = new Polygon
+                {
+                    Fill = bubbleFill,
+                    Points =
+                    {
+                        new Windows.Foundation.Point(8, 0),
+                        new Windows.Foundation.Point(0, 7),
+                        new Windows.Foundation.Point(8, 14),
+                    },
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(0, 0, -1, 0),
+                };
+
+                var bubble = new Border
+                {
+                    Background = bubbleFill,
+                    // 圆角给足 = 胶囊形；高度由字号与内边距定，约 20 px
+                    CornerRadius = new CornerRadius(10),
+                    Padding = new Thickness(10, 2, 10, 2),
+
+                    // 给一个下限：网速那串字（18.99 MiB/s）不能被量窄了裁掉尾巴
+                    MinWidth = 74,
+                    Child = bubbleText,
+                };
+
+                var bubbleBox = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Visibility = Visibility.Collapsed,
+                    IsHitTestVisible = false,
+                };
+
+                bubbleBox.Children.Add(tail);
+                bubbleBox.Children.Add(bubble);
+
+                // 环占 40 宽、24 高（正好一行文字的视觉中线），气泡浮在它右侧的空白上。
+                // 用 Canvas 而不是 Grid：Grid 测量子元素时给的是单元格宽度，胶囊会被量窄再被圆角裁掉。
+                var ringHost = new Canvas
+                {
+                    Width = 40,
+                    Height = 24,
+                };
+
+                Canvas.SetLeft(ring, 8);
+                Canvas.SetTop(ring, 0);
+                ringHost.Children.Add(ring);
+                ringHost.Children.Add(bubbleBox);
+
+                var host = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+
+                host.Children.Add(ringHost);
+                host.Children.Add(text);
+
+                var cell = new ProbeStatusCell(text, ring, host, bubbleBox, bubbleText);
+
+                // 高度要等排完版才知道，所以每次尺寸变化都重新摆一次
+                bubbleBox.SizeChanged += (_, _) => cell.PlaceBubble();
+
+                return cell;
+            }
+
+            /// <summary>
+            /// 拉取中：环转着走，右边文字清空，**网速自动浮现在环的左边（胶囊）**。
+            /// 常驻一个每秒跳三次的数字会把这一行变成跑马灯；放进胶囊后它只占环旁边那一点，
+            /// 也不影响行内排版，测完跟着环一起收掉。
+            /// </summary>
+            public void ShowProgress(int percent, string phase, string? speed, string route)
+            {
+                Ring?.SetPercent(percent);
+
+                Text.FontWeight = FontWeights.Normal;
+                Text.Text = string.Empty;
+
+                _hasProgress = true;
+
+                if (_bubbleText is not null)
+                {
+                    // 只报网速：进度看弧就够了，两样挤在一起又会把标签撑宽、换行
+                    _bubbleText.Text = speed is { Length: > 0 } value
+                        ? value
+                        : $"{phase} {percent}% · {route}";
+                }
+
+                SyncBubble();
+                PlaceBubble();
+            }
+
+            /// <summary>
+            /// 把气泡摆在环的右侧、与环垂直居中。环在 Canvas 里居左 8、直径 24（右边缘 x = 32），
+            /// 气泡的左边缘从 38 起，尖角正好指着环。
+            /// 高度随字号/内容变，所以每次尺寸变化都重算一次纵向位置。
+            /// </summary>
+            private void PlaceBubble()
+            {
+                if (_bubble is null)
+                {
+                    return;
+                }
+
+                double height = _bubble.ActualHeight > 1 ? _bubble.ActualHeight : 20;
+
+                Canvas.SetLeft(_bubble, 38);
+                Canvas.SetTop(_bubble, 12 - height / 2);
+            }
+
+            /// <summary>测完（成功 / 失败 / 跳过 / 取消）：环收起来，只留结论文字。</summary>
+            public void HideProgress()
+            {
+                Ring?.Clear();
+
+                Text.FontWeight = FontWeights.SemiBold;
+
+                _hasProgress = false;
+                SyncBubble();
+            }
+
+            /// <summary>拉取中一直显示，测完（<see cref="HideProgress"/>）收起。</summary>
+            private void SyncBubble()
+            {
+                if (_bubble is not null)
+                {
+                    _bubble.Visibility = _hasProgress ? Visibility.Visible : Visibility.Collapsed;
+                }
+            }
+        }
+
+        /// <summary>取主题画刷，缺键时退回三级文字色——不为一个颜色键把弹窗崩掉。</summary>
+        private static Brush CardBrush(string key) =>
+            Application.Current.Resources.TryGetValue(key, out object value) && value is Brush brush
+                ? brush
+                : (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
+
+        /// <summary>主文字色，供悬浮标签用。</summary>
+        private static Brush PrimaryBrush() => (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
+
+        /// <summary>
+        /// 环形进度：底下一圈轨道，上面一段弧，弧长就是进度。
+        ///
+        /// 没用 <see cref="ProgressRing"/>：它在 20~30 px 的尺寸下只有 2 px 细线，弧短的时候
+        /// 几乎看不见，而且 determinate 模式的线宽改不了——想画得清楚只能放大到抢戏。
+        /// 这里两个 Ellipse + <see cref="Shape.StrokeDashArray"/>，粗细、尺寸、颜色都定死：
+        /// dash 的单位是线宽的倍数，所以弧长按「周长 ÷ 线宽」折算，进度就是实实在在的弧。
+        /// </summary>
+        private sealed class RingMeter : Grid
+        {
+            private const double Size = 24;
+            private const double Thickness = 3;
+
+            private readonly Ellipse _track;
+            private readonly Ellipse _arc;
+
+            public RingMeter(Brush accent, Brush track)
+            {
+                Width = Size;
+                Height = Size;
+                VerticalAlignment = VerticalAlignment.Center;
+
+                // 轨道也归 Clear 管：只藏弧的话，测完会留一个空的灰圈，
+                // 看着像「还没开始」或「进度丢了」。宽度一直占着，文字才不会左右跳。
+                _track = new Ellipse
+                {
+                    Width = Size,
+                    Height = Size,
+                    Stroke = track,
+                    StrokeThickness = Thickness,
+                    Opacity = 0,
+                };
+
+                Children.Add(_track);
+
+                _arc = new Ellipse
+                {
+                    Width = Size,
+                    Height = Size,
+                    Stroke = accent,
+                    StrokeThickness = Thickness,
+                    StrokeStartLineCap = PenLineCap.Round,
+                    StrokeEndLineCap = PenLineCap.Round,
+                    Opacity = 0,
+
+                    // 虚线默认从 3 点方向起画，转 -90° 让弧从 12 点开始顺时针长
+                    RenderTransform = new RotateTransform
+                    {
+                        Angle = -90,
+                        CenterX = Size / 2,
+                        CenterY = Size / 2,
+                    },
+                };
+
+                Children.Add(_arc);
+            }
+
+            public void SetPercent(double percent)
+            {
+                double radius = (Size - Thickness) / 2;
+                double units = 2 * Math.PI * radius / Thickness;
+
+                // 圆帽会让两端各多出半个线宽，先减掉这一截，弧长才和百分比对得上
+                double dash = Math.Max(units * Math.Clamp(percent, 0, 100) / 100.0 - 1, 0.001);
+
+                _arc.StrokeDashArray = new DoubleCollection { dash, Math.Max(units - dash, 0.001) };
+                _track.Opacity = 1;
+                _arc.Opacity = 1;
+            }
+
+            public void Clear()
+            {
+                _track.Opacity = 0;
+                _arc.Opacity = 0;
+            }
+        }
+
+        /// <summary>
+        /// 环的底色。用主题自带的描边色：深色下是低透明度白、浅色下是低透明度黑，
+        /// 两种主题里都不抢眼。资源找不到时退回三级文字色，至少不会因为缺一个键就崩。
+        /// </summary>
+        private static Brush RingTrackBrush() =>
+            Application.Current.Resources.TryGetValue("ControlStrokeColorDefaultBrush", out object brush)
+                && brush is Brush stroke
+                ? stroke
+                : (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
 
         // ==================== 安装任务弹窗 ====================
 
@@ -2057,27 +2372,38 @@ namespace AstraBrew_Launcher.Views
                 "\uEC4A",
                 accent,
                 "GitHub 连通性测试",
-                "真的去访问网页、API、压缩包与 Raw；延迟是这次请求实测出来的，不是预置数字。",
+                "真的去访问网页、API、Raw，再把仓库完整拉一份下来；数字是这次实测出来的。",
                 640);
 
             body.Children.Add(new TextBlock
             {
-                Text = GithubAccel.Enabled
-                    ? $"当前出口：{GithubConnectivity.DescribeExit()}；GitHub 域名经 {GithubAccel.Prefix} 中转，失败会退回直连。"
-                    : $"当前出口：{GithubConnectivity.DescribeExit()}；加速服务未开启。",
+                // 出口由「代理方式 × 加速开关」四种组合决定，这里直说这一次测试实际走的哪条
+                Text = GithubConnectivity.DescribeExit() + "。四项并发进行；克隆会真拉完整仓库"
+                    + "（约 100 MB）到临时目录，拉取时显示进度与速度，测完自动删除。",
                 FontSize = 11,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Tertiary(),
             });
 
             IReadOnlyList<GithubProbe> probes = GithubConnectivity.BuildProbes();
-            var statuses = new List<TextBlock>();
+            var statuses = new List<ProbeStatusCell>();
+            int cloneIndex = -1;
 
-            foreach (GithubProbe probe in probes)
+            for (int index = 0; index < probes.Count; index++)
             {
-                var status = CreateStatus("等待");
+                GithubProbe probe = probes[index];
+
+                if (probe.IsGit)
+                {
+                    cloneIndex = index;
+                }
+
+                // 只有克隆那一行带环形进度：HTTP 三条一两百毫秒就回来了，给它们配环只是闪一下
+                ProbeStatusCell status = ProbeStatusCell.Create(
+                    "等待", Tertiary(), new SolidColorBrush(accent), RingTrackBrush(), probe.IsGit);
+
                 statuses.Add(status);
-                body.Children.Add(ProbeRow(probe.Name, probe.Hint, status));
+                body.Children.Add(ProbeRow(probe.Name, probe.Hint, status.Element));
             }
 
             var summary = new TextBlock
@@ -2096,36 +2422,47 @@ namespace AstraBrew_Launcher.Views
             footer.Children.Add(retest);
 
             close.Click += (_, _) => dialog.Hide();
-            retest.Click += async (_, _) => await ProbeGithubAsync(probes, statuses, summary, retest);
+            retest.Click += async (_, _) => await ProbeGithubAsync(probes, statuses, summary, retest, cloneIndex);
 
-            dialog.Opened += async (_, _) => await ProbeGithubAsync(probes, statuses, summary, retest);
+            dialog.Opened += async (_, _) => await ProbeGithubAsync(probes, statuses, summary, retest, cloneIndex);
             await dialog.ShowAsync();
         }
 
         /// <summary>
         /// 并发探测所有节点：各自计时、各自回填那一行，最后汇总。
         /// 并发而不是逐个来，是因为最坏的超时是 8 秒一条——串行六条能让人等到关掉弹窗。
+        /// 克隆那条是例外：它要真拉约 100 MB，跑得比 HTTP 三条久得多，过程中把进度画在它自己那一行上。
         /// </summary>
         private async Task ProbeGithubAsync(
             IReadOnlyList<GithubProbe> probes,
-            List<TextBlock> statuses,
+            List<ProbeStatusCell> statuses,
             TextBlock summary,
-            Button retest)
+            Button retest,
+            int cloneIndex)
         {
             retest.IsEnabled = false;
             summary.Text = "正在探测…";
             summary.Foreground = Secondary();
 
-            foreach (TextBlock status in statuses)
+            foreach (ProbeStatusCell status in statuses)
             {
-                status.Text = "探测中…";
-                status.Foreground = Secondary();
+                status.HideProgress();
+                status.Text.Text = "探测中…";
+                status.Text.Foreground = Secondary();
             }
+
+            IProgress<GithubCloneProgress>? live = cloneIndex >= 0 && cloneIndex < statuses.Count
+                ? new Progress<GithubCloneProgress>(update => ApplyCloneProgress(statuses[cloneIndex], update))
+                : null;
 
             GithubProbeResult[] results = await Task.WhenAll(
                 probes.Select(async (probe, index) =>
                 {
-                    GithubProbeResult result = await GithubConnectivity.RunAsync(probe, CancellationToken.None);
+                    GithubProbeResult result = await GithubConnectivity.RunAsync(
+                        probe,
+                        CancellationToken.None,
+                        probe.IsGit ? live : null);
+
                     ApplyProbeResult(statuses[index], result);
                     return result;
                 }));
@@ -2134,50 +2471,91 @@ namespace AstraBrew_Launcher.Views
             retest.IsEnabled = true;
         }
 
-        private void ApplyProbeResult(TextBlock status, GithubProbeResult result)
+        /// <summary>
+        /// 克隆拉取中的实时进度：**环走百分比，网速放进悬浮提示**。
+        /// 之前把「下载 45% · 1.2 MB/s」塞成一行常驻文字，数字每秒跳三次，整行跟着抖；
+        /// 现在弧长表达进度、鼠标移上去看速度，这一行既安静又读得懂。
+        /// </summary>
+        private void ApplyCloneProgress(ProbeStatusCell cell, GithubCloneProgress update)
         {
-            // 失败原因可能很长（Git 的原始报错），截断但保留完整内容在提示里
-            status.MaxWidth = 260;
-            status.TextTrimming = TextTrimming.CharacterEllipsis;
-            ToolTipService.SetToolTip(status, null);
+            cell.ShowProgress(update.Percent, update.Phase, update.Speed, update.Route);
+        }
+
+        private void ApplyProbeResult(ProbeStatusCell cell, GithubProbeResult result)
+        {
+            cell.HideProgress();
+            ToolTipService.SetToolTip(cell.Element, null);
 
             if (result.Error is { Length: > 0 } error)
             {
-                status.Text = error;
-                ToolTipService.SetToolTip(status, error);
-                status.Foreground = Critical();
+                cell.Text.Text = error;
+                ToolTipService.SetToolTip(cell.Element, error);
+                cell.Text.Foreground = Critical();
                 return;
             }
 
             if (result.Note is { Length: > 0 } note)
             {
                 // 「跳过」是没测，「中转 403」是测了但不理想，两者颜色要分开
-                status.Text = note;
-                ToolTipService.SetToolTip(status, note);
-                status.Foreground = result.Probe.IsGit ? Tertiary() : Caution();
+                cell.Text.Text = note;
+                ToolTipService.SetToolTip(cell.Element, note);
+                cell.Text.Foreground = result.Probe.IsGit ? Tertiary() : Caution();
                 return;
             }
 
             if (result.LatencyMs is int latency)
             {
-                status.Text = $"{latency} ms";
-                status.Foreground = latency <= 300 ? Success() : Caution();
+                // 克隆拉的是完整仓库，动辄十几秒：写「15200 ms」没人算得出来，
+                // 写「15.2 秒」一眼就懂——这也是这个数字唯一的用途
+                if (result.Probe.IsGit)
+                {
+                    string via = result.Route is { Length: > 0 } route ? $" · {route}" : string.Empty;
+                    cell.Text.Text = MirrorBenchmark.DescribeElapsed(latency) + via;
+                    cell.Text.Foreground = Success();
+                    return;
+                }
+
+                cell.Text.Text = $"{latency} ms";
+                cell.Text.Foreground = latency <= 300 ? Success() : Caution();
                 return;
             }
 
-            status.Text = "—";
+            cell.Text.Text = "—";
         }
 
         private void SummarizeProbe(IReadOnlyList<GithubProbeResult> results, TextBlock summary)
         {
-            // 只拿 GitHub 自己的域名算「最快」：中转和 git 通道不是同一维度的数字
+            // 「最快」只从三条 HTTP 里挑：克隆的耗时是另一回事（它要建仓库、要握手），
+            // 混在一起比会让「克隆 3 秒」压过「API 200 ms」，数字就失去意义了
             List<GithubProbeResult> measured = results
-                .Where(item => item.Ok && !item.Probe.IsRelay && !item.Probe.IsGit && item.LatencyMs is not null)
+                .Where(item => item.Ok && !item.Probe.IsGit && item.LatencyMs is not null)
                 .ToList();
+
+            var notes = new List<string>();
+
+            if (results.FirstOrDefault(item => item.Probe.Key == "api") is { Ok: false })
+            {
+                notes.Add("API 不通：版本列表只能用缓存。");
+            }
+
+            if (results.FirstOrDefault(item => item.Probe.Key == "raw") is { Ok: false })
+            {
+                notes.Add("Raw 不通：blob 转 raw 的下载会失败。");
+            }
+
+            if (results.FirstOrDefault(item => item.Probe.IsGit) is { Ok: false, Error: not null })
+            {
+                notes.Add("克隆失败：安装与更新内置实例都会受影响。");
+            }
+
+            if (results.FirstOrDefault(item => item.Probe.Key == "web") is { Ok: false })
+            {
+                notes.Add("官网打不开：仓库页、文档跳转都不通。");
+            }
 
             if (measured.Count == 0)
             {
-                summary.Text = "没有一个 GitHub 域名能连通。"
+                summary.Text = "四条都没通过。"
                     + (GithubAccel.Enabled
                         ? "试试关掉加速服务改用直连，或检查代理设置。"
                         : "检查代理设置，或打开「GitHub 加速服务」换一条出口。");
@@ -2189,34 +2567,20 @@ namespace AstraBrew_Launcher.Views
             LauncherSettings.SetGithubTestResult(fastest.LatencyMs!.Value);
             UpdateGithubTestUi();
 
-            var notes = new List<string>();
+            // 耗时最长的克隆单独说一句：它通了才代表安装/更新真的能用
+            GithubProbeResult? clone = results.FirstOrDefault(item => item.Probe.IsGit);
 
-            if (results.Any(item => item.Probe.Key == "codeload" && !item.Ok))
+            string cloneNote = clone switch
             {
-                notes.Add("压缩包不通：取源码请走镜像通道。");
-            }
+                { Ok: true, LatencyMs: { } ms } =>
+                    $"克隆通道正常（{MirrorBenchmark.DescribeElapsed(ms)}）。",
+                { Note: { Length: > 0 } note } => note + "。",
+                _ => string.Empty,
+            };
 
-            if (results.Any(item => item.Probe.Key == "api" && !item.Ok))
-            {
-                notes.Add("API 不通：版本列表只能用缓存。");
-            }
-
-            if (results.Any(item => item.Probe.Key == "raw" && !item.Ok))
-            {
-                notes.Add("Raw 不通：blob 转 raw 的下载会失败。");
-            }
-
-            if (results.FirstOrDefault(item => item.Probe.IsRelay) is { Ok: false })
-            {
-                notes.Add("加速中转不可用：建议关掉加速开关，或换个时间再试。");
-            }
-
-            if (results.FirstOrDefault(item => item.Probe.IsGit) is { Ok: false, Error: not null })
-            {
-                notes.Add("git 拉取失败：clone、pull 与酒馆更新都会受影响。");
-            }
-
-            summary.Text = $"最快 {fastest.LatencyMs} ms（{fastest.Probe.Name}）。{string.Join(" ", notes)}";
+            summary.Text = $"最快 {fastest.LatencyMs} ms（{fastest.Probe.Name}）。"
+                + cloneNote
+                + (notes.Count == 0 ? string.Empty : string.Join(" ", notes));
             summary.Foreground = notes.Count == 0 ? Success() : Caution();
         }
 

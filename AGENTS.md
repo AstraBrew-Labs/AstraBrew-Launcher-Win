@@ -973,19 +973,156 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
 
 - **每个数字都是这次请求实测的**。以前是四条写死的延迟（412/268/0/168），
   换了代理、断了网，点「重新测试」照样一片绿——那种「测试」比没有更糟。
-- 探测的节点：`github.com` 仓库页、`api.github.com` releases、`codeload.github.com`
-  的 tar.gz、`raw.githubusercontent.com` 的 start.sh；**加速开着才多探一条**
-  `gh-proxy.org`（真实加速地址），**装了 Git 才多探一条** `git ls-remote`。
-- 延迟 = 从发请求到拿到响应头。只读到响应头就断开（`ResponseHeadersRead` + `Range: 0-2048`），
-  不能为了测连通性把几十 MB 的压缩包拖下来。
-- 代理走 `ProxyHttpClient`，与版本列表、安装器同一套规则；弹窗顶部把「当前出口」写出来，
-  免得用户猜到底有没有用代理。
-- **中转 4xx 要说成「这条加速地址不可用」**，不能等同于「GitHub 不通」：两者处置完全不同。
+- **四项**：官网 `https://github.com`、API `…/repos/SillyTavern/SillyTavern/releases`、
+  Raw `…/refs/heads/release/default/config.yaml`、**克隆仓库**（真把仓库完整拉一份到临时目录）。
+- **出口按「代理 × 加速」四种组合决定**（`ResolveProxyPlan`）：
+  都没开 → 不走代理、不拼前缀；只开代理 → 走代理；只开加速 → **不走代理**、API/Raw/克隆
+  拼 `GithubAccel.Prefix`；两个都开 → 既走代理也拼前缀。
+  代理是**显式**配到 `HttpClientHandler` 上的（`UseProxy = false` 就是真不走），
+  不能靠系统默认——「只开加速」时测出来的绿必须是中转给的，否则用户关掉代理就装不上。
+- **官网不拼前缀**：中转对 HTML 页面只会 301 回 github.com（实测），
+  拼上去等于多绕一跳还看不出真实结果。`GithubProbe.Accelerable` 就是干这个的。
+- **克隆怎么测**：与「从哪下载最快」用**同一套参数**（`GitCommand.CreateSpeedTestClone`：
+  `--depth 1 --single-branch --no-tags --progress`），真把约 100 MB 的文件传下来，
+  结果写「24.4 秒」而不是毫秒。以前用 `--filter=blob:none --no-checkout` 只取元数据：
+  一两秒就绿，可安装时下的是完整仓库——测的根本不是同一件事（中转常见「元数据秒回、拉文件很慢」）。
+- **必须隔离全局 git 配置**（`isolateGlobalConfig: true`）：加速开关会往 `~/.gitconfig` 写 `insteadOf`，
+  不隔离的话「直连」会被 git 自己改写成加速地址，那一行的绿是错的那条线给的。
+- **进度要报出来**：`GitProgressParser`（`Services/GitProgress.cs`，与测速共用一份正则）解析 stderr 的
+  `Receiving objects: 45% …, 1.2 MiB/s`，折算成 0~100 后经 `IProgress<GithubCloneProgress>`
+  交给界面画成环形进度。没有进度时界面只有一个「探测中…」，用户看不出它到底在传东西还是卡死了。
+- **加速开着仍走「加速 → 直连」两条**（与 HTTP 三条同规矩）：中转自己也会 403，只试一条等于白丢一条线路。
+  结果带上线路与出口（「24.4 秒 · 加速 · 走代理」），代理开没开一眼可见。
+- 克隆超时 120 秒（真拉 100 MB，60 秒对慢速通道不够），**超时即失败**，`finally` 里删目录
+  （只读文件先归位，删不掉重试 8 次）；开测前 `TempDir.ClearStale("gh-connect", 2 小时)` 收掉上次强关的残留。
+  同时设 `GIT_TERMINAL_PROMPT=0` / `GIT_ASKPASS=echo` / `GIT_LFS_SKIP_SMUDGE=1`，
+  别让凭据框或 LFS 把测试挂住；代理通过 `-c http.proxy= -c https.proxy=` 传（git 不认 PAC）。
+- **进度用环、网速用对话气泡**：拉取中克隆那一行是「环 + 气泡」——
+  环 24 px（`ProbeStatusCell.RingMeter`：两个 Ellipse + `StrokeDashArray`，弧长按「周长 ÷ 线宽」折算），
+  **紧贴环右侧自动浮出一枚对话气泡写实时网速**（圆角 Border + 朝左小尖角 `Polygon`，
+  底色是 accent 兑 15% 的淡青，文字用 accent），拉取结束气泡与环一起收起，
+  只剩「4.9 秒 · 直连 · 走代理」。
+  - 环与一行文字的**视觉中线**对齐：环容器就是 24 高（等于环径），跟着行的
+    `VerticalAlignment.Center` 走，不额外加内边距——多一层 32 高的容器就会差 1~2 px。
+  - 不用 `ProgressRing`：20~30 px 下只有 2 px 细线，弧短时几乎看不见，determinate 的线宽也改不了。
+  - 不用 `ToolTip` / 悬停套路：**用户要的是「拉取中就自己出现」**，不是鼠标移上去才出现；
+    何况 git 每秒报几次进度，每次改 `ToolTipService` 的内容都会把自动弹出的计时器清零，
+    手动 `ToolTip.IsOpen` 又要自己接 `XamlRoot` / `PlacementTarget`，都不稳。
+  - 气泡装在 `Canvas` 里而不是 `Grid`：Grid 测量子元素时给的是单元格宽度，会被量窄再被圆角裁掉。
+    左边界固定 `38`（环右边缘 32 + 6），只按 `ActualHeight` 重算纵向位置。
+  - 气泡底色不能用卡片色：跟弹窗背景只差几个明度，做成气泡根本看不出来；尖角与胶囊同色且整体不描边，
+    否则接缝处会断一条线。
+  - 状态文字留 `MinWidth=110`：既是拉取中的占位（不留的话整格缩一下、环跟着右移），
+    也是气泡悬浮的那片空间。
+- **弹窗里的 Esc 提示要关掉**：`CreateShell` 给 `ContentDialog` 补了 Esc 快捷键，
+  默认会在弹窗中间飘一个「Esc」小方块（正好压在进度行旁边，用户以为是自己长出来的）。
+  设 `dialog.KeyboardAcceleratorPlacementMode = Hidden`，快捷键仍然生效，提示不再显示。
+
+- 延迟 = 从发请求到拿到响应头。只读到响应头就断开（`ResponseHeadersRead` + `Range: 0-2048`）。
+- 弹窗顶部写出「当前出口」（`DescribeExit`），免得用户猜到底走了哪条。
 - 网络异常要翻成人话（`DescribeHttpError`）：`The SSL connection could not be established…`
   对用户毫无意义，界面写「TLS 握手失败（域名可能被阻断）」。
-- 「最快」只统计 GitHub 自己的域名：中转与 git 通道不是同一维度的数字。
-  结果写回 `LauncherSettings.SetGithubTestResult`，设置行显示「最佳 xxx ms」。
-- 测试并发跑（`Task.WhenAll`），单个超时 8 秒、git 20 秒；串行六条能让人等到关弹窗。
+- 「最快」只统计三条 HTTP：克隆要建仓库、要握手，混进去比会失真；克隆单独在汇总里说一句
+  （「克隆通道正常（24.4 秒）」），也**不写** `GithubTestResult`。
+- 测试并发跑（`Task.WhenAll`），HTTP 超时 10 秒、克隆 120 秒；串行四条能让人等到关弹窗。
+  克隆本身在线程池里跑（`Task.Run` + 轮询进程状态），不占 UI 线程。
+
+## 首次引导（4 步）
+
+`Views/OnboardingView.xaml` 是外壳（840×500 卡片 + 左侧 208 宽竖向时间轴 + 底部按钮），
+每步的内容是 `Views/Onboarding/OnboardingStepN*.xaml` 里的独立面板，
+统一实现 `Views/Onboarding/IOnboardingStep.cs`（`CanContinue` / `IsBusy` / `BlockingReason` /
+`EnterAsync` / `Leave` / `Reset` + `StateChanged` 事件）。
+
+- **左轨是时间轴，不是列表**：`OnboardingRailItem` 一节固定 71 高（圆点 24 + 标题 13/18 + 副标 11/15），
+  连线画在条目内部的第二行（`Line` 2×47，从圆点底一路连到下一节圆点顶），四节叠起来才是一条不断的线。
+  **连线必须显式给 Width/Height**：`Shape` 的 `MeasureOverride` 只按几何包围盒算，竖线的包围盒宽度是 0，
+  靠 `Stretch` 撑开就画不出来（踩过）。跳过态用虚线 + 空心圆，`Skipped` 只在 `Finish(Skipped)` 时下发。
+- **文案规范**：主文案 ≤14 汉字、说明 ≤22 汉字；`8.8.8.8`、`403`、`浅克隆`、`bin\`、`.migrate-*`
+  这类技术细节一律下沉到灰字或 (i)，不占主句；路径单独一行灰字（`SetMeta`），必须是展开后的真实路径。
+- **不要动这几个哨兵字符串**：`RuntimeSetup` 产出 `"完成"` / `"准备中…"`，`InstallTaskDialog` 拿它们判行胶囊；
+  `MirrorBenchmark` 的 `"已取消"` 也用同一套比较。改文案只改显示侧，比较基准保持原样。
+- **第 3 步必须一屏装下**：两张卡（`MinHeight=168`、`Padding=14,10`、组件行 22 高）+ 单行「胶囊 + 包说明」
+  + 两个按钮；说明单独占一行会把按钮挤出可视区（踩过）。卡头留 26 右边距给 `OptionCardStyle` 的选中角标。
+- **页脚「先跳过」唯一**：第 2 步限流卡里的按钮叫「跳过这项」，别再出现两颗同名按钮——
+  自动化和用户都会点错。
+- **外壳只做三件事**：切面板、按当前面板算页脚（`NextButton.IsEnabled = CanContinue && !IsBusy`）、
+  切步骤时取消上一步的 CTS（`Leave()`）。面板改了状态必须发 `StateChanged`，否则按钮会停在旧状态。
+- **完成标记仍是 `OnboardingState`**（`%LOCALAPPDATA%\AstraBrew Launcher\onboarding.state`），
+  只在 `Finish()` 里写一次；「跳过引导」全程保留，两步都走同一个出口。
+
+### 第 1 步 · 数据迁移（`Services/OnboardingMigration.cs`）
+
+- 两条来源都先**预演**（`PlanGui` / `PlanLegacy` 纯读），用户看到清单并确认后才动磁盘。
+- GUI 迁移：默认 `%AppData%\SillyTavern Launcher GUI\data\st_data`，找不到就让用户手选 config.yaml；
+  整目录复制到 `GlobalTavernConfig.GlobalDataRoot`，**同名覆盖**——覆盖前把旧文件移进
+  `.migrate-backup-<ts>`，逐文件写 journal，失败逆序回滚。成功后自动把 `data_location` 设为 Global
+  （数据搬到了全局目录，还留在「跟随实例」等于白搬）。
+- 旧版迁移：旧根就是 `AppPaths.RoamingRoot`，只按**目录内容**识别组件
+  （`node.exe`→nodejs、`cmd/git.exe`→mingit、`caddy.exe`→caddy、`node_modules/pm2`→pm2），
+  `lib\` → `bin\`、`data\sillytavern\data\*` 抬升一层；**不认识的目录原样保留**，
+  `config.json` 不解析。目标已存在就把旧目录移进 `.migrate-old-<ts>`，绝不覆盖。
+- 旧版内置 Node 是 v24、当前规范 v22：`CheckLegacyNodeAsync` 主版本不等即提示重装，
+  `ReinstallNodeAsync` 先把旧目录改名保住，装失败自动还原。
+
+### 第 2 步 · 网络检查（`Services/NetworkProbe.cs` / `MirrorBenchmark.cs`）
+
+- 顺序：PING 8.8.8.8 → HTTPS www.baidu.com → GitHub API + Raw（并发）→ 四条镜像测速。
+  「没网」和「DNS 坏了」要分开报，否则后面测 GitHub 只会给出一堆看不懂的错。
+- **API 403 是限流不是断网**：判据是 `GithubProbeResult.Status == 403`（不要解析错误文案）。
+  **API 或 Raw 任意一条 403 都要弹卡片**——以前只看 API，Raw 那行写着「HTTP 403」却没出口。
+- **一条探测要试两条线路**（`ResolveUrls` / `MergeAttempts`）：加速开着时先 `gh-proxy.org` 再直连。
+  中转侧自己也会被限流（实测 403），只试一条就下结论，会出现「开了加速反而 403、设置里却能通」的假故障。
+  两条都 403 才是真限流（`Route = null`、`Error = 两条线路都返回 403`）；一条 403 一条别的错就报 403 那条。
+  成功时 `Route` 写进那一行的状态（`568 ms · 直连`），加速开着却回落直连用户看得见。
+- **403 卡片按「谁被限流」给动作**（`RateLimitFix`）：直连 403 → 「开加速再试」；加速 403 → 「关加速再试」；
+  两条都 403 → 「再查一次」。加速明明开着却叫用户「开加速」是最招人烦的提示，别写死。
+- **测速要真拉仓库**（`GitCommand.CreateSpeedTestClone`）：`--depth 1 --single-branch --progress`，
+  四条通道各拉一次完整工作区（约 100 MB）到临时目录，谁先拉完用谁。
+  **不能用 `CreateClone`**（那是元数据克隆：`--filter=blob:none --no-checkout`，一两秒就「成功」）——
+  拿它测速，四条线永远秒回，名次与真实安装速度毫无关系。
+- **拉取中要显示进度**：`--progress` 让 git 把 `Receiving objects / Resolving deltas / Updating files`
+  写进 stderr，`MirrorBenchmark` 解析后折算成 0~100（下载 3~85、整理 85~95、写入 95~99），
+  按整数百分比节流后经 `IProgress<MirrorProgress>` 发给界面（`下载 45% · 6.3 MB/s`）。
+  必须 `BeginErrorReadLine` 读流，且 stdout 也要读掉，否则管道写满会把 git 卡死。
+- **第一条拉完就定胜负**：胜者出现后再等 6 秒（`GraceAfterFirstWin`），其余直接取消并显示
+  「没等它拉完」——为一条死线路挂满 90 秒超时没有意义。单条超时 90 秒。
+- **代理开着时 GitHub 拆成两条**（`BuildChannels`）：`GitHub 直连 · 不走代理` / `· 走代理`、
+  `GitHub 加速 · 不走代理` / `· 走代理`，共六条；代理没开就只有四条、名字也不带后缀。
+  镜像（Gitee / GitCode）**永远直连**——中转方不认镜像站，套代理只会更慢。
+  「不走代理」的克隆要显式 `-c http.proxy= -c https.proxy=` 并清 `HTTP_PROXY` 等环境变量，
+  只靠「不给 -c」拦不住 git 从环境里捡代理。
+- **选中即对齐设置**（`ApplyAsync`）：线路是加速的就开加速并同步 `insteadOf`，是直连的就**关掉**加速
+  （否则 git 会把直连地址改写成加速地址，最快等于白测）；线路标着「不走代理」就把代理设为「不使用代理」，
+  标着「走代理」保持现状（PAC / 自定义地址不动）。
+- 应用被强关时会留下没删干净的克隆目录：`TempDir.ClearStale("mirror-test", 2 小时)` 在每轮开测前收一次。
+- **单位是秒**：`MirrorBenchmark.DescribeElapsed` 把毫秒折成「13.8 秒」；界面不要再出现 `ms`。
+  克隆耗时也**不写** `GithubTestResult`（那是 HTTP 延迟，混进去会让设置页显示「最佳 13800 ms」）。
+- **必须隔离 `GIT_CONFIG_GLOBAL`（指向空文件）**：加速开关会往 `~/.gitconfig` 写 `insteadOf`，
+  不隔离的话「GitHub 直连」会被 git 自己改写，四条通道实际只剩三条。
+- 继续判据：ping ✔ && dns ✔ && (api ✔ || 已跳过 403) && raw ✔ && 至少一条镜像可用。
+
+### 第 3 步 · 运行环境（`Services/RuntimeSetup.cs`）
+
+- 两侧（内置 / 系统）各出一张卡片，组件状态来自 `RuntimeProbe`；每行都有 (i) 说明「用途 / 缺失后果」。
+- **基础包 = Node.js + npm**（普通模式跑酒馆的最小集合），Git / Caddy / PM2 属完整包，缺了不挡路。
+- **按钮能不能点，看「这一包还剩几项」**：`RuntimeSetup.Plan(side, _package, profile).Count`。只装必需且已齐 → 0 项，
+  按钮显示「已经装齐了」并禁用（否则点下去只弹一句「这边已经齐了」，用户以为能补全）；
+  完整包全齐时保留「重装一遍」入口。
+- 自动选中「能跑的那一侧」并写 `LauncherSettings.Runtime`（全局只有一套运行环境，
+  引导里选的和仪表盘显示必须同源）。
+- 内置侧走 `InstallTaskDialog`：`ContentDialog.Closing` 里取消关闭（倒计时阶段与安装结束后放行），
+  3 秒倒计时自动开始，行内进度 + 总进度按权重合成，串行安装（PM2 依赖 Node）。
+  系统侧**不代装**（要 UAC / msi 交互）：主按钮 `InstallButton` 在系统侧是**禁用态**（`IsEnabled = !_busy && builtin`）+ ToolTip 说明，旁边一颗 `SystemHelpButton`「缺什么？」用 `GhostButtonStyle` 进说明窗；`Side_Checked` 的自动弹窗只对内置侧生效。
+  **按钮状态要在 `RefreshAsync` 的 finally 里再算一次**——探测期间 `_busy = true`，那时算出来的永远是禁用，漏了这一步切到内置也一直是灰的（踩过）。
+- 装完必须 `ProbeAsync(force: true)` 重探，卡片版本号只能来自磁盘。
+
+### 第 4 步 · 添加实例（`Services/OnboardingInstances.cs`）
+
+- 本地：`InstanceScan` 扫描（可取消、实时出行）或手选 `package.json`；缺依赖就地补装再启用。
+- 内置：`TavernReleases` 取最新稳定版 + 当前通道 + 镜像可用性 → `TavernInstaller.InstallAsync`，
+  装完 `ReloadBuiltin()` 再 `Use()`（版本以磁盘为准），缺依赖时有「补装依赖」。
+- 任一实例启用后「完成」才可点；`TavernInstaller` 有 `IsRunning` 闸门，避免与版本页同时安装。
 
 ## 路径显示
 

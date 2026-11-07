@@ -100,7 +100,7 @@ namespace AstraBrew_Launcher.Services
             IReadOnlyList<SourceTarget> targets,
             IProgress<TavernInstallProgress>? progress,
             CancellationToken token) =>
-            Task.Run(() => RunAsync(revision, targets, progress, token));
+            Task.Run(() => GuardedAsync(() => RunAsync(revision, targets, progress, token)));
 
         /// <summary>
         /// 只补依赖：代码已经躺在安装目录里，缺的是 <c>node_modules</c>。
@@ -111,7 +111,7 @@ namespace AstraBrew_Launcher.Services
         public static Task<TavernInstallResult> InstallDependenciesAsync(
             IProgress<TavernInstallProgress>? progress,
             CancellationToken token) =>
-            Task.Run(() => RunDepsOnlyAsync(InstallRoot, progress, token));
+            Task.Run(() => GuardedAsync(() => RunDepsOnlyAsync(InstallRoot, progress, token)));
 
         /// <summary>
         /// 给任意一份酒馆目录补依赖。本地实例的「安装依赖」走这条：
@@ -121,7 +121,39 @@ namespace AstraBrew_Launcher.Services
             string root,
             IProgress<TavernInstallProgress>? progress,
             CancellationToken token) =>
-            Task.Run(() => RunDepsOnlyAsync(root, progress, token));
+            Task.Run(() => GuardedAsync(() => RunDepsOnlyAsync(root, progress, token)));
+
+        /// <summary>
+        /// 是否有实例安装正在进行。两个入口（版本页 / 引导页）都能触发安装，
+        /// 共用同一份安装目录，撞在一起会把暂存目录搅坏——所以这里做个全局闸门。
+        /// </summary>
+        public static bool IsRunning => Volatile.Read(ref _running) != 0;
+
+        private static int _running;
+
+        /// <summary>同一时刻只允许一个实例安装；重复进入直接返回一句人话。</summary>
+        private static async Task<TavernInstallResult> GuardedAsync(Func<Task<TavernInstallResult>> work)
+        {
+            if (Interlocked.CompareExchange(ref _running, 1, 0) != 0)
+            {
+                return new TavernInstallResult(
+                    false,
+                    "另一个安装任务正在进行",
+                    "等它结束再试，或者先到控制台看看进度。",
+                    null,
+                    null,
+                    null);
+            }
+
+            try
+            {
+                return await work().ConfigureAwait(false);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _running, 0);
+            }
+        }
 
         private static async Task<TavernInstallResult> RunDepsOnlyAsync(
             string root,

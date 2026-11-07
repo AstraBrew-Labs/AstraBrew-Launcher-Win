@@ -1,0 +1,3 @@
+2026-11-08 02:37:17.018 start_test.py[6] <module> -> Find Control Timeout(4s): {Name: '开始测试', ControlType: ButtonControl}
+2026-11-08 02:58:59.561 front.py[5] <module> -> Find Control Timeout(6s): {Name: 'AstraBrew Launcher', ControlType: WindowControl}
+2026-11-08 03:22:21.146 bubble3.py[13] <module> -> Find Control Timeout(6s): {Name: '重新测试', ControlType: TextControl}

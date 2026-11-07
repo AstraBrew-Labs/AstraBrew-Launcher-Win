@@ -1,8 +1,8 @@
-using System;
+﻿using System;
+using System.Threading;
 using System.Threading.Tasks;
 using AstraBrew_Launcher.Services;
-using AstraBrew_Launcher.Views.Controls;
-using Microsoft.UI.Text;
+using AstraBrew_Launcher.Views.Onboarding;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Animation;
@@ -10,31 +10,36 @@ using Microsoft.UI.Xaml.Media.Animation;
 namespace AstraBrew_Launcher.Views
 {
     /// <summary>
-    /// 首次启动引导（三步，原型：检测结果为模拟数据）。
+    /// 首次启动引导（四步：数据迁移 → 检查网络 → 运行环境 → 添加实例）。
     ///
     /// 关键约定：
     /// · 只在「已完成引导」标记不存在时由 MainWindow 显示；
-    /// · 写标记的时机只有三处：第 3 步「完成」/ 任意一步「跳过引导」/ 第 1 步选「用过」后点「下一步」；
-    /// · 写标记与关闭界面在同一个方法 <see cref="Finish"/> 里完成，不会出现「界面关了但没记上」的中间态。
+    /// · 写标记的时机只有两处：最后一步「完成」与任意一步「跳过引导」；
+    /// · 写标记与关闭界面都在 <see cref="Finish"/> 里完成，不会出现「界面关了但没记上」的中间态；
+    /// · 每一步是一个独立的 <see cref="IOnboardingStep"/> 面板，外壳只负责切步骤、算页脚、
+    ///   以及在离开时取消上一步还在跑的任务。
     /// </summary>
     public sealed partial class OnboardingView : UserControl
     {
-        private const int TotalSteps = 3;
+        private const int TotalSteps = 4;
 
-        /// <summary>原型：固定的模拟检测结果，顺序与 StepPanel2 里的四行一致。</summary>
-        private static readonly CheckState[] SimulatedResults =
+        private static readonly (string Title, string Description)[] Steps =
         {
-            CheckState.Ready,    // NodeJS
-            CheckState.Ready,    // Git / MinGit
-            CheckState.Update,   // PM2
-            CheckState.Missing,  // 酒馆本体
+            ("把旧数据搬过来", "以前的聊天和角色能一起搬过来。不搬也行。"),
+            ("先看网络通不通", "能上网、能开网页、能下载，才装得动酒馆。"),
+            ("装好要用的工具", "酒馆跑起来，得先有几个小工具撑着。"),
+            ("选一个酒馆用", "用你装好的，或者让启动器装一份。"),
         };
 
-        private readonly (Border Idle, Border Active, Border Done, TextBlock Title)[] _railItems;
+        private readonly OnboardingRailItem[] _rail;
+
+        private readonly IOnboardingStep[] _panels;
 
         private int _step = 1;
-        private int _checkToken;
+
         private bool _closing;
+
+        private CancellationTokenSource? _stepToken;
 
         /// <summary>引导结束（标记已写入）后触发，由 MainWindow 负责把浮层收起来。</summary>
         public event EventHandler<OnboardingResult>? Finished;
@@ -43,25 +48,37 @@ namespace AstraBrew_Launcher.Views
         {
             InitializeComponent();
 
-            _railItems = new[]
+            _rail = new[] { Rail1, Rail2, Rail3, Rail4 };
+            _panels = new IOnboardingStep[] { Step1, Step2, Step3, Step4 };
+
+            foreach (IOnboardingStep panel in _panels)
             {
-                (Rail1Idle, Rail1Active, Rail1Done, Rail1Title),
-                (Rail2Idle, Rail2Active, Rail2Done, Rail2Title),
-                (Rail3Idle, Rail3Active, Rail3Done, Rail3Title),
-            };
+                panel.StateChanged += Panel_StateChanged;
+            }
+
+            Step4.BackToRuntimeRequested += (_, _) => GoToStep(3);
         }
 
         /// <summary>重置到第 1 步并恢复可见状态（每次展示前调用）。</summary>
         public void Restart()
         {
             _closing = false;
-            _checkToken++;
+            CancelStep();
 
             Root.Opacity = 1;
             Root.IsHitTestVisible = true;
 
-            OptionUsed.IsChecked = false;
-            OptionNew.IsChecked = false;
+            foreach (IOnboardingStep panel in _panels)
+            {
+                try
+                {
+                    panel.Reset();
+                }
+                catch (Exception)
+                {
+                    // 单步复位失败不该挡住整轮重播
+                }
+            }
 
             GoToStep(1);
         }
@@ -70,173 +87,106 @@ namespace AstraBrew_Launcher.Views
 
         private void GoToStep(int step)
         {
-            if (_closing)
+            if (_closing || step < 1 || step > TotalSteps)
             {
                 return;
             }
 
+            // 离场即取消：上一步的扫描 / 测速 / 安装没有理由继续跑
+            CancelStep();
+
             _step = step;
 
-            StepPanel1.Visibility = step == 1 ? Visibility.Visible : Visibility.Collapsed;
-            StepPanel2.Visibility = step == 2 ? Visibility.Visible : Visibility.Collapsed;
-            StepPanel3.Visibility = step == 3 ? Visibility.Visible : Visibility.Collapsed;
+            Step1.Visibility = step == 1 ? Visibility.Visible : Visibility.Collapsed;
+            Step2.Visibility = step == 2 ? Visibility.Visible : Visibility.Collapsed;
+            Step3.Visibility = step == 3 ? Visibility.Visible : Visibility.Collapsed;
+            Step4.Visibility = step == 4 ? Visibility.Visible : Visibility.Collapsed;
 
-            StepEyebrow.Text = $"第 {step} 步 · 共 {TotalSteps} 步";
-            (StepTitle.Text, StepDescription.Text) = step switch
-            {
-                2 => ("检查运行环境", "酒馆依赖 NodeJS、Git 与 PM2，启动器负责托管它们，这里做一次快速确认。"),
-                3 => ("检查使用环境", "确认浏览器与内存是否够用，别等打开对话页才发现问题。"),
-                _ => ("你之前用过酒馆吗？", "有经验的话可以直接进入主界面，我们不再占用你的时间。"),
-            };
+            StepEyebrow.Text = $"第 {step} 步，共 {TotalSteps} 步";
+            StepTitle.Text = Steps[step - 1].Title;
+            StepDescription.Text = Steps[step - 1].Description;
 
             BackButton.Visibility = step > 1 ? Visibility.Visible : Visibility.Collapsed;
-            NextButton.Content = step == TotalSteps ? "完成" : "下一步";
-            NextButton.IsEnabled = step > 1 || HasExperienceChoice();
 
             UpdateRail(step);
+            UpdateFooter();
 
-            if (step == 2)
+            _stepToken = new CancellationTokenSource();
+            _ = EnterStepAsync(_panels[step - 1], _stepToken.Token);
+        }
+
+        private async Task EnterStepAsync(IOnboardingStep panel, CancellationToken token)
+        {
+            try
             {
-                _ = RunChecksAsync();
+                await panel.EnterAsync(token);
             }
-            else if (step == 3)
+            catch (OperationCanceledException)
             {
-                UpdateMemory();
+                // 用户切走了，正常
+            }
+            catch (Exception ex)
+            {
+                AppNotify.Error("这一步没能准备好", ex.Message);
+            }
+        }
+
+        private void CancelStep()
+        {
+            _stepToken?.Cancel();
+            _stepToken?.Dispose();
+            _stepToken = null;
+
+            if (_step >= 1 && _step <= _panels.Length)
+            {
+                _panels[_step - 1].Leave();
             }
         }
 
         private void UpdateRail(int current)
         {
-            for (int i = 0; i < _railItems.Length; i++)
+            for (int i = 0; i < _rail.Length; i++)
             {
-                var item = _railItems[i];
                 int index = i + 1;
-                bool isActive = index == current;
-                bool isDone = index < current;
-
-                item.Idle.Visibility = !isActive && !isDone ? Visibility.Visible : Visibility.Collapsed;
-                item.Active.Visibility = isActive ? Visibility.Visible : Visibility.Collapsed;
-                item.Done.Visibility = isDone ? Visibility.Visible : Visibility.Collapsed;
-                item.Title.FontWeight = isActive ? FontWeights.SemiBold : FontWeights.Normal;
+                _rail[i].SetState(index == current
+                    ? RailState.Active
+                    : index < current
+                        ? RailState.Done
+                        : RailState.Idle);
             }
         }
 
-        // ==================== 第 1 步 ====================
-
-        private bool HasExperienceChoice()
+        private void Panel_StateChanged(object? sender, EventArgs e)
         {
-            return OptionUsed.IsChecked == true || OptionNew.IsChecked == true;
-        }
-
-        private void Experience_Checked(object sender, RoutedEventArgs e)
-        {
-            // 初始化期间 RadioButton 会先于按钮就绪触发，这里做个保护
-            if (NextButton is not null)
+            if (sender is IOnboardingStep panel && ReferenceEquals(panel, _panels[_step - 1]))
             {
-                NextButton.IsEnabled = HasExperienceChoice();
+                UpdateFooter();
             }
         }
 
-        // ==================== 第 2 步 ====================
-
-        private async Task RunChecksAsync()
+        private void UpdateFooter()
         {
-            int token = ++_checkToken;
-
-            var rows = new[] { RowNode, RowGit, RowPm2, RowTavern };
-
-            CheckSpinner.Visibility = Visibility.Visible;
-            CheckSpinner.IsActive = true;
-            CheckSummary.Text = "正在检测运行环境…";
-
-            foreach (var row in rows)
-            {
-                row.SetState(CheckState.Pending);
-            }
-
-            // 逐项出结果，模拟真实检测的耗时差异
-            for (int i = 0; i < rows.Length; i++)
-            {
-                await Task.Delay(420);
-                if (token != _checkToken || _closing)
-                {
-                    return;
-                }
-
-                rows[i].SetState(SimulatedResults[i]);
-            }
-
-            await Task.Delay(180);
-            if (token != _checkToken || _closing)
+            if (_panels.Length < _step)
             {
                 return;
             }
 
-            int missing = 0;
-            foreach (var state in SimulatedResults)
-            {
-                if (state == CheckState.Missing)
-                {
-                    missing++;
-                }
-            }
+            IOnboardingStep panel = _panels[_step - 1];
 
-            CheckSpinner.IsActive = false;
-            CheckSpinner.Visibility = Visibility.Collapsed;
-            CheckSummary.Text = missing == 0
-                ? $"检测完成 · {rows.Length} 项全部就绪"
-                : $"检测完成 · {rows.Length - missing} 项就绪，{missing} 项待安装";
-        }
+            NextButton.Content = _step == TotalSteps ? "完成" : "下一步";
+            NextButton.IsEnabled = panel.CanContinue && !panel.IsBusy;
 
-        private void Recheck_Click(object sender, RoutedEventArgs e)
-        {
-            _ = RunChecksAsync();
-        }
+            ToolTipService.SetToolTip(NextButton, panel.CanContinue ? null : panel.BlockingReason);
 
-        // ==================== 第 3 步 ====================
-
-        private void MemoryDemo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (MemoryValue is not null)
-            {
-                UpdateMemory();
-            }
-        }
-
-        private void UpdateMemory()
-        {
-            // 原型：用下拉框模拟三档内存，真实实现读 GlobalMemoryStatusEx
-            double gigabytes = MemoryDemo.SelectedIndex switch
-            {
-                0 => 2.0,
-                1 => 6.0,
-                _ => 16.0,
-            };
-
-            MemoryValue.Text = $"{gigabytes:0.0} GB";
-
-            MemoryLowBanner.Visibility = gigabytes < 4 ? Visibility.Visible : Visibility.Collapsed;
-            MemoryMidBanner.Visibility = gigabytes >= 4 && gigabytes <= 8 ? Visibility.Visible : Visibility.Collapsed;
-            MemoryHighBanner.Visibility = gigabytes > 8 ? Visibility.Visible : Visibility.Collapsed;
+            // 长任务在跑时不拦「跳过」，但会先把它取消掉（Finish 里做）
+            SkipButton.IsEnabled = true;
         }
 
         // ==================== 底部操作 ====================
 
         private void Next_Click(object sender, RoutedEventArgs e)
         {
-            if (_step == 1)
-            {
-                if (OptionUsed.IsChecked == true)
-                {
-                    Finish(OnboardingResult.Experienced);
-                    return;
-                }
-
-                GoToStep(2);
-                return;
-            }
-
-            if (_step == TotalSteps)
+            if (_step >= TotalSteps)
             {
                 Finish(OnboardingResult.Completed);
                 return;
@@ -260,7 +210,7 @@ namespace AstraBrew_Launcher.Views
 
         /// <summary>
         /// 唯一的收尾入口：先写标记，再淡出并通知 MainWindow。
-        /// 三种结束方式（完成 / 跳过 / 用过）都走这里，保证行为一致。
+        /// 两种结束方式（完成 / 跳过）都走这里，保证行为一致。
         /// </summary>
         private void Finish(OnboardingResult result)
         {
@@ -270,6 +220,18 @@ namespace AstraBrew_Launcher.Views
             }
 
             _closing = true;
+
+            CancelStep();
+
+            // 跳过时把「还没走到的步骤」画成虚线槽：淡出只有 180ms，但至少不会让
+            // 用户看到一串「已完成」的勾——那是没做过的事。
+            if (result == OnboardingResult.Skipped)
+            {
+                for (int i = _step - 1; i < _rail.Length; i++)
+                {
+                    _rail[i].SetState(RailState.Skipped);
+                }
+            }
 
             // ★ 标记写入时机
             OnboardingState.MarkCompleted(result);

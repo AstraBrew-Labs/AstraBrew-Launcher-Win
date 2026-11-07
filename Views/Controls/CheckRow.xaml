@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <UserControl
     x:Class="AstraBrew_Launcher.Views.Controls.CheckRow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -12,8 +12,8 @@
         四种状态用「预先摆好、切 Visibility」的方式切换，避免在代码里取主题画刷。
     -->
     <Grid
-        Padding="6,9"
-        ColumnSpacing="12">
+        Padding="6,7"
+        ColumnSpacing="10">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
@@ -21,14 +21,14 @@
         </Grid.ColumnDefinitions>
 
         <Border
-            Width="28"
-            Height="28"
+            Width="20"
+            Height="20"
             VerticalAlignment="Center"
             Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-            CornerRadius="6">
+            CornerRadius="5">
             <FontIcon
                 x:Name="IconGlyph"
-                FontSize="13"
+                FontSize="11"
                 Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
         </Border>
 
@@ -38,14 +38,15 @@
             Spacing="1">
             <TextBlock
                 x:Name="TitleText"
-                FontSize="13"
+                FontSize="12.5"
                 FontWeight="SemiBold"
                 Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                 TextTrimming="CharacterEllipsis" />
+            <!--  详情现在是「中英混排」的一句话（如「GitHub 接口 · 被限流会回 403」），
+                  再挂 Consolas 会让中文掉进回退字体，反而不齐  -->
             <TextBlock
                 x:Name="DetailText"
-                FontFamily="Consolas"
-                FontSize="11.5"
+                FontSize="11"
                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                 TextTrimming="CharacterEllipsis" />
         </StackPanel>

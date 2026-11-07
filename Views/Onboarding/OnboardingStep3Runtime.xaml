@@ -1,0 +1,160 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="AstraBrew_Launcher.Views.Onboarding.OnboardingStep3Runtime"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <StackPanel Spacing="10">
+        <!--
+            两侧环境：内置 / 系统。
+            卡头右侧留 26 给 OptionCardStyle 的选中角标（右上 20×20），否则它会压住状态胶囊。
+        -->
+        <Grid ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <RadioButton
+                x:Name="OptionBuiltin"
+                GroupName="RuntimeSide"
+                MinHeight="168"
+                Padding="14,10"
+                VerticalContentAlignment="Top"
+                Checked="Side_Checked"
+                Style="{StaticResource OptionCardStyle}">
+                <StackPanel Spacing="8">
+                    <Grid Margin="0,0,26,0" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="1">
+                            <TextBlock
+                                FontSize="13.5"
+                                FontWeight="SemiBold"
+                                Text="启动器自带" />
+                            <TextBlock
+                                FontSize="11"
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                Text="跟着启动器走，删了就没了"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Border
+                            x:Name="BuiltinPill"
+                            Grid.Column="1"
+                            Padding="7,1,7,2"
+                            VerticalAlignment="Top"
+                            CornerRadius="8">
+                            <TextBlock
+                                x:Name="BuiltinPillText"
+                                FontSize="10.5"
+                                Text="正在看" />
+                        </Border>
+                    </Grid>
+
+                    <StackPanel x:Name="BuiltinComponents" Spacing="2" />
+                </StackPanel>
+            </RadioButton>
+
+            <RadioButton
+                x:Name="OptionSystem"
+                Grid.Column="1"
+                GroupName="RuntimeSide"
+                MinHeight="168"
+                Padding="14,10"
+                VerticalContentAlignment="Top"
+                Checked="Side_Checked"
+                Style="{StaticResource OptionCardStyle}">
+                <StackPanel Spacing="8">
+                    <Grid Margin="0,0,26,0" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="1">
+                            <TextBlock
+                                FontSize="13.5"
+                                FontWeight="SemiBold"
+                                Text="用电脑里现有的" />
+                            <TextBlock
+                                FontSize="11"
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                Text="用你自己装好的"
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Border
+                            x:Name="SystemPill"
+                            Grid.Column="1"
+                            Padding="7,1,7,2"
+                            VerticalAlignment="Top"
+                            CornerRadius="8">
+                            <TextBlock
+                                x:Name="SystemPillText"
+                                FontSize="10.5"
+                                Text="正在看" />
+                        </Border>
+                    </Grid>
+
+                    <StackPanel x:Name="SystemComponents" Spacing="2" />
+                </StackPanel>
+            </RadioButton>
+        </Grid>
+
+        <!--  包选择：胶囊与说明同排 —— 说明单独一行会把按钮挤出可视区  -->
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <RadioButton
+                x:Name="PackageBasic"
+                GroupName="RuntimePackage"
+                Checked="Package_Checked"
+                Content="只装必需"
+                Style="{StaticResource ChoiceChipRadioStyle}" />
+            <RadioButton
+                x:Name="PackageFull"
+                GroupName="RuntimePackage"
+                Checked="Package_Checked"
+                Content="一次装齐"
+                Style="{StaticResource ChoiceChipRadioStyle}" />
+            <TextBlock
+                x:Name="PackageHint"
+                Margin="2,0,0,0"
+                VerticalAlignment="Center"
+                FontSize="11"
+                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                Text="只装跑酒馆最少的两样"
+                TextTrimming="CharacterEllipsis" />
+        </StackPanel>
+
+        <!--
+            系统侧不能代装：主按钮变灰，旁边给一个淡链接看「缺什么」。
+            用 GhostButtonStyle 而不是普通按钮，免得跟灰掉的主按钮抢注意力。
+        -->
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button
+                x:Name="InstallButton"
+                Click="Install_Click"
+                Style="{StaticResource AccentActionButtonStyle}">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <FontIcon FontSize="12" Glyph="&#xE896;" />
+                    <TextBlock x:Name="InstallButtonText" Text="开始安装" />
+                </StackPanel>
+            </Button>
+
+            <Button
+                x:Name="RecheckButton"
+                Click="Recheck_Click"
+                Content="再查一次" />
+
+            <Button
+                x:Name="SystemHelpButton"
+                Click="SystemHelp_Click"
+                Content="缺什么？"
+                Style="{StaticResource GhostButtonStyle}"
+                Visibility="Collapsed" />
+        </StackPanel>
+
+    </StackPanel>
+</UserControl>

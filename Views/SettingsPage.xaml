@@ -1055,7 +1055,7 @@
                             <Rectangle x:Name="DividerBeforeGithub" Style="{StaticResource RowDividerStyle}" />
 
                             <controls:SettingRow
-                                Description="依次访问 GitHub 的网页、API 与下载域名，找出当前能跑通的那条。"
+                                Description="真的访问官网、API、Raw，并把仓库完整拉一份下来；四项并发进行，按当前代理与加速设置走对应出口。"
                                 Glyph="&#xE968;"
                                 Title="GitHub 连通性"
                                 WrapAt="620">
@@ -1156,28 +1156,28 @@
                             Grid.Column="1"
                             VerticalAlignment="Center"
                             Spacing="2">
-                            <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" Text="原型工具" />
-                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="原型阶段的辅助入口，正式版会移除。" />
+                            <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" Text="首次引导" />
+                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="重新走一遍四步引导，或看看记录在哪。" />
                         </StackPanel>
                     </Grid>
 
                     <Border Style="{StaticResource SectionCardStyle}">
                         <StackPanel>
                             <controls:SettingRow
-                                Description="清除「已完成引导」标记并立刻重新展示，用于反复演示。"
+                                Description="清掉「已经看过」的记录，马上重走四步。"
                                 Glyph="&#xE768;"
-                                Title="重新播放首次引导"
+                                Title="再看一遍引导"
                                 WrapAt="560">
                                 <Button
                                     Click="ReplayOnboarding_Click"
-                                    Content="重新演示"
+                                    Content="再放一遍"
                                     Style="{StaticResource RowButtonStyle}" />
                             </controls:SettingRow>
 
                             <Rectangle Style="{StaticResource RowDividerStyle}" />
 
                             <controls:SettingRow
-                                Description="引导标记落在这个文件里；删掉它等同于「从未引导过」。"
+                                Description="记录就存在这个文件里，删掉它下次还会引导。"
                                 Glyph="&#xE8A5;"
                                 Title="标记文件"
                                 WrapAt="700">

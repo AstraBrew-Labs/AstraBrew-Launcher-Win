@@ -1,11 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -14,106 +12,216 @@ namespace AstraBrew_Launcher.Services
     /// <summary>
     /// 一个要探测的节点。地址是真实的——探测发的是真请求，延迟也是真的量出来的。
     /// </summary>
+    /// <param name="Accelerable">
+    /// 这条地址在加速开关打开时是否**拼中转前缀**。API / Raw / git 走前缀才有效；
+    /// 官网首页是 HTML 页面，中转只会 301 回 github.com（实测），拼了反而多绕一跳。
+    /// </param>
     public sealed record GithubProbe(
         string Key,
         string Name,
         string Hint,
         string Url,
-        bool IsRelay = false,
-        bool IsGit = false);
+        bool IsGit = false,
+        bool Accelerable = true);
 
-    /// <summary>一次探测的结果。<see cref="Note"/> 是「能用但不理想」的说明，<see cref="Error"/> 是失败原因。</summary>
+    /// <summary>
+    /// 一次探测的结果。<see cref="Note"/> 是「能用但不理想」的说明，<see cref="Error"/> 是失败原因，
+    /// <see cref="Status"/> 是 HTTP 状态码（拿不到响应头时为空）——判断 403 限流靠它，不解析文案。
+    /// </summary>
     public sealed record GithubProbeResult(
         GithubProbe Probe,
         bool Ok,
         int? LatencyMs,
         string? Error,
-        string? Note)
+        string? Note,
+        int? Status = null,
+        string? Route = null)
     {
         /// <summary>没测（例如没装 Git）。</summary>
         public static GithubProbeResult Skipped(GithubProbe probe, string note) =>
             new(probe, false, null, null, note);
+
+        /// <summary>API 被限流（403）：能连上，但拿不到数据。</summary>
+        public bool IsRateLimited => Status == 403;
     }
 
+    /// <summary>克隆探测的实时进度：这一条走的是哪条线路 + 百分比 + 速度。</summary>
+    public sealed record GithubCloneProgress(int Percent, string Phase, string? Speed, string Route);
+
     /// <summary>
-    /// GitHub 连通性测试：真的去访问 GitHub 的网页、API、压缩包与 Raw，再单独验证 git 通道。
+    /// GitHub 连通性测试：真的去访问官网、API、Raw，再把仓库**完整**克隆一份下来。
     ///
     /// 以前这里是四条写死的延迟数字（412 / 268 / 0 / 168），点「重新测试」只是让它们
     /// 按固定节奏再出现一遍——用户换了代理、断了网，界面照样一片绿。
     ///
-    /// 现在的规则：
-    /// · 每条都用 <see cref="ProxyHttpClient"/>，代理方式（无 / 系统 / 自定义）与其它网络功能一致；
-    /// · 只读到响应头就断开（<c>ResponseHeadersRead</c> + Range），不把压缩包整个拖下来；
-    /// · 延迟 = 从发出请求到拿到响应头的时间；
-    /// · 加速开着时多探一条中转（gh-proxy.org），它 4xx 就说明「加速地址本身不可用」，
-    ///   这与「GitHub 挂了」是两件事，要分开告诉用户；
-    /// · git 通道单独用 <c>git ls-remote</c> 验：网页能开不代表 clone 能跑。
+    /// 现在的规则按「代理 × 加速」四种组合走，测的就是真实出口：
+    /// <list type="bullet">
+    /// <item>都没开：不走代理、不拼前缀，直接连 GitHub；</item>
+    /// <item>只开代理：请求经代理发出，不拼前缀；</item>
+    /// <item>只开加速：**不走代理**，API / Raw / git 的地址前面拼 <see cref="GithubAccel.Prefix"/>；</item>
+    /// <item>两个都开：既走代理，也拼前缀。</item>
+    /// </list>
+    ///
+    /// 四条探测并发跑（HTTP 三条 + git 一条在线程池里跑），谁先回来谁先填那一行。
+    /// 克隆与「从哪下载最快」用同一套参数（<c>--depth 1 --single-branch --progress</c>），
+    /// 真把约 100 MB 的文件传下来，并解析进度——只有真下过文件，才能说明安装时能不能用；
+    /// 测完（无论成败、包括超时）都把临时目录删掉。
     /// </summary>
     public static class GithubConnectivity
     {
         private const string RepositoryUrl = "https://github.com/SillyTavern/SillyTavern";
 
-        private static readonly TimeSpan HttpTimeout = TimeSpan.FromSeconds(8);
-        private static readonly TimeSpan GitTimeout = TimeSpan.FromSeconds(20);
+        private static readonly TimeSpan HttpTimeout = TimeSpan.FromSeconds(10);
 
-        /// <summary>按当前设置列出要测的节点：加速开着才加中转，装了 Git 才加 git。</summary>
-        public static IReadOnlyList<GithubProbe> BuildProbes()
+        /// <summary>
+        /// 克隆超时：现在拉的是完整工作区（约 100 MB），60 秒对慢速通道不够；
+        /// 但再拖下去用户只会以为弹窗卡住了，两分钟是「慢网也能拉完」与「别让人干等」的折中。
+        /// </summary>
+        private static readonly TimeSpan CloneTimeout = TimeSpan.FromSeconds(120);
+
+        /// <summary>按当前设置列出四条要测的项（顺序就是界面上的顺序）。</summary>
+        public static IReadOnlyList<GithubProbe> BuildProbes() => new[]
         {
-            var probes = new List<GithubProbe>
-            {
-                new("web", "github.com", "仓库页（网页与跳转）", RepositoryUrl),
-                new("api", "api.github.com", "Release 元数据", "https://api.github.com/repos/SillyTavern/SillyTavern/releases?per_page=1"),
-                new("codeload", "codeload.github.com", "源码压缩包", "https://codeload.github.com/SillyTavern/SillyTavern/tar.gz/refs/heads/release"),
-                new("raw", "raw.githubusercontent.com", "Raw 文件", "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/start.sh"),
-            };
-
-            if (GithubAccel.Enabled)
-            {
-                probes.Add(new GithubProbe(
-                    "relay",
-                    "gh-proxy.org",
-                    "加速中转（当前生效）",
-                    GithubAccel.Prefix + "https://raw.githubusercontent.com/SillyTavern/SillyTavern/release/start.sh",
-                    IsRelay: true));
-            }
-
-            if (LocateGit() is not null)
-            {
-                probes.Add(new GithubProbe(
-                    "git",
-                    "git ls-remote",
-                    "克隆通道（命令行 git）",
-                    RepositoryUrl,
-                    IsGit: true));
-            }
-
-            return probes;
-        }
-
-        /// <summary>当前实际走的那条出口，直接写进弹窗，省得用户猜「到底用没用代理」。</summary>
-        public static string DescribeExit() => LauncherSettings.Proxy switch
-        {
-            ProxyModeSetting.None => "直连（不使用代理）",
-            ProxyModeSetting.Custom => $"自定义代理 {LauncherSettings.CustomProxy}",
-            _ => "系统代理（跟随 Windows Internet 选项）",
+            new GithubProbe(
+                "web",
+                "官网访问",
+                "https://github.com（HTML 页面，加速不代理页面）",
+                "https://github.com",
+                Accelerable: false),
+            new GithubProbe(
+                "api",
+                "API 访问",
+                "仓库 Release 元数据",
+                "https://api.github.com/repos/SillyTavern/SillyTavern/releases"),
+            new GithubProbe(
+                "raw",
+                "Raw 访问",
+                "仓库内的 default/config.yaml",
+                "https://raw.githubusercontent.com/SillyTavern/SillyTavern/refs/heads/release/default/config.yaml"),
+            new GithubProbe(
+                "clone",
+                "克隆仓库",
+                "真拉完整仓库（约 100 MB）到临时目录，测完自动删除",
+                RepositoryUrl,
+                IsGit: true),
         };
 
-        /// <summary>探测一个节点。永不抛异常，失败折成结果返回。</summary>
-        public static Task<GithubProbeResult> RunAsync(GithubProbe probe, CancellationToken token)
-            => probe.IsGit ? RunGitAsync(probe, token) : RunHttpAsync(probe, token);
+        /// <summary>当前实际走的那条出口，直接写进弹窗，省得用户猜「到底用没用代理」。</summary>
+        public static string DescribeExit()
+        {
+            string accel = GithubAccel.Enabled
+                ? $"加速开启（API / Raw / 克隆走 {GithubAccel.Prefix}）"
+                : "加速关闭";
+
+            return $"当前出口：{ProxyRoute.Resolve().Describe()} · {accel}";
+        }
+
+        /// <summary>
+        /// 探测一个节点。永不抛异常，失败折成结果返回。
+        /// <paramref name="progress"/> 只对克隆那一条有意义：拉取过程中持续报百分比与速度。
+        /// </summary>
+        public static Task<GithubProbeResult> RunAsync(
+            GithubProbe probe,
+            CancellationToken token,
+            IProgress<GithubCloneProgress>? progress = null)
+            => probe.IsGit ? RunCloneAsync(probe, token, progress) : RunHttpAsync(probe, token);
+
+        // ==================== 出口策略 ====================
+
+        /// <summary>
+        /// 探测用的 HttpClient。代理是**显式**配的，不交给系统默认行为：
+        /// 「只开加速」时必须真的不走代理，否则测出来的绿是代理给的——用户关掉代理就装不上。
+        /// </summary>
+        private static HttpClient CreateClient(TimeSpan timeout, ProxyRoute route)
+        {
+            var handler = new HttpClientHandler { AllowAutoRedirect = true };
+
+            if (!route.UseProxy)
+            {
+                handler.UseProxy = false;
+            }
+            else if (route.Address is { Length: > 0 } address)
+            {
+                handler.UseProxy = true;
+                handler.Proxy = new System.Net.WebProxy(address);
+            }
+            else
+            {
+                // PAC / 自动检测：地址由脚本决定，交给 Windows 自己解析
+                handler.UseProxy = true;
+            }
+
+            var client = new HttpClient(handler) { Timeout = timeout };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("AstraBrew-Launcher/1.0");
+            return client;
+        }
+
+        /// <summary>
+        /// <summary>
+        /// 一条探测这次要依次试的地址。加速开着时是「加速 → 直连」两条：
+        /// 中转侧自己也会被限流（实测 403），这时候直连往往还能用；
+        /// 反过来直连被墙时加速能救。**只试一条就下结论，等于把另一条的能力白白丢掉。**
+        /// 加速关着就只有直连——没让用户开的线路不该偷偷用。
+        /// 只拼前缀、不改路径：中转端自己会做规范化。
+        /// </summary>
+        private static IReadOnlyList<(string Route, string Url)> ResolveUrls(GithubProbe probe)
+        {
+            if (!probe.Accelerable || !GithubAccel.Enabled || !GithubAccel.IsGithubUrl(probe.Url))
+            {
+                return new[] { ("直连", probe.Url) };
+            }
+
+            return new[]
+            {
+                ("加速", GithubAccel.Prefix + probe.Url.Trim()),
+                ("直连", probe.Url),
+            };
+        }
 
         // ==================== HTTP ====================
 
         private static async Task<GithubProbeResult> RunHttpAsync(GithubProbe probe, CancellationToken token)
         {
+            ProxyRoute route = ProxyRoute.Resolve();
+            var attempts = new List<GithubProbeResult>();
+
+            foreach ((string routeName, string url) in ResolveUrls(probe))
+            {
+                GithubProbeResult attempt = await TryHttpAsync(probe, route, url, routeName, token)
+                    .ConfigureAwait(false);
+
+                if (attempt.Ok)
+                {
+                    return attempt;
+                }
+
+                attempts.Add(attempt);
+
+                if (token.IsCancellationRequested)
+                {
+                    break;
+                }
+            }
+
+            return MergeAttempts(probe, attempts);
+        }
+
+        /// <summary>真正发一次请求。永不抛（除取消）。</summary>
+        private static async Task<GithubProbeResult> TryHttpAsync(
+            GithubProbe probe,
+            ProxyRoute route,
+            string url,
+            string routeName,
+            CancellationToken token)
+        {
             var clock = Stopwatch.StartNew();
 
             try
             {
-                using HttpClient client = ProxyHttpClient.Create(HttpTimeout);
-                using var request = new HttpRequestMessage(HttpMethod.Get, probe.Url);
+                using HttpClient client = CreateClient(HttpTimeout, route);
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
 
-                // 只要响应头与开头几百字节：压缩包是几十 MB，测连通性不该把它拖下来
+                // 只要响应头与开头几百字节：连通性不需要整个文件
                 request.Headers.Range = new RangeHeaderValue(0, 2048);
                 request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
 
@@ -126,16 +234,10 @@ namespace AstraBrew_Launcher.Services
 
                 if (response.IsSuccessStatusCode)
                 {
-                    return new GithubProbeResult(probe, true, latency, null, null);
+                    return new GithubProbeResult(probe, true, latency, null, null, code, routeName);
                 }
 
-                // 中转对 GitHub 地址返回 4xx，通常是「这条加速地址不可用」，不是 GitHub 不通
-                if (probe.IsRelay && code is 403 or 404 or 502 or 503)
-                {
-                    return new GithubProbeResult(probe, false, latency, null, $"中转返回 HTTP {code}，这条加速地址不可用");
-                }
-
-                return new GithubProbeResult(probe, false, latency, $"HTTP {code}", null);
+                return new GithubProbeResult(probe, false, latency, $"HTTP {code}", null, code, routeName);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -143,121 +245,269 @@ namespace AstraBrew_Launcher.Services
             }
             catch (TaskCanceledException)
             {
-                return new GithubProbeResult(probe, false, null, $"超时（{HttpTimeout.TotalSeconds:0} 秒）", null);
+                return new GithubProbeResult(
+                    probe, false, null, $"超时（{HttpTimeout.TotalSeconds:0} 秒）", null, null, routeName);
             }
             catch (HttpRequestException ex)
             {
-                return new GithubProbeResult(probe, false, null, DescribeHttpError(ex), null);
+                return new GithubProbeResult(
+                    probe, false, null, DescribeHttpError(ex), null, null, routeName);
             }
         }
 
-        // ==================== git ====================
+        /// <summary>
+        /// 一条通道所有线路都失败之后的结论。挑法有讲究：
+        /// 两条都 403 → 是真限流（换线路也没用，只能等）；
+        /// 只有一条 403、另一条别的错 → 报 403（用户还能靠换线路解决）；
+        /// 都不是 403 → 把两条的原因都写出来，别只留最后一条让人以为另一条没试过。
+        /// </summary>
+        private static GithubProbeResult MergeAttempts(GithubProbe probe, List<GithubProbeResult> attempts)
+        {
+            if (attempts.Count == 0)
+            {
+                return new GithubProbeResult(probe, false, null, "没有可用线路", null);
+            }
 
-        private static Task<GithubProbeResult> RunGitAsync(GithubProbe probe, CancellationToken token)
+            if (attempts.Count == 1)
+            {
+                return attempts[0];
+            }
+
+            if (attempts.All(attempt => attempt.IsRateLimited))
+            {
+                return attempts[^1] with { Error = "两条线路都返回 403", Route = null };
+            }
+
+            GithubProbeResult? limited = attempts.FirstOrDefault(attempt => attempt.IsRateLimited);
+            if (limited is not null)
+            {
+                return limited with { Error = $"HTTP 403（{limited.Route}）" };
+            }
+
+            string detail = string.Join(" / ", attempts.Select(
+                attempt => $"{attempt.Route}：{attempt.Error ?? "失败"}"));
+
+            return attempts[^1] with { Error = detail };
+        }
+
+        // ==================== 克隆 ====================
+
+        /// <summary>
+        /// 真的拉一次仓库。加速开着时先走加速线路，失败再回落直连——和 HTTP 那三条一个规矩：
+        /// 中转侧自己也会被限流（实测 403），只试一条就下结论，等于把另一条的能力白白丢掉。
+        /// </summary>
+        private static Task<GithubProbeResult> RunCloneAsync(
+            GithubProbe probe,
+            CancellationToken token,
+            IProgress<GithubCloneProgress>? progress)
         {
             return Task.Run(() =>
             {
-                string? git = LocateGit();
+                // 上次被强关时没删干净的工作目录，开测前顺手收掉
+                TempDir.ClearStale("gh-connect", TimeSpan.FromHours(2));
+
+                string? git = GitCommand.LocateGit();
                 if (git is null)
                 {
                     return GithubProbeResult.Skipped(probe, "未安装 Git，跳过");
                 }
 
-                var clock = Stopwatch.StartNew();
+                // 代理是全局开关：这条测试测的是「当前设置能不能拉」，所以照着设置走，
+                // 不在这里另外拆「走 / 不走」两条（那件事是「从哪下载最快」的职责）。
+                bool proxyOn = ProxyRoute.Resolve().UseProxy;
+                var attempts = new List<GithubProbeResult>();
 
-                try
+                foreach ((string routeName, string url) in ResolveUrls(probe))
                 {
-                    var startInfo = new ProcessStartInfo(git)
-                    {
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        StandardOutputEncoding = Encoding.UTF8,
-                        StandardErrorEncoding = Encoding.UTF8,
-                    };
+                    GithubProbeResult attempt = RunOneClone(
+                        probe, git, url, routeName, proxyOn, progress, token);
 
-                    startInfo.ArgumentList.Add("ls-remote");
-                    startInfo.ArgumentList.Add("--heads");
-                    startInfo.ArgumentList.Add(probe.Url);
-
-                    // 内置 MinGit 的辅助程序在相邻目录
-                    if (System.IO.Path.GetDirectoryName(git) is { Length: > 0 } gitDir)
+                    if (attempt.Ok)
                     {
-                        string root = System.IO.Path.GetDirectoryName(gitDir) ?? gitDir;
-                        startInfo.Environment["PATH"] = string.Join(
-                            System.IO.Path.PathSeparator,
-                            new[] { gitDir, System.IO.Path.Combine(root, "bin"), System.IO.Path.Combine(root, "mingw64", "bin") });
+                        return attempt;
                     }
 
-                    using var process = new Process { StartInfo = startInfo };
-                    if (!process.Start())
+                    attempts.Add(attempt);
+
+                    if (token.IsCancellationRequested)
                     {
-                        return new GithubProbeResult(probe, false, null, "无法启动 git", null);
+                        break;
                     }
-
-                    Task<string> output = process.StandardOutput.ReadToEndAsync();
-                    Task<string> error = process.StandardError.ReadToEndAsync();
-
-                    while (!process.HasExited)
-                    {
-                        if (token.IsCancellationRequested)
-                        {
-                            TryKill(process);
-                            return GithubProbeResult.Skipped(probe, "已取消");
-                        }
-
-                        if (clock.Elapsed > GitTimeout)
-                        {
-                            TryKill(process);
-                            return new GithubProbeResult(probe, false, null, $"超时（{GitTimeout.TotalSeconds:0} 秒）", null);
-                        }
-
-                        Thread.Sleep(50);
-                    }
-
-                    int latency = Elapsed(clock);
-
-                    if (process.ExitCode == 0)
-                    {
-                        bool hasRefs = output.GetAwaiter().GetResult()
-                            .Split('\n')
-                            .Any(line => line.Contains("refs/heads/", StringComparison.Ordinal));
-
-                        return hasRefs
-                            ? new GithubProbeResult(probe, true, latency, null, null)
-                            : new GithubProbeResult(probe, false, latency, "仓库能连上，但没读到任何分支", null);
-                    }
-
-                    string detail = FirstLine(error.GetAwaiter().GetResult());
-                    return new GithubProbeResult(probe, false, latency, detail.Length > 0 ? detail : $"git 退出代码 {process.ExitCode}", null);
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
-                {
-                    return new GithubProbeResult(probe, false, null, FirstLine(ex.Message), null);
-                }
+
+                return MergeAttempts(probe, attempts);
             }, token);
         }
 
-        private static string? LocateGit()
+        /// <summary>
+        /// 跑一次完整克隆（<c>--depth 1 --single-branch --progress</c>，约 100 MB）。
+        ///
+        /// 以前这里用 <c>--filter=blob:none --no-checkout</c> 只取元数据：一两秒就绿，
+        /// 可安装时下的是完整仓库——那条通道到底能不能把文件传下来，测的根本不是同一件事
+        /// （镜像 / 中转常见「元数据秒回、拉文件很慢」）。现在与「从哪下载最快」用同一套参数，
+        /// 并把 git 的进度行解析出来给界面：用户能看见「下载 45% · 1.2 MB/s」，而不是干等一个「探测中」。
+        ///
+        /// **必须隔离全局 git 配置**：加速开关会往 <c>~/.gitconfig</c> 写 <c>insteadOf</c>，
+        /// 不隔离的话「直连」会被 git 自己改写成加速地址，测出来的绿是错的那条线给的。
+        /// </summary>
+        private static GithubProbeResult RunOneClone(
+            GithubProbe probe,
+            string git,
+            string url,
+            string routeName,
+            bool proxyOn,
+            IProgress<GithubCloneProgress>? progress,
+            CancellationToken token)
         {
-            string? git = RuntimeProbe.LocateGit(LauncherSettings.Runtime);
+            string label = proxyOn ? $"{routeName} · 走代理" : routeName;
+            string workDir = TempDir.Create("gh-connect");
+            var clock = Stopwatch.StartNew();
 
-            // 选「内置」但内置里没有时，回退系统 git：连通性测试关心的是「这台机器能不能拉」，
-            // 与启动器用哪套运行时无关
-            return git ?? RuntimeProbe.LocateGit();
-        }
+            // 失败时要报的是 git 的那句话，进度行不算错，单独收起来
+            var tail = new Queue<string>();
+            var gate = new object();
+            int lastPercent = -1;
 
-        private static void TryKill(Process process)
-        {
             try
             {
-                process.Kill(entireProcessTree: true);
+                var startInfo = GitCommand.CreateSpeedTestClone(
+                    git,
+                    url,
+                    workDir,
+                    isolateGlobalConfig: true,
+                    useProxy: proxyOn);
+
+                using var process = new Process { StartInfo = startInfo };
+
+                process.ErrorDataReceived += (_, e) =>
+                {
+                    if (e.Data is not { Length: > 0 } line)
+                    {
+                        return;
+                    }
+
+                    if (!GitProgressParser.TryParse(line, out GitProgress parsed))
+                    {
+                        lock (gate)
+                        {
+                            tail.Enqueue(line);
+                            while (tail.Count > 8)
+                            {
+                                tail.Dequeue();
+                            }
+                        }
+
+                        return;
+                    }
+
+                    // 节流：git 每秒能刷十几次，只按整数百分比变化往外发
+                    lock (gate)
+                    {
+                        if (parsed.Percent <= lastPercent)
+                        {
+                            return;
+                        }
+
+                        lastPercent = parsed.Percent;
+                    }
+
+                    progress?.Report(new GithubCloneProgress(
+                        parsed.Percent, parsed.Phase, parsed.Speed, label));
+                };
+
+                // stdout 也读掉：只重定向不读，管道写满会把 git 卡死
+                process.OutputDataReceived += (_, _) => { };
+
+                if (!process.Start())
+                {
+                    return new GithubProbeResult(probe, false, null, "无法启动 git", null, null, label);
+                }
+
+                process.BeginErrorReadLine();
+                process.BeginOutputReadLine();
+
+                while (!process.HasExited)
+                {
+                    if (token.IsCancellationRequested)
+                    {
+                        GitCommand.Kill(process);
+                        return new GithubProbeResult(probe, false, null, "已取消", null, null, label);
+                    }
+
+                    if (clock.Elapsed > CloneTimeout)
+                    {
+                        GitCommand.Kill(process);
+                        return new GithubProbeResult(
+                            probe,
+                            false,
+                            null,
+                            $"超时（{CloneTimeout.TotalSeconds:0} 秒没拉完）",
+                            null,
+                            null,
+                            label);
+                    }
+
+                    Thread.Sleep(50);
+                }
+
+                // 等异步读取把最后几行吐干净，否则错误信息可能只拿到半句
+                process.WaitForExit(2000);
+
+                int latency = Elapsed(clock);
+
+                if (process.ExitCode == 0)
+                {
+                    return new GithubProbeResult(probe, true, latency, null, null, null, label);
+                }
+
+                string detail = LastMeaningful(tail, gate);
+
+                return new GithubProbeResult(
+                    probe,
+                    false,
+                    latency,
+                    detail.Length > 0 ? detail : $"git 退出代码 {process.ExitCode}",
+                    null,
+                    null,
+                    label);
             }
-            catch
+            catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException or InvalidOperationException)
             {
-                // 已经自己退了
+                return new GithubProbeResult(
+                    probe, false, null, GitCommand.FirstLine(ex.Message), null, null, label);
             }
+            finally
+            {
+                TempDir.Delete(workDir);
+            }
+        }
+
+        /// <summary>从 stderr 末尾挑一句能给人看的：跳过空行，去掉 <c>fatal:</c> 前缀。</summary>
+        private static string LastMeaningful(Queue<string> tail, object gate)
+        {
+            string[] lines;
+
+            lock (gate)
+            {
+                lines = tail.ToArray();
+            }
+
+            for (int i = lines.Length - 1; i >= 0; i--)
+            {
+                string line = lines[i].Trim();
+
+                if (line.Length == 0)
+                {
+                    continue;
+                }
+
+                // "fatal: unable to access ..." 前面那截对用户没意义
+                return line.StartsWith("fatal:", StringComparison.OrdinalIgnoreCase)
+                    ? line[6..].Trim()
+                    : line;
+            }
+
+            return string.Empty;
         }
 
         // ==================== 杂项 ====================
@@ -265,7 +515,7 @@ namespace AstraBrew_Launcher.Services
         private static int Elapsed(Stopwatch clock)
         {
             clock.Stop();
-            return (int)Math.Clamp(clock.ElapsedMilliseconds, 1, 99999);
+            return (int)Math.Clamp(clock.ElapsedMilliseconds, 1, 999999);
         }
 
         /// <summary>
@@ -303,20 +553,7 @@ namespace AstraBrew_Launcher.Services
                 return "连接超时";
             }
 
-            return FirstLine(raw);
-        }
-
-        /// <summary>异常信息常常带一长串内层原因，界面上只留第一行。</summary>
-        private static string FirstLine(string? text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                return string.Empty;
-            }
-
-            string value = text.Trim();
-            int breakAt = value.IndexOfAny(new[] { '\r', '\n' });
-            return breakAt > 0 ? value[..breakAt].Trim() : value;
+            return GitCommand.FirstLine(raw);
         }
     }
 }
