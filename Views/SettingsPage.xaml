@@ -1105,16 +1105,18 @@
                     <Border Style="{StaticResource SectionCardStyle}">
                         <StackPanel>
                             <controls:SettingRow
+                                x:Name="LauncherVersionRow"
                                 Description="当前安装的启动器版本，稳定通道。"
                                 Glyph="&#xE7B8;"
                                 Title="AstraBrew Launcher"
                                 WrapAt="0">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <Border Style="{StaticResource MetaChipStyle}">
-                                        <TextBlock x:Name="VersionChipText" Style="{StaticResource MetaChipTextStyle}" Text="v0.1.0" />
+                                        <TextBlock x:Name="VersionChipText" Style="{StaticResource MetaChipTextStyle}" Text="v0.3.0" />
                                     </Border>
-                                    <Border Style="{StaticResource MetaChipStyle}">
-                                        <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="稳定通道" />
+                                    <!--  渠道标记：预览 / 测试 / 开发；正式版写「稳定通道」  -->
+                                    <Border x:Name="VersionChannelChip" Style="{StaticResource MetaChipStyle}">
+                                        <TextBlock x:Name="VersionChannelChipText" Style="{StaticResource MetaChipTextStyle}" Text="稳定通道" />
                                     </Border>
                                 </StackPanel>
                             </controls:SettingRow>

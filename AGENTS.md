@@ -8,6 +8,51 @@
 > 实现集中在 `Services/WindowPlacement.cs`（由 `MainWindow.SetupWindow` 创建）。
 > 新增窗口相关行为请改这里，不要在页面或 MainWindow 里另写一套 DPI / 尺寸计算。
 
+## 构建渠道（Alpha / Beta / Debug / Release）
+
+四条渠道各占一个构建配置，渠道标记**编进程序集**，关于页与设置页据此显示：
+
+| 配置 | 定位 | 关于页标记 | 产物 |
+|---|---|---|---|
+| `Alpha` | 预览版 | 预览版（琥珀） | `bin/x64/Alpha/…/win-x64` |
+| `Beta` | 测试版 | 测试版（紫） | `bin/x64/Beta/…/win-x64` |
+| `Debug` | 开发版 | 开发版（红） | `bin/x64/Debug/…/win-x64` |
+| `Release` | 正式版 | **不显示标记**（胶囊写「稳定通道」） | `bin/x64/Release/…/win-x64` |
+
+```bash
+dotnet build "AstraBrew Launcher.csproj" -c Alpha -p:Platform=x64
+dotnet build "AstraBrew Launcher.csproj" -c Beta  -p:Platform=x64
+dotnet build "AstraBrew Launcher.csproj" -c Debug -p:Platform=x64
+dotnet build "AstraBrew Launcher.csproj" -c Release -p:Platform=x64
+```
+
+- 标记来源是 `Services/BuildChannelInfo.cs`：读 csproj 里
+  `<AssemblyMetadata Include="BuildChannel" Value="Alpha|Beta|Debug" />` 生成的程序集元数据，
+  **没写就是正式版**。不要改用 `#if` / `DefineConstants` —— SDK 的 targets 会后置追加常量，
+  项目体里拼进去的值容易被 `DEBUG;TRACE` 顶掉。
+- 关于页：`HeroBadges` 里的胶囊（正式版中性灰「稳定通道」，其余写「预览版 / 测试版 / 开发版」
+  并换成该渠道的强调色）+「版本与构建 → 更新通道」（预览通道 / 测试通道 / 开发通道 / 稳定通道）。
+  设置页版本行同一套判断（`ApplyBuildChannel`），不要各写一份。
+- **标题栏左上角也有渠道标记**（`MainWindow.ApplyChannelBadge`）：紧跟「AstraBrew Launcher」之后，
+  底色是强调色 0x38 alpha、文字用强调色，10.5 号 SemiBold。**正式版整个 Border 收成
+  `Visibility.Collapsed`**（不是空文字）——折叠的子元素不占位，标题栏不会多出空隙。
+  这一处是给「截图反馈」用的：用户贴一张图就能看出是哪个渠道的构建，不必再翻关于页。
+- 复制版本信息只在非正式版时多写一行「渠道」，正式版拿到反馈时没有这行就代表稳定版。
+- `Debug / Alpha / Beta` 都把 Windows App SDK 做**自包含**（`WindowsAppSDKSelfContained`），
+  本机没有完整运行时也能直接双击跑；`Release` 保持框架依赖，对外发布走 MSIX / 安装包。
+  因此在这台机器上 **Release 的 exe 不能直接双击**（会抛 `REGDB_E_CLASSNOTREG`）——
+  要验证正式版界面，用
+  `dotnet build -c Release -p:WindowsAppSDKSelfContained=true -p:BaseOutputPath=bin/verify/ -t:Rebuild`
+  另建一份自包含产物，验完删掉；不要为了跑一下就把 Release 改成自包含。
+- `.sln` 里同步加了 `Alpha|Beta × x86/x64/ARM64`，VS 的配置下拉能直接选。
+- **版本号只有一个源头**：csproj 的 `<Version>0.3.0</Version>`，AssemblyVersion / FileVersion 全由它派生。
+  关于页、设置页都读 `Assembly.GetName().Version`，XAML 里的 `v0.3.0` 只是设计时占位，
+  改版本时**只改 csproj 一处**，不要在各页面里再写死。
+- 标题栏胶囊的尺寸与实例徽章（`InstanceChip`）**完全一致**：`Padding="8,2,8,3"` + 11.5 号 SemiBold，
+  两枚摆一起高度与基线才齐平（最初用小一号的 10.5 + 1,2 内边距，比旁边矮 4 px，看着一高一低）。
+  关于页主卡那三枚（版本 / 渠道 / 架构）同理，纵向内边距统一取 `1,2`
+  ——版本胶囊原来是 `2,3`，比旁边两枚高 2 px。
+
 ## 按钮圆角
 
 所有按钮圆角统一 8（与卡片同档），不要出现 4 以下的按钮圆角。

@@ -7,6 +7,7 @@ using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.UI;
 
@@ -61,6 +62,7 @@ namespace AstraBrew_Launcher
             // 标题栏的实例徽章是全局状态，切换实例后立刻更新
             TavernInstances.Changed += (_, _) => ApplyInstanceChip();
             ApplyInstanceChip();
+            ApplyChannelBadge();
 
             // 全局消息：页面只管投递「装好了 / 装失败了」，弹出的位置与样式由窗口统一决定
             AppNotify.Raised += OnNotifyRaised;
@@ -306,6 +308,37 @@ namespace AstraBrew_Launcher
             ToolTipService.SetToolTip(
                 InstanceChip,
                 $"当前酒馆实例 · {TavernInstances.Current.KindLabel} {TavernInstances.Current.KernelLabel}　在「版本管理」中切换");        }
+
+        /// <summary>
+        /// 标题栏左上角的渠道标记：预览版 / 测试版 / 开发版。
+        /// **正式版整块收起**（Visibility 而不是空文字），标题栏不该多出一点空位；
+        /// 非正式版常驻显示，用户截个图、报一句 bug，看左上角就知道是哪个渠道的构建，
+        /// 不用再翻到关于页去确认。
+        /// </summary>
+        private void ApplyChannelBadge()
+        {
+            if (ChannelBadge is null || ChannelBadgeText is null)
+            {
+                return;
+            }
+
+            if (BuildChannelInfo.Badge is not { Length: > 0 } badge)
+            {
+                ChannelBadge.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            var (r, g, b) = BuildChannelInfo.Accent;
+
+            ChannelBadgeText.Text = badge;
+            ChannelBadgeText.Foreground = new SolidColorBrush(Color.FromArgb(0xFF, r, g, b));
+            ChannelBadge.Background = new SolidColorBrush(Color.FromArgb(0x38, r, g, b));
+            ChannelBadge.Visibility = Visibility.Visible;
+
+            ToolTipService.SetToolTip(
+                ChannelBadge,
+                $"{badge} · {BuildChannelInfo.Channel} 构建，不是正式版");
+        }
 
         private void SetupWindow()
         {

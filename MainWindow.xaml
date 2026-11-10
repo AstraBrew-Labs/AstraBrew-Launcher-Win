@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Window
     x:Class="AstraBrew_Launcher.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -45,6 +45,24 @@
                     FontWeight="SemiBold"
                     Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                     Text="AstraBrew Launcher" />
+
+                <!--
+                    渠道标记：预览版 / 测试版 / 开发版，正式版整个收起（不留空位）。
+                    放在标题栏而不是只放关于页——非正式版最容易出问题，
+                    用户截一张图、报一句 bug，看左上角就知道是哪个渠道的构建。
+                -->
+                <Border
+                    x:Name="ChannelBadge"
+                    Padding="8,2,8,3"
+                    VerticalAlignment="Center"
+                    CornerRadius="4"
+                    Visibility="Collapsed">
+                    <TextBlock
+                        x:Name="ChannelBadgeText"
+                        FontSize="11.5"
+                        FontWeight="SemiBold" />
+                </Border>
+
                 <Rectangle
                     Width="1"
                     Height="12"

@@ -2,3 +2,5 @@
 2026-11-08 02:58:59.561 front.py[5] <module> -> Find Control Timeout(6s): {Name: 'AstraBrew Launcher', ControlType: WindowControl}
 2026-11-08 03:22:21.146 bubble3.py[13] <module> -> Find Control Timeout(6s): {Name: '重新测试', ControlType: TextControl}
 2026-11-10 15:18:26.186 pill_check.py[36] <module> -> Find Control Timeout(6s): {Name: '开始测试', ControlType: TextControl}
+2026-11-11 00:05:30.613 about_check.py[5] <module> -> Find Control Timeout(6s): {Name: 'AstraBrew Launcher', ControlType: WindowControl}
+2026-11-11 00:10:55.784 about_check.py[5] <module> -> Find Control Timeout(6s): {Name: 'AstraBrew Launcher', ControlType: WindowControl}

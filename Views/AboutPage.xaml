@@ -250,19 +250,26 @@
                                     VerticalAlignment="Top"
                                     Orientation="Horizontal"
                                     Spacing="6">
+                                    <!--
+                                        内边距与 MetaChipStyle（7,1,7,2）在纵向保持一致：
+                                        这里原本是 2,3，比旁边的「渠道 / 架构」胶囊高 2 px，
+                                        三枚摆一排看着就是一高一低。
+                                    -->
                                     <Border
-                                        Padding="9,2,9,3"
+                                        Padding="8,1,8,2"
                                         Background="#1F2B88D8"
                                         CornerRadius="10"
                                         VerticalAlignment="Center">
                                         <TextBlock
+                                            x:Name="HeroVersionChipText"
                                             FontSize="11"
                                             FontWeight="SemiBold"
                                             Foreground="#FF2B88D8"
-                                            Text="v1.0.0" />
+                                            Text="v0.3.0" />
                                     </Border>
-                                    <Border Style="{StaticResource MetaChipStyle}">
-                                        <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="稳定通道" />
+                                    <!--  渠道标记：预览版 / 测试版 / 开发版；正式版是「稳定通道」  -->
+                                    <Border x:Name="ChannelChip" Style="{StaticResource MetaChipStyle}">
+                                        <TextBlock x:Name="ChannelChipText" Style="{StaticResource MetaChipTextStyle}" Text="稳定通道" />
                                     </Border>
                                     <Border Style="{StaticResource MetaChipStyle}">
                                         <TextBlock x:Name="ArchChipText" Style="{StaticResource MetaChipTextStyle}" Text="x64" /></Border>
@@ -349,7 +356,7 @@
                                     x:Name="VersionValue"
                                     Grid.Column="1"
                                     Style="{StaticResource MonoValueStyle}"
-                                    Text="v1.0.0" />
+                                    Text="v0.3.0" />
                                 <Border
                                     Grid.Column="2"
                                     Padding="8,1,8,2"
@@ -388,6 +395,7 @@
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Style="{StaticResource InfoLabelStyle}" Text="更新通道" />
                                 <TextBlock
+                                    x:Name="ChannelValue"
                                     Grid.Column="1"
                                     Style="{StaticResource InfoValueStyle}"
                                     Text="稳定通道" />

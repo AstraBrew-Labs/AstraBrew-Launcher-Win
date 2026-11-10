@@ -7,6 +7,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AstraBrew Launcher", "Astra
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Alpha|ARM64 = Alpha|ARM64
+		Alpha|x64 = Alpha|x64
+		Alpha|x86 = Alpha|x86
+		Beta|ARM64 = Beta|ARM64
+		Beta|x64 = Beta|x64
+		Beta|x86 = Beta|x86
 		Debug|ARM64 = Debug|ARM64
 		Debug|x64 = Debug|x64
 		Debug|x86 = Debug|x86
@@ -15,6 +21,24 @@ Global
 		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Alpha|ARM64.ActiveCfg = Alpha|ARM64
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Alpha|ARM64.Build.0 = Alpha|ARM64
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Alpha|ARM64.Deploy.0 = Alpha|ARM64
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Alpha|x64.ActiveCfg = Alpha|x64
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Alpha|x64.Build.0 = Alpha|x64
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Alpha|x64.Deploy.0 = Alpha|x64
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Alpha|x86.ActiveCfg = Alpha|x86
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Alpha|x86.Build.0 = Alpha|x86
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Alpha|x86.Deploy.0 = Alpha|x86
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Beta|ARM64.ActiveCfg = Beta|ARM64
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Beta|ARM64.Build.0 = Beta|ARM64
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Beta|ARM64.Deploy.0 = Beta|ARM64
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Beta|x64.ActiveCfg = Beta|x64
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Beta|x64.Build.0 = Beta|x64
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Beta|x64.Deploy.0 = Beta|x64
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Beta|x86.ActiveCfg = Beta|x86
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Beta|x86.Build.0 = Beta|x86
+		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Beta|x86.Deploy.0 = Beta|x86
 		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Debug|ARM64.ActiveCfg = Debug|ARM64
 		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Debug|ARM64.Build.0 = Debug|ARM64
 		{888B02D0-1502-48B3-ADCA-19F3B8473AA1}.Debug|ARM64.Deploy.0 = Debug|ARM64

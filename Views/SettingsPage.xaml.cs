@@ -90,6 +90,29 @@ namespace AstraBrew_Launcher.Views
 
             ShowPath(OnboardingPathText, OnboardingState.FilePath);
             VersionChipText.Text = ReadAppVersion();
+            ApplyBuildChannel();
+        }
+
+        /// <summary>
+        /// 版本行上的渠道标记，与关于页同一套判断（<see cref="BuildChannelInfo"/>）：
+        /// 正式版写「稳定通道」、中性配色；预览 / 测试 / 开发版写各自的标记与强调色，
+        /// 这一行的说明也跟着改，免得「预览版」旁边写着「稳定通道」。
+        /// </summary>
+        private void ApplyBuildChannel()
+        {
+            VersionChannelChipText.Text = BuildChannelInfo.Badge ?? "稳定通道";
+            LauncherVersionRow.Description = BuildChannelInfo.Badge is { Length: > 0 }
+                ? $"当前安装的启动器版本，{BuildChannelInfo.Badge}（{BuildChannelInfo.Channel} 构建）。"
+                : "当前安装的启动器版本，稳定通道。";
+
+            if (BuildChannelInfo.Badge is not { Length: > 0 })
+            {
+                return;
+            }
+
+            var (r, g, b) = BuildChannelInfo.Accent;
+            VersionChannelChipText.Foreground = new SolidColorBrush(Color.FromArgb(0xFF, r, g, b));
+            VersionChannelChip.Background = new SolidColorBrush(Color.FromArgb(0x1F, r, g, b));
         }
 
         private bool IsLight => ActualTheme == ElementTheme.Light;
@@ -1486,7 +1509,7 @@ namespace AstraBrew_Launcher.Views
         private static string ReadAppVersion()
         {
             var version = typeof(SettingsPage).Assembly.GetName().Version;
-            return version is null ? "v0.1.0" : $"v{version.Major}.{version.Minor}.{version.Build}";
+            return version is null ? "v0.3.0" : $"v{version.Major}.{version.Minor}.{version.Build}";
         }
 
         // ==================== 弹窗外壳 ====================

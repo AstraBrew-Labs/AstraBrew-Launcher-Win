@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -8,7 +8,9 @@ using System.Threading.Tasks;
 using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.UI;
 
 namespace AstraBrew_Launcher.Views
 {
@@ -33,7 +35,12 @@ namespace AstraBrew_Launcher.Views
         {
             var assembly = Assembly.GetExecutingAssembly();
             var version = assembly.GetName().Version ?? new Version(1, 0, 0);
-            VersionValue.Text = $"v{version.Major}.{version.Minor}.{version.Build}";
+            string versionText = $"v{version.Major}.{version.Minor}.{version.Build}";
+
+            VersionValue.Text = versionText;
+            HeroVersionChipText.Text = versionText;
+
+            ApplyChannel();
 
             // 构建号取 exe 的写入时间，重新构建后自动跟着变
             string exePath = Environment.ProcessPath ?? string.Empty;
@@ -74,6 +81,28 @@ namespace AstraBrew_Launcher.Views
             LogDirValue.Text = _logDir;
         }
 
+        /// <summary>
+        /// 渠道标记。构建配置（Alpha / Beta / Debug）已经编进程序集，这里只负责画：
+        /// · 正式版：胶囊保持 MetaChipStyle 的中性灰，写「稳定通道」，不出现任何「预览 / 测试」字样；
+        /// · 其余三种：胶囊写「预览版 / 测试版 / 开发版」，文字与底色都换成该渠道的强调色。
+        /// 「更新通道」那一行跟着换名字——预览版还写「稳定通道」会自相矛盾。
+        /// </summary>
+        private void ApplyChannel()
+        {
+            ChannelValue.Text = BuildChannelInfo.ChannelName;
+
+            if (BuildChannelInfo.Badge is not { Length: > 0 } badge)
+            {
+                return;
+            }
+
+            ChannelChipText.Text = badge;
+
+            var (r, g, b) = BuildChannelInfo.Accent;
+            ChannelChipText.Foreground = new SolidColorBrush(Color.FromArgb(0xFF, r, g, b));
+            ChannelChip.Background = new SolidColorBrush(Color.FromArgb(0x1F, r, g, b));
+        }
+
         private static string OsName(int build) => build switch
         {
             >= 26100 => "Windows 11 24H2",
@@ -100,6 +129,13 @@ namespace AstraBrew_Launcher.Views
             text.AppendLine("AstraBrew Launcher 星酿启动器");
             text.AppendLine($"版本       {VersionValue.Text}");
             text.AppendLine($"构建       {BuildValue.Text}");
+
+            // 正式版不写这一行：拿到反馈时，没有渠道字样就代表是稳定版
+            if (BuildChannelInfo.Badge is { Length: > 0 })
+            {
+                text.AppendLine($"渠道       {BuildChannelInfo.Describe}");
+            }
+
             text.AppendLine($"酒馆实例   {TavernInstances.Current.DisplayLabel}");
             text.AppendLine($"运行时     {RuntimeValue.Text}");
             text.AppendLine($"操作系统   {OsValue.Text}");

@@ -6,6 +6,14 @@
     <RootNamespace>AstraBrew_Launcher</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x86;x64;ARM64</Platforms>
+    <!--
+      四个发布渠道各占一个构建配置，渠道标记编进程序集（见 Services/BuildChannelInfo.cs）：
+        Alpha   预览版 —— 新功能先上这条线，随时可能坏
+        Beta    测试版 —— 功能定稿、找 bug 的阶段
+        Debug   开发版 —— 本机开发用，带调试符号、不做裁剪
+        Release 正式版 —— 对外发布，关于页不显示任何渠道标记
+    -->
+    <Configurations>Debug;Release;Alpha;Beta</Configurations>
     <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
     <PublishProfile>win-$(Platform).pubxml</PublishProfile>
     <UseWinUI>true</UseWinUI>
@@ -13,6 +21,12 @@
     <Nullable>enable</Nullable>
     <!--  exe / 任务栏 / 窗口图标统一使用 Assets 里的彩色版本  -->
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <!--
+      版本号只有一个源头：这里。AssemblyVersion / FileVersion / InformationalVersion 全部由它派生，
+      关于页与设置页都读程序集版本，不要在任何页面里再写死一个「v0.3.0」。
+      0.3 是第一条对外可用的基线：0.1 / 0.2 阶段都还没走到「能装完酒馆并跑起来」。
+    -->
+    <Version>0.3.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -50,6 +64,18 @@
 
   <ItemGroup>
     <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <!--
+    渠道标记：用 AssemblyMetadata 而不是 #if 常量。
+    DefineConstants 在 SDK 里由 targets 追加，项目体里读到的往往是空值，
+    拼进去的常量可能被后面的 DEBUG;TRACE 覆盖掉——踩过一次就很难查。
+    AssemblyMetadata 由 SDK 生成到 AssemblyInfo，运行时读得到，且不写就等于「正式版」。
+  -->
+  <ItemGroup>
+    <AssemblyMetadata Include="BuildChannel" Value="Alpha" Condition="'$(Configuration)' == 'Alpha'" />
+    <AssemblyMetadata Include="BuildChannel" Value="Beta" Condition="'$(Configuration)' == 'Beta'" />
+    <AssemblyMetadata Include="BuildChannel" Value="Debug" Condition="'$(Configuration)' == 'Debug'" />
   </ItemGroup>
 
   <!--
@@ -91,7 +117,7 @@
     exe 表现为「进程在、无窗口」或双击无反应。自包含后不再依赖系统运行时，
     且 VS 里的 (Unpackaged) 调试与直接双击 exe 都能跑。
   -->
-  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug' Or '$(Configuration)' == 'Alpha' Or '$(Configuration)' == 'Beta'">
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
   </PropertyGroup>
 </Project>
