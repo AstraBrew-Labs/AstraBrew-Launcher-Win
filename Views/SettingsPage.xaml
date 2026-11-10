@@ -806,7 +806,7 @@
                                         Visibility="Collapsed">
                                         <StackPanel Orientation="Horizontal" Spacing="6">
                                             <FontIcon FontSize="12" Glyph="&#xE896;" />
-                                            <TextBlock Text="安装" />
+                                            <TextBlock x:Name="CaddyInstallLabel" Text="安装" />
                                         </StackPanel>
                                     </Button>
                                 </StackPanel>
@@ -839,7 +839,7 @@
                                         Style="{StaticResource RowButtonStyle}">
                                         <StackPanel Orientation="Horizontal" Spacing="6">
                                             <FontIcon FontSize="12" Glyph="&#xE896;" />
-                                            <TextBlock Text="安装" />
+                                            <TextBlock x:Name="Pm2InstallLabel" Text="安装" />
                                         </StackPanel>
                                     </Button>
                                 </StackPanel>

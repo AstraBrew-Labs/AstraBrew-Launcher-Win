@@ -984,9 +984,10 @@ namespace AstraBrew_Launcher.Views
             FetchConfigBtn.IsEnabled = false;
             FetchProgress.Visibility = Visibility.Visible;
             FetchProgress.IsActive = true;
+            // 三条渠道的先后：镜像 → 加速 → 直连，状态文字直接说清从哪开始试
             MaskStatusText.Text = GithubAccel.Enabled
-                ? "正在通过 GitHub 加速下载默认配置，失败会自动回退直连…"
-                : "正在从 GitHub 直连下载默认配置…";
+                ? "正在从 GitCode 镜像下载默认配置，失败会依次回退到加速与直连…"
+                : "正在从 GitCode 镜像下载默认配置，失败会回退到 GitHub 直连…";
 
             try
             {

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,10 +10,14 @@ using System.Threading.Tasks;
 namespace AstraBrew_Launcher.Services
 {
     /// <summary>
-    /// 内置 PM2：它是 npm 包，不是 zip，所以不走 <see cref="ComponentInstaller"/>，
-    /// 而是用内置 Node 的 npm 装到 <c>%AppData%\AstraBrew Launcher\bin\pm2</c>
-    /// （<c>--prefix</c> 指到这里，pm2 就会落在 <c>bin\pm2\node_modules\pm2</c>，
-    /// 与 <see cref="RuntimeProbe"/> 的探测路径一致）。
+    /// PM2：它是 npm 包，不是 zip，所以不走 <see cref="ComponentInstaller"/>，而是用当前运行时的 npm
+    /// **全局安装**到 <c>%AppData%\AstraBrew Launcher\bin\pm2</c>
+    /// （<c>install -g --prefix</c>：包落在 <c>bin\pm2\node_modules\pm2</c>，命令 shim 落在 <c>bin\pm2\pm2.cmd</c>）。
+    ///
+    /// **内置与系统共享同一份**：装的位置只看这个常量，不看用的是哪套 Node.js——
+    /// 内置的 npm 装也好、系统的 npm 装也好，都落到同一个前缀；再加上固定成同一个
+    /// <see cref="HomePath"/>（PM2_HOME），两边的 <c>pm2 ls</c> 看到的就是同一套进程，
+    /// 不会出现「内置启动的进程，切到系统环境就看不见」。
     ///
     /// 属于完整包：没有它酒馆照样能跑，只是关窗就停服、没有后台常驻。
     /// </summary>
@@ -20,12 +25,48 @@ namespace AstraBrew_Launcher.Services
     {
         public const string Version = "6.0.5";
 
-        /// <summary>安装位置；<c>--prefix</c> 指向它。</summary>
+        /// <summary>安装目录（npm 的全局前缀）。两种运行时共用这一份，路径写死、不随运行时变化。</summary>
         public static string InstallRoot { get; } = Path.Combine(AppPaths.RoamingRoot, "bin", "pm2");
 
-        /// <summary>装好没：<c>node_modules\pm2\package.json</c> 在就算数。</summary>
+        /// <summary>npm 生成的全局命令。<c>-g</c> 装完才会有它。</summary>
+        public static string CommandPath { get; } = Path.Combine(InstallRoot, "pm2.cmd");
+
+        /// <summary>
+        /// PM2 的运行数据（daemon、进程表、日志）。固定在这里而不是默认的 <c>%USERPROFILE%\.pm2</c>，
+        /// 两个运行时共用一个——否则会在用户目录里各起一份 daemon。
+        /// </summary>
+        public static string HomePath { get; } = Path.Combine(AppPaths.RoamingRoot, "pm2");
+
+        /// <summary>
+        /// 装好没：包在、且**命令 shim 也在**才算数。
+        /// 只认 package.json 的话，早期「非全局装」留下的目录也会被当成已装，命令却根本不存在。
+        /// </summary>
         public static bool IsInstalled =>
-            File.Exists(Path.Combine(InstallRoot, "node_modules", "pm2", "package.json"));
+            File.Exists(Path.Combine(InstallRoot, "node_modules", "pm2", "package.json"))
+            && File.Exists(CommandPath);
+
+        /// <summary>
+        /// 给要跑 <c>pm2</c> 的子进程注入统一环境：PM2_HOME 指向共享目录、PATH 里能直接找到 pm2 命令。
+        /// 任何地方起 pm2 子进程都应该先过一遍，否则两个运行时各自起 daemon。
+        /// </summary>
+        public static void ApplyEnvironment(ProcessStartInfo startInfo)
+        {
+            startInfo.Environment["PM2_HOME"] = HomePath;
+
+            string path = startInfo.Environment.TryGetValue("PATH", out string? current)
+                && current is { Length: > 0 }
+                    ? current
+                    : Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+
+            bool present = path
+                .Split(Path.PathSeparator)
+                .Any(item => string.Equals(item.Trim().Trim('"'), InstallRoot, StringComparison.OrdinalIgnoreCase));
+
+            if (!present)
+            {
+                startInfo.Environment["PATH"] = InstallRoot + Path.PathSeparator + path;
+            }
+        }
 
         /// <summary>
         /// 用 npm 安装 pm2。进度是「不确定」的（npm 只给百分比不给总量），
@@ -67,6 +108,8 @@ namespace AstraBrew_Launcher.Services
 
                 startInfo.ArgumentList.Add(npmCli);
                 startInfo.ArgumentList.Add("install");
+                // 全局安装：带上 -g 才会在 prefix 根下生成 pm2.cmd，终端里也能直接用
+                startInfo.ArgumentList.Add("--global");
                 startInfo.ArgumentList.Add($"pm2@{Version}");
                 startInfo.ArgumentList.Add("--prefix");
                 startInfo.ArgumentList.Add(InstallRoot);
@@ -85,9 +128,12 @@ namespace AstraBrew_Launcher.Services
                         + Environment.GetEnvironmentVariable("PATH");
                 }
 
+                // 先把共享的 PM2_HOME 建好：两种运行时都读它，早建早统一
+                Directory.CreateDirectory(HomePath);
+
                 progress?.Report(new InstallProgress(
                     InstallStage.Downloading,
-                    "正在通过 npm 安装 PM2…",
+                    "正在全局安装 PM2…",
                     0,
                     0,
                     0,
@@ -164,6 +210,17 @@ namespace AstraBrew_Launcher.Services
                         InstallError.None,
                         $"PM2 {Version} 已就位",
                         null,
+                        log.FilePath);
+                }
+
+                // 包装上了但命令没生成：多半是 npm 的全局前缀没生效，单独说清楚
+                if (process.ExitCode == 0 && !File.Exists(CommandPath))
+                {
+                    return new InstallResult(
+                        false,
+                        InstallError.Verify,
+                        "PM2 装上了，但命令没生成",
+                        $"没找到 {CommandPath}，可能是 npm 忽略了 --prefix。看日志后再试一次。",
                         log.FilePath);
                 }
 

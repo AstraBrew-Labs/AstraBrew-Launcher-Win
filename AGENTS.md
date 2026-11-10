@@ -525,8 +525,13 @@ git config --global --unset url."https://gh-proxy.org/https://github.com/".inste
 此后用户改的都是全局那份，默认位置始终保持一份干净的底稿。
 
 全局不存在且底稿也恢复不出来时，酒馆配置页盖一层遮罩（`ConfigMask`），只能点「获取默认配置」：
-`FetchAsync` 按 `GithubAccel.Targets` 的顺序下载（**开着加速就先加速、失败回退直连**，
-关着就只有直连），取回后先 `ApplyLaunchDefaults` 做开箱优化，写默认位置，再复制成全局配置。
+`FetchAsync` 按 `BuildTargets()` 的顺序下载，**镜像 → 加速 → 直连**：
+- 镜像 = GitCode 上的同一份文件（`GlobalTavernConfig.MirrorUrl`：
+  `https://raw.gitcode.com/GitHub_Trending/si/SillyTavern/raw/release/default/config.yaml`），
+  国内直连、不占 GitHub 额度，所以排第一；它**不套加速前缀**（镜像不是 GitHub 域名）；
+- 镜像取不到时按 `GithubAccel.Targets` 走：开着加速就先加速、失败回退直连，关着就只有直连。
+
+取回后先 `ApplyLaunchDefaults` 做开箱优化，写默认位置，再复制成全局配置。
 优化只有四项，且**逐行改、不整份重写**（注释与其它选项原样保留）：
 `port: 11451`、`listen: true`（允许局域网）、`protocol.ipv6: true`、白名单只留
 `127.0.0.1` 与 `localhost`。只认顶格的 `port:` / `listen:` / `whitelist:`——
@@ -990,30 +995,27 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
   不隔离的话「直连」会被 git 自己改写成加速地址，那一行的绿是错的那条线给的。
 - **进度要报出来**：`GitProgressParser`（`Services/GitProgress.cs`，与测速共用一份正则）解析 stderr 的
   `Receiving objects: 45% …, 1.2 MiB/s`，折算成 0~100 后经 `IProgress<GithubCloneProgress>`
-  交给界面画成环形进度。没有进度时界面只有一个「探测中…」，用户看不出它到底在传东西还是卡死了。
+  交给界面写成文字进度。没有进度时界面只有一个「探测中…」，用户看不出它到底在传东西还是卡死了。
 - **加速开着仍走「加速 → 直连」两条**（与 HTTP 三条同规矩）：中转自己也会 403，只试一条等于白丢一条线路。
   结果带上线路与出口（「24.4 秒 · 加速 · 走代理」），代理开没开一眼可见。
-- 克隆超时 120 秒（真拉 100 MB，60 秒对慢速通道不够），**超时即失败**，`finally` 里删目录
-  （只读文件先归位，删不掉重试 8 次）；开测前 `TempDir.ClearStale("gh-connect", 2 小时)` 收掉上次强关的残留。
-  同时设 `GIT_TERMINAL_PROMPT=0` / `GIT_ASKPASS=echo` / `GIT_LFS_SKIP_SMUDGE=1`，
+- 克隆有**硬超时，超了就是不可用**（不是「通了只是慢」）：
+  - 单条线路 `CloneRouteTimeout = 45 秒`：约 100 MB 要在 45 秒内下完，等于 ≥2.3 MB/s；
+  - 整个探测 `CloneBudget = 90 秒`，加速 → 直连两条线路**共用**这份预算，
+    剩余不足 `MinCloneWindow = 8 秒` 就不再开下一条；
+  - 到点 `GitCommand.Kill` 并返回「超时（45 秒没拉完，通道太慢）」，`MergeAttempts` 照常拼接两条线路的原因。
+  - 为什么必须这么狠：装酒馆下载的就是同一份仓库，测出来「慢慢能拉完」的通道，安装时同样让人等到放弃。
+- `finally` 里删目录（只读文件先归位，删不掉重试 8 次）；开测前 `TempDir.ClearStale("gh-connect", 2 小时)`
+  收掉上次强关的残留。同时设 `GIT_TERMINAL_PROMPT=0` / `GIT_ASKPASS=echo` / `GIT_LFS_SKIP_SMUDGE=1`，
   别让凭据框或 LFS 把测试挂住；代理通过 `-c http.proxy= -c https.proxy=` 传（git 不认 PAC）。
-- **进度用环、网速用对话气泡**：拉取中克隆那一行是「环 + 气泡」——
-  环 24 px（`ProbeStatusCell.RingMeter`：两个 Ellipse + `StrokeDashArray`，弧长按「周长 ÷ 线宽」折算），
-  **紧贴环右侧自动浮出一枚对话气泡写实时网速**（圆角 Border + 朝左小尖角 `Polygon`，
-  底色是 accent 兑 15% 的淡青，文字用 accent），拉取结束气泡与环一起收起，
-  只剩「4.9 秒 · 直连 · 走代理」。
-  - 环与一行文字的**视觉中线**对齐：环容器就是 24 高（等于环径），跟着行的
-    `VerticalAlignment.Center` 走，不额外加内边距——多一层 32 高的容器就会差 1~2 px。
-  - 不用 `ProgressRing`：20~30 px 下只有 2 px 细线，弧短时几乎看不见，determinate 的线宽也改不了。
-  - 不用 `ToolTip` / 悬停套路：**用户要的是「拉取中就自己出现」**，不是鼠标移上去才出现；
-    何况 git 每秒报几次进度，每次改 `ToolTipService` 的内容都会把自动弹出的计时器清零，
-    手动 `ToolTip.IsOpen` 又要自己接 `XamlRoot` / `PlacementTarget`，都不稳。
-  - 气泡装在 `Canvas` 里而不是 `Grid`：Grid 测量子元素时给的是单元格宽度，会被量窄再被圆角裁掉。
-    左边界固定 `38`（环右边缘 32 + 6），只按 `ActualHeight` 重算纵向位置。
-  - 气泡底色不能用卡片色：跟弹窗背景只差几个明度，做成气泡根本看不出来；尖角与胶囊同色且整体不描边，
-    否则接缝处会断一条线。
-  - 状态文字留 `MinWidth=110`：既是拉取中的占位（不留的话整格缩一下、环跟着右移），
-    也是气泡悬浮的那片空间。
+- **克隆的进度是文字，跟引导「从哪下载最快」一模一样**：拉取中那一行右侧写
+  「下载 45% · 10.56 MiB/s」（`ApplyCloneProgress`：阶段 + 百分比 + 网速），
+  测完换成「5.5 秒 · 直连 · 走代理」，失败写 git 的原话。
+  - 曾经做过「环形进度 + 悬浮胶囊」：环是自绘 Ellipse + `StrokeDashArray`，胶囊是 Border + 尖角。
+    视觉上没问题，但胶囊是 `Canvas` 里的绝对定位元素，一旦行右对齐就贴着弹窗边缘，
+    文字稍长就被弹窗裁掉（截图里就剩「下载 8% · 直连 · 走代」）。**回归简单文本**：
+    右对齐的 TextBlock 永远在内容区内，长度再长也只会截断加省略号，不会跑出去。
+  - 想再上图形化进度，先解决「浮层要不要参与布局」：`Canvas` 溢出在 ContentDialog 里会被裁，
+    要么让它占位（撑开行宽），要么换成 `Popup` 并自己算边界。
 - **弹窗里的 Esc 提示要关掉**：`CreateShell` 给 `ContentDialog` 补了 Esc 快捷键，
   默认会在弹窗中间飘一个「Esc」小方块（正好压在进度行旁边，用户以为是自己长出来的）。
   设 `dialog.KeyboardAcceleratorPlacementMode = Hidden`，快捷键仍然生效，提示不再显示。
@@ -1024,7 +1026,7 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
   对用户毫无意义，界面写「TLS 握手失败（域名可能被阻断）」。
 - 「最快」只统计三条 HTTP：克隆要建仓库、要握手，混进去比会失真；克隆单独在汇总里说一句
   （「克隆通道正常（24.4 秒）」），也**不写** `GithubTestResult`。
-- 测试并发跑（`Task.WhenAll`），HTTP 超时 10 秒、克隆 120 秒；串行四条能让人等到关弹窗。
+- 测试并发跑（`Task.WhenAll`），HTTP 超时 10 秒、克隆单线路 45 秒 / 总预算 90 秒；串行四条能让人等到关弹窗。
   克隆本身在线程池里跑（`Task.Run` + 轮询进程状态），不占 UI 线程。
 
 ## 首次引导（4 步）
@@ -1077,6 +1079,15 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
   成功时 `Route` 写进那一行的状态（`568 ms · 直连`），加速开着却回落直连用户看得见。
 - **403 卡片按「谁被限流」给动作**（`RateLimitFix`）：直连 403 → 「开加速再试」；加速 403 → 「关加速再试」；
   两条都 403 → 「再查一次」。加速明明开着却叫用户「开加速」是最招人烦的提示，别写死。
+- **点「开加速再试」要立刻作废旧的那一轮**（`AbortRun` + `BeginRun` + `_runId`）：
+  卡片是在测速开始**之前**弹出来的，用户很可能在四条线正拉仓库时点它。以前 `RunAsync` 只管起、
+  不管停，旧的那一轮拿着旧 token 继续按**旧出口**拉到几十秒后，界面上的进度还在爬，
+  用户看到的就是「点了开启加速，还在没加速的环境里测」。现在的规矩：
+  - 每次 `RunAsync` 都 `BeginRun()`：取消并换掉 `_runCts`、`_runId++`，新 token 从 `_cts` 链接；
+  - 点击瞬间先 `AbortRun()`（同步全局 git 要起子进程，这一两秒里旧轮次还在拉）；
+  - 每个 `await` 之后 `if (runId != _runId) return;`，被取代的那轮不许写界面、不许动 `_busy`；
+  - 测速的 `IProgress` 回调也认轮次（`Progress<T>` 会排队进 UI 线程，旧回调可能后到）；
+  - `StartMirrorsAsync` 开跑前 `ResetMirrorRows()`，把上一轮的「下载 45% · 6 MiB/s」清回「等着」。
 - **测速要真拉仓库**（`GitCommand.CreateSpeedTestClone`）：`--depth 1 --single-branch --progress`，
   四条通道各拉一次完整工作区（约 100 MB）到临时目录，谁先拉完用谁。
   **不能用 `CreateClone`**（那是元数据克隆：`--filter=blob:none --no-checkout`，一两秒就「成功」）——
@@ -1092,15 +1103,30 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
   镜像（Gitee / GitCode）**永远直连**——中转方不认镜像站，套代理只会更慢。
   「不走代理」的克隆要显式 `-c http.proxy= -c https.proxy=` 并清 `HTTP_PROXY` 等环境变量，
   只靠「不给 -c」拦不住 git 从环境里捡代理。
-- **选中即对齐设置**（`ApplyAsync`）：线路是加速的就开加速并同步 `insteadOf`，是直连的就**关掉**加速
-  （否则 git 会把直连地址改写成加速地址，最快等于白测）；线路标着「不走代理」就把代理设为「不使用代理」，
-  标着「走代理」保持现状（PAC / 自定义地址不动）。
+- **选中即对齐设置**（`ApplyAsync`），**但只对 GitHub 线路**：
+  - GitHub 加速线 → 开加速并同步 `insteadOf`；GitHub 直连线 → 关掉加速
+    （否则 git 会把直连地址改写成加速地址，最快等于白测）；标着「不走代理」→ 代理设为「不使用代理」；
+  - **Gitee / GitCode 镜像胜出时只换 `download_channel`，加速与代理一个都不碰**。
+    镜像本来不走 GitHub，而加速开关管的是 Raw / API / 安装包那些直链；
+    以前「镜像更快」顺手把加速关了，用户刚为 Raw 打开的加速转头就被关掉，
+    到第 3 步装工具时又连不上 GitHub（实际踩到过）。
 - 应用被强关时会留下没删干净的克隆目录：`TempDir.ClearStale("mirror-test", 2 小时)` 在每轮开测前收一次。
 - **单位是秒**：`MirrorBenchmark.DescribeElapsed` 把毫秒折成「13.8 秒」；界面不要再出现 `ms`。
   克隆耗时也**不写** `GithubTestResult`（那是 HTTP 延迟，混进去会让设置页显示「最佳 13800 ms」）。
 - **必须隔离 `GIT_CONFIG_GLOBAL`（指向空文件）**：加速开关会往 `~/.gitconfig` 写 `insteadOf`，
   不隔离的话「GitHub 直连」会被 git 自己改写，四条通道实际只剩三条。
 - 继续判据：ping ✔ && dns ✔ && (api ✔ || 已跳过 403) && raw ✔ && 至少一条镜像可用。
+- **设置页的连通性弹窗同理**（`ShowGithubTestAsync` / `ProbeGithubAsync`）：每一轮自带
+  `CancellationTokenSource`，「重新测试」或**出口（加速 / 代理）被改动**都会先取消旧的一轮再重跑，
+  顶部那行「当前出口」一并刷新；被取消的那轮结果不写进界面（`token.IsCancellationRequested` 守卫），
+  `Progress<GithubCloneProgress>` 同样先看 token 再写「下载 45%」。
+- **Raw 不通时也要给出口**：403 走「限流卡片」（`ShowRateLimit`），**非 403 的失败**（TLS 握手失败、
+  域名解析失败、连接重置）走 `ShowBlocked` —— 同一张卡片，文案写实际原因：
+  - 加速没开 → 「GitHub 文件地址连不上：TLS 握手失败（域名可能被阻断）。打开加速换条线路就能继续。」
+    + 按钮「开加速再试」（一键开加速 + 重测）；
+  - 加速已经开着还连不上 → 不再劝「开加速」，改成提示检查代理 + 按钮「再查一次」。
+  以前只有 403 才弹卡片，于是 Raw 那行红着「TLS 握手失败」，用户既不知道该开加速，也没地方点。
+- 卡片出现时**测速照跑**（不 return）：用户能顺便看到哪条镜像快；`_busy` 在测速结束后显式复位。
 
 ### 第 3 步 · 运行环境（`Services/RuntimeSetup.cs`）
 
@@ -1111,11 +1137,58 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
   完整包全齐时保留「重装一遍」入口。
 - 自动选中「能跑的那一侧」并写 `LauncherSettings.Runtime`（全局只有一套运行环境，
   引导里选的和仪表盘显示必须同源）。
+- **切换环境不弹安装窗**：`Side_Checked` 只刷新卡片与按钮。用户可能只是想看看这边缺什么，
+  自动弹窗会像「已经动手装了」，而且默认包会让人误以为只装一项就完事。
+- **安装窗顶部写清「这一包的范围」**：`InstallTaskDialog.ShowAsync(..., note: ...)`。
+  默认选「只装必需」时清单里只有 Node.js（npm 随 Node 一起），不加说明就像漏了
+  Git / Caddy / PM2；`note` 写「这次只装基础包（Node.js + npm）。Git、Caddy、PM2 在下面的「一次装齐」里」。
+  选「一次装齐」时清单会真的列出 Git / Caddy / PM2 三项（已实测）。
 - 内置侧走 `InstallTaskDialog`：`ContentDialog.Closing` 里取消关闭（倒计时阶段与安装结束后放行），
   3 秒倒计时自动开始，行内进度 + 总进度按权重合成，串行安装（PM2 依赖 Node）。
   系统侧**不代装**（要 UAC / msi 交互）：主按钮 `InstallButton` 在系统侧是**禁用态**（`IsEnabled = !_busy && builtin`）+ ToolTip 说明，旁边一颗 `SystemHelpButton`「缺什么？」用 `GhostButtonStyle` 进说明窗；`Side_Checked` 的自动弹窗只对内置侧生效。
   **按钮状态要在 `RefreshAsync` 的 finally 里再算一次**——探测期间 `_busy = true`，那时算出来的永远是禁用，漏了这一步切到内置也一直是灰的（踩过）。
 - 装完必须 `ProbeAsync(force: true)` 重探，卡片版本号只能来自磁盘。
+
+**PM2 的装法与共享**（`Services/Pm2Installer.cs`）：
+
+- npm 包，不走 zip 那套，`npm install -g pm2@6.0.5 --prefix %AppData%\AstraBrew Launcher\bin\pm2`：
+  包落在 `bin\pm2\node_modules\pm2`，命令 shim 落在 `bin\pm2\pm2.cmd`。
+- **内置与系统共用同一份**：安装位置写死成 `InstallRoot`，不看用的是哪套 Node.js；
+  `RuntimeProbe.ProbeSystemAsync` 也把这条路径放进候选，因此切到「系统环境」时 PM2 仍显示同一个版本
+  （以前会显示「未安装」）。
+- **`PM2_HOME` 也统一**：`Pm2Installer.HomePath` = `%AppData%\AstraBrew Launcher\pm2`，
+  任何要跑 pm2 的子进程先过 `Pm2Installer.ApplyEnvironment(startInfo)`（注入 PM2_HOME + 把安装目录塞进 PATH），
+  否则内置、系统各起一份 daemon，`pm2 ls` 看到的是两套进程。
+- `IsInstalled` 要求 **package.json 与 `pm2.cmd` 都在**：早期「非全局装」只有包没有命令，
+  只认 package.json 会把它当成已装、永远不会补 shim。
+- 设置页 PM2 行**常显入口**（`ApplyDependency(..., alwaysInstall: true)`），未装写「安装」、已装写「重装」——
+  从旧的非全局安装升级到全局安装只能靠重装。
+
+**安装弹窗的收尾**（`InstallDialogAsync` / 模拟弹窗 / `InstallTaskDialog` 三处一致）：
+
+- 成功 → **3 秒后自动收起**（`DispatcherQueue.CreateTimer`，一次性）：结论能看清，又不用再点一次「关闭」。
+  失败 / 取消**不自动关**——那时的报错、日志路径比「关得快」重要。
+- 关闭后（`dialog.Closed`）再 `RefreshEnvironmentAsync(force: true)` 探一次：
+  弹窗里那份是安装当口的快照，卡片上的版本号必须以磁盘为准。引导侧由
+  `OnboardingStep3Runtime` 在 `ShowAsync` 之后自己 `RefreshAsync(force: true)`，效果一样。
+- 手动关闭、点「重试」都会先 `autoClose.Stop()`，避免对着已经消失的弹窗再 `Hide()`。
+- **PM2 的安装弹窗没有进度条**：`InstallJob.HasProgress = false` —— npm 只吐日志、不给百分比，
+  挂一条永远停在 0% 的进度条比没有更像卡死。无进度模式下：
+  - 右上角换成 `ProgressRing`（一直转），细进度条与百分比文字都收起；
+  - 标题固定「正在安装 PM2…」不随日志跳，npm 的当前动作写进下面一行小字（`Clip` 截到 110 字）；
+  - 完成 / 失败 / 取消时环停下并收起，也不写「100%」。
+  Git / Node.js / Caddy 仍走真实百分比（`HasProgress` 默认 true）。
+
+**Caddy 的装法**（`Services/CaddyInstaller.cs`）：
+
+- 官方 Release 的 zip，`caddy_{Version}_windows_{arch}.zip`，解压到 `bin\caddy`；
+  版本只写 `Version` 一处，`ReleaseUrl` 由它拼出来。
+- **按系统架构选包**：`BuildArch` 看 `RuntimeInformation.OSArchitecture` 而不是进程架构——
+  启动器可能以 x64 跑在 ARM64 上（系统模拟），那时候照样该装 arm64 的原生 exe。
+  Caddy 只发 windows-amd64 / windows-arm64，没有 x86，所以非 ARM64 一律 amd64。
+- 下载源 `GithubAccel.ExpandSources`：**加速优先、直连兜底**（开关关着就只有直连）；
+  `ComponentInstaller` 逐个源尝试，失败换下一个，全挂了才报错。
+- 设置页同样常显入口（安装 / 重装）：换版本、换架构都靠重装。
 
 ### 第 4 步 · 添加实例（`Services/OnboardingInstances.cs`）
 

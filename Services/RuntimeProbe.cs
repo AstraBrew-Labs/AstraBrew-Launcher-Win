@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -258,6 +258,9 @@ namespace AstraBrew_Launcher.Services
 
             var pm2Candidates = new List<string>
             {
+                // 启动器全局安装的那一份：内置与系统**共用**，系统侧要认它，
+                // 否则切到「系统」运行时时 PM2 会突然显示成没装
+                Path.Combine(Pm2Installer.InstallRoot, "node_modules", "pm2", "package.json"),
                 Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                     "npm", "node_modules", "pm2", "package.json"),
@@ -402,7 +405,7 @@ namespace AstraBrew_Launcher.Services
             }
         }
 
-        /// <summary>Git / Caddy：输出形如 <c>git version 2.55.0.windows.3</c>、<c>v2.10.0 h1:…</c>。</summary>
+        /// <summary>Git / Caddy：输出形如 <c>git version 2.55.0.windows.3</c>、<c>v2.11.9 h1:…</c>。</summary>
         private static string? ParseThreePart(string? raw)
         {
             if (string.IsNullOrWhiteSpace(raw))

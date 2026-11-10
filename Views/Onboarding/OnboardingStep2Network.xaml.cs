@@ -29,6 +29,18 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
         private CancellationTokenSource? _cts;
 
+        /// <summary>
+        /// 本轮检查（含克隆测速）专用的取消源。每次开新一轮都换一个，
+        /// 上一轮连同它正在拉的那几条仓库一起作废。
+        /// </summary>
+        private CancellationTokenSource? _runCts;
+
+        /// <summary>
+        /// 第几轮检查。**只有最新一轮**能改界面和 <see cref="_busy"/>：
+        /// 被取代的那一轮收尾得晚，让它写下去就会把新结果盖回旧环境的数据。
+        /// </summary>
+        private int _runId;
+
         private bool _busy;
 
         private bool _pingOk;
@@ -84,6 +96,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
         public void Leave()
         {
+            _runCts?.Cancel();
             _cts?.Cancel();
             _busy = false;
         }
@@ -108,13 +121,50 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 row.SetState(CheckState.Pending);
             }
 
+            // 上一轮还在拉的话先掐掉：重置了状态却让它继续跑，行里会自己冒出旧进度
+            AbortRun();
+
+            ResetMirrorRows();
+
+            RaiseState();
+        }
+
+        /// <summary>把测速那几行恢复成「等着」，并清掉上一轮留下的颜色与字重。</summary>
+        private void ResetMirrorRows()
+        {
             foreach (TextBlock status in _mirrorRows.Values)
             {
                 status.Text = "等着";
+                status.FontWeight = FontWeights.Normal;
                 status.Foreground = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
             }
+        }
 
-            RaiseState();
+        /// <summary>
+        /// 立刻掐掉正在跑的那一轮，不等新一轮开始。
+        /// 用在「点了开加速、但同步全局 git 还要花一两秒」这种空档里——
+        /// 这一两秒里旧的那一轮仍在按旧出口拉仓库。
+        /// </summary>
+        private void AbortRun()
+        {
+            _runCts?.Cancel();
+            _runId++;
+        }
+
+        /// <summary>
+        /// 开一轮新的检查：**先把上一轮彻底掐掉**。
+        /// 用户点「开加速再试」时，测速区很可能正在拉仓库（每条约 100 MB、几十秒），
+        /// 不掐掉的话它会继续按**旧出口**跑，界面上的进度照样在爬——
+        /// 看起来就像「点了没反应，还在没有加速的环境里测」。
+        /// </summary>
+        private (int RunId, CancellationToken Token) BeginRun()
+        {
+            _runCts?.Cancel();
+            _runCts?.Dispose();
+            _runCts = CancellationTokenSource.CreateLinkedTokenSource(_cts?.Token ?? CancellationToken.None);
+
+            int runId = ++_runId;
+            return (runId, _runCts.Token);
         }
 
         private void RaiseState() => StateChanged?.Invoke(this, EventArgs.Empty);
@@ -153,7 +203,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             if (!_rawOk && !_githubSkipped)
             {
-                reason = "取不到酒馆文件，开加速再试";
+                reason = _blocking ?? "取不到酒馆文件，开加速再试";
                 return false;
             }
 
@@ -170,10 +220,11 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
         private async Task RunAsync()
         {
-            CancellationToken token = _cts?.Token ?? CancellationToken.None;
+            (int runId, CancellationToken token) = BeginRun();
 
             _busy = true;
             _githubSkipped = false;
+            _blocking = null;
             RateLimitCard.Visibility = Visibility.Collapsed;
             SummaryText.Text = string.Empty;
             RaiseState();
@@ -186,6 +237,11 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 }
 
                 NetProbeResult ping = await NetworkProbe.PingAsync(token);
+                if (runId != _runId)
+                {
+                    return;
+                }
+
                 _pingOk = ping.Ok;
                 ApplyProbe(RowPing, ping.Ok, ping.LatencyMs, ping.Error, null);
 
@@ -198,6 +254,11 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 }
 
                 NetProbeResult dns = await NetworkProbe.DnsAsync(token);
+                if (runId != _runId)
+                {
+                    return;
+                }
+
                 _dnsOk = dns.Ok;
                 ApplyProbe(RowDns, dns.Ok, dns.LatencyMs, dns.Error, null);
 
@@ -219,6 +280,12 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 GithubProbeResult api = await apiTask;
                 GithubProbeResult raw = await rawTask;
 
+                // 中途被新一轮取代（用户刚开了加速）：这一轮的数字只属于旧出口，不能落下来
+                if (runId != _runId)
+                {
+                    return;
+                }
+
                 _apiOk = api.Ok;
                 _rawOk = raw.Ok;
 
@@ -235,24 +302,46 @@ namespace AstraBrew_Launcher.Views.Onboarding
                     return;
                 }
 
+                // 非 403 的失败多半是域名被阻断（TLS 握手失败）：这时候最该给的是「开加速」的出口，
+                // 而不是只把那一行标红。测速照跑，用户还能顺便看到哪条镜像快。
+                if (!raw.Ok)
+                {
+                    ShowBlocked(raw);
+                }
+
                 // 测速区在卡片下半屏，不滚过去的话用户只能看到两行在动
                 MirrorHost.StartBringIntoView();
 
-                await StartMirrorsAsync(token);
-            }
-            catch (OperationCanceledException)
-            {
+                await StartMirrorsAsync(token, runId);
+
+                if (runId != _runId)
+                {
+                    return;
+                }
+
                 _busy = false;
                 RaiseState();
             }
-            finally
+            catch (OperationCanceledException)
             {
-                if (!RateLimitCard.Visibility.Equals(Visibility.Visible))
+                if (runId == _runId)
                 {
                     _busy = false;
+                    RaiseState();
                 }
+            }
+            finally
+            {
+                // 被取代的那一轮什么都别碰：_busy 现在归新一轮管
+                if (runId == _runId)
+                {
+                    if (!RateLimitCard.Visibility.Equals(Visibility.Visible))
+                    {
+                        _busy = false;
+                    }
 
-                RaiseState();
+                    RaiseState();
+                }
             }
         }
 
@@ -317,11 +406,46 @@ namespace AstraBrew_Launcher.Views.Onboarding
             SummaryText.Text = "限流时拿不到列表，下载测速还能继续。";
         }
 
+        /// <summary>
+        /// 通道不通（TLS 握手失败 / 连接被重置 / 超时）时的提示。
+        /// 与 403 共用一张卡片：用户要的是「怎么才能通」，不是错误分类；
+        /// 加速已经开着时不再劝他开加速（那是最招人烦的一种提示），改成让他查代理。
+        /// </summary>
+        private void ShowBlocked(GithubProbeResult hit)
+        {
+            string reason = hit.Error is { Length: > 0 } error ? error : "连不上";
+
+            if (GithubAccel.Enabled)
+            {
+                _fix = RateLimitFix.Recheck;
+                _blocking = "GitHub 连不上，检查代理后再试";
+                RateLimitText.Text =
+                    $"GitHub 文件地址连不上：{reason}。加速已经开着，检查一下代理或网络，再点「再查一次」。";
+                FixRouteButton.Content = "再查一次";
+            }
+            else
+            {
+                _fix = RateLimitFix.EnableAccel;
+                _blocking = "GitHub 连不上，开加速再试";
+                RateLimitText.Text =
+                    $"GitHub 文件地址连不上：{reason}。打开加速换条线路就能继续。";
+                FixRouteButton.Content = "开加速再试";
+            }
+
+            RateLimitCard.Visibility = Visibility.Visible;
+            SummaryText.Text = "拿不到酒馆文件，先开加速换条线路。";
+        }
+
         // ==================== 403 分支 ====================
 
         private async void FixRoute_Click(object sender, RoutedEventArgs e)
         {
             FixRouteButton.IsEnabled = false;
+
+            // 先把正在跑的那一轮停掉：同步全局 git 配置要起子进程，
+            // 这一两秒里旧的那一轮还在按旧出口拉仓库，进度也还在跳
+            AbortRun();
+            RateLimitCard.Visibility = Visibility.Collapsed;
 
             try
             {
@@ -353,7 +477,6 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 FixRouteButton.IsEnabled = true;
             }
 
-            RateLimitCard.Visibility = Visibility.Collapsed;
             _ = RunAsync();
         }
 
@@ -364,7 +487,9 @@ namespace AstraBrew_Launcher.Views.Onboarding
             SummaryText.Text = "跳过了 GitHub 检查，版本列表只能用旧的。";
             RaiseState();
 
-            await StartMirrorsAsync(_cts?.Token ?? CancellationToken.None);
+            // 这里也开新一轮：跳过时测速区可能正有一轮在跑，不掐掉会出现两份结果互相覆盖
+            (int runId, CancellationToken token) = BeginRun();
+            await StartMirrorsAsync(token, runId);
         }
 
         // ==================== 镜像测速 ====================
@@ -406,15 +531,38 @@ namespace AstraBrew_Launcher.Views.Onboarding
             }
         }
 
-        private async Task StartMirrorsAsync(CancellationToken token)
+        private async Task StartMirrorsAsync(CancellationToken token, int runId)
         {
             _busy = true;
             RaiseState();
 
-            var progress = new Progress<MirrorTrial>(trial => ApplyTrial(trial, selected: false));
-            var live = new Progress<MirrorProgress>(ApplyProgress);
+            // 先把行清回「等着」：上一轮的字和颜色留着，新的一开始看不出是在重测
+            ResetMirrorRows();
+
+            // 回调会排队进 UI 线程：上一轮被掐掉后仍可能有几条在路上，
+            // 认一下轮次，别让旧进度写到新一轮的行里
+            var progress = new Progress<MirrorTrial>(trial =>
+            {
+                if (runId == _runId)
+                {
+                    ApplyTrial(trial, selected: false);
+                }
+            });
+
+            var live = new Progress<MirrorProgress>(update =>
+            {
+                if (runId == _runId)
+                {
+                    ApplyProgress(update);
+                }
+            });
 
             MirrorBenchmarkResult result = await MirrorBenchmark.RunAsync(progress, live, token);
+
+            if (runId != _runId)
+            {
+                return;
+            }
 
             foreach (MirrorTrial trial in result.Trials)
             {

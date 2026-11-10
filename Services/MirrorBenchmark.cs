@@ -221,15 +221,24 @@ namespace AstraBrew_Launcher.Services
         }
 
         /// <summary>
-        /// 把最快那条写进设置，并让**代理与加速开关跟着线路走**：
-        /// · 胜出的是加速线 → 打开加速并同步全局 <c>insteadOf</c>；是直连线 → 关掉加速
-        ///   （否则 git 仍会把直连地址改写成加速地址，测出来的最快等于白测）；
-        /// · 胜出的线路标着「不走代理」→ 把代理设置改成「不使用代理」；
-        ///   标着「走代理」就保持现状（PAC / 自定义地址都不动）。
+        /// 把最快那条写进设置。
+        ///
+        /// **只有 GitHub 线路才去动加速与代理**：
+        /// · 胜出的是 GitHub 加速线 → 打开加速并同步全局 <c>insteadOf</c>；
+        /// · 胜出的是 GitHub 直连线 → 关掉加速（否则 git 仍会把直连地址改写成加速地址，测出来的最快等于白测）；
+        /// · 胜出的是 Gitee / GitCode 镜像 → **只换下载通道，加速与代理一个都不碰**。
+        ///   镜像本来就不走 GitHub，加速开关管的是 Raw / API / 安装包那些直链；
+        ///   以前「镜像更快」顺手把加速关了，用户刚为了 Raw 打开的加速转头就被关掉，
+        ///   到了下一步（装工具）又连不上 GitHub。
         /// </summary>
         public static async Task ApplyAsync(MirrorTrial best, CancellationToken token)
         {
             LauncherSettings.SetChannel(best.Channel);
+
+            if (best.Channel != DownloadChannel.Github)
+            {
+                return;
+            }
 
             if (LauncherSettings.GithubAcceleration != best.Accelerated)
             {

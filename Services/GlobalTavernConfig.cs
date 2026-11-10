@@ -11,8 +11,9 @@ namespace AstraBrew_Launcher.Services
     /// <summary>一次「获取默认配置」的结果。</summary>
     public sealed record GlobalConfigFetchResult(bool Success, string Path, string? Source, string? Error)
     {
-        /// <summary>这份配置是联网取来的（加速或直连），还是本地底稿直接恢复的。</summary>
-        public bool Downloaded => Source is GithubAccel.AccelName or GithubAccel.DirectName;
+        /// <summary>这份配置是联网取来的（镜像 / 加速 / 直连），还是本地底稿直接恢复的。</summary>
+        public bool Downloaded =>
+            Source is GlobalTavernConfig.MirrorName or GithubAccel.AccelName or GithubAccel.DirectName;
     }
 
     /// <summary>
@@ -34,6 +35,16 @@ namespace AstraBrew_Launcher.Services
         /// <summary>官方默认配置（release 分支）。</summary>
         public const string SourceUrl =
             "https://raw.githubusercontent.com/SillyTavern/SillyTavern/refs/heads/release/default/config.yaml";
+
+        /// <summary>
+        /// GitCode 上的同一份文件（GitHub_Trending 镜像仓）。国内直连、不占 GitHub 的额度，
+        /// 所以排在加速与直连前面**先试**；镜像没同步到 / 挂了再往回落。
+        /// </summary>
+        public const string MirrorUrl =
+            "https://raw.gitcode.com/GitHub_Trending/si/SillyTavern/raw/release/default/config.yaml";
+
+        /// <summary>镜像渠道在界面上显示的名字。</summary>
+        public const string MirrorName = "GitCode 镜像";
 
         /// <summary>全局配置：唯一生效、唯一被修改 / 覆盖 / 删除的那份。</summary>
         public static string GlobalPath { get; } =
@@ -87,14 +98,16 @@ namespace AstraBrew_Launcher.Services
 
         /// <summary>
         /// 下载默认配置 → 优化 → 写默认位置 → 复制成全局配置。
-        /// 下载顺序由 <see cref="GithubAccel.Targets"/> 决定：开着加速就先加速、失败回退直连，
-        /// 关着加速就只有直连，与设置页那个开关联动。
+        ///
+        /// 顺序是**镜像 → 加速 → 直连**：GitCode 镜像国内直连、不受 GitHub 限流影响，先用它；
+        /// 镜像取不到时按 <see cref="GithubAccel.Targets"/> 走（开着加速就先加速再回退直连，
+        /// 关着加速就只有直连）。三条都失败才报错，错误信息里按顺序列出每条渠道的原因。
         /// </summary>
         public static async Task<GlobalConfigFetchResult> FetchAsync(CancellationToken token)
         {
             var errors = new List<string>();
 
-            foreach (SourceTarget target in GithubAccel.Targets(SourceUrl))
+            foreach (SourceTarget target in BuildTargets())
             {
                 try
                 {
@@ -114,12 +127,27 @@ namespace AstraBrew_Launcher.Services
                     or UnauthorizedAccessException
                     or TaskCanceledException)
                 {
-                    // 加速挂了还有直连，直连挂了就把两个原因一起告诉用户
+                    // 一条渠道挂了还有下一条；都挂了就把每条的原因按顺序一起告诉用户
                     errors.Add($"{target.Name}：{ex.Message}");
                 }
             }
 
             return new GlobalConfigFetchResult(false, GlobalPath, null, string.Join("；", errors));
+        }
+
+        /// <summary>
+        /// 三条渠道的尝试顺序：镜像 → （加速 →）直连。
+        /// 镜像放在最前面是刻意的：它不经过 GitHub，也不该被加速前缀套一层。
+        /// </summary>
+        private static IReadOnlyList<SourceTarget> BuildTargets()
+        {
+            var targets = new List<SourceTarget>
+            {
+                new(MirrorName, MirrorUrl),
+            };
+
+            targets.AddRange(GithubAccel.Targets(SourceUrl));
+            return targets;
         }
 
         /// <summary>

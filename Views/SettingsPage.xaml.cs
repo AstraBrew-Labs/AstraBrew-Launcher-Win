@@ -19,9 +19,6 @@ using Windows.Storage.Pickers;
 using Windows.UI;
 using WinRT.Interop;
 
-// 只取这两个形状：整包引 Shapes 会和 System.IO.Path 撞名（本文件里到处在用 Path.Combine）
-using Ellipse = Microsoft.UI.Xaml.Shapes.Ellipse;
-using Polygon = Microsoft.UI.Xaml.Shapes.Polygon;
 
 namespace AstraBrew_Launcher.Views
 {
@@ -504,11 +501,30 @@ namespace AstraBrew_Launcher.Views
                 probed,
                 !isSystem,
                 RuntimeProbe.IsNodeOutdated(env?.Node));
-            ApplyDependency(CaddyVersionText, CaddyInstallButton, null, env?.Caddy, probed, !isSystem);
+            ApplyDependency(
+                CaddyVersionText,
+                CaddyInstallButton,
+                null,
+                env?.Caddy,
+                probed,
+                !isSystem,
+                alwaysInstall: true);
+
+            // 已装也能重装：换版本 / 换架构（比如换了机器）都靠这一步
+            CaddyInstallLabel.Text = env?.Caddy is null ? "安装" : "重装";
 
             // 系统环境里不提供安装入口；内置环境里 PM2 还要等 Node.js 先就位
             var pm2Blocked = probed && env!.Node is null;
-            ApplyDependency(Pm2VersionText, Pm2InstallButton, null, env?.Pm2, probed, !isSystem && !pm2Blocked);
+            ApplyDependency(
+                Pm2VersionText,
+                Pm2InstallButton,
+                null,
+                env?.Pm2,
+                probed,
+                !isSystem && !pm2Blocked,
+                alwaysInstall: true);
+
+            Pm2InstallLabel.Text = env?.Pm2 is null ? "安装" : "重装";
             Pm2NoteText.Visibility = pm2Blocked && !isSystem ? Visibility.Visible : Visibility.Collapsed;
 
             ApplyDependency(WebView2VersionText, WebView2InstallButton, null, env?.WebView2, probed, !isSystem);
@@ -617,7 +633,8 @@ namespace AstraBrew_Launcher.Views
             string? version,
             bool probed,
             bool canInstall,
-            bool outdated = false)
+            bool outdated = false,
+            bool alwaysInstall = false)
         {
             if (!probed)
             {
@@ -636,7 +653,10 @@ namespace AstraBrew_Launcher.Views
             versionText.Text = version ?? "未安装";
             versionText.Foreground = version is null ? Tertiary() : Primary();
 
-            installButton.Visibility = version is null && canInstall ? Visibility.Visible : Visibility.Collapsed;
+            // alwaysInstall：装好了也给一个入口（PM2 要从「非全局装」升级成全局装，只能靠重装）
+            installButton.Visibility = (version is null || alwaysInstall) && canInstall
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
             if (outdatedPill is not null)
             {
@@ -1227,7 +1247,7 @@ namespace AstraBrew_Launcher.Views
             await InstallNodeAsync();
 
         private async void InstallCaddy_Click(object sender, RoutedEventArgs e) =>
-            await InstallAsync("Caddy", "v2.10.0", "Caddy");
+            await InstallCaddyAsync();
 
         private async void InstallPm2_Click(object sender, RoutedEventArgs e) =>
             await InstallAsync("PM2", "6.0.5", "Pm2");
@@ -1596,331 +1616,37 @@ namespace AstraBrew_Launcher.Views
             return row;
         }
 
-        /// <summary>
-        /// 连通性测试一行右侧的「状态格」：普通行只有文字，克隆行多一个**环形进度**。
-        ///
-        /// 为什么给克隆配环：它是四项里唯一要真拉约 100 MB、跑几十秒的一项。
-        /// 之前把百分比和网速拼成「下载 45% · 1.2 MB/s」一串字，数字一变整行就抖一下，
-        /// 而且看不出「45% 是不是还在涨」——环的弧长是连续变化的，一眼就知道它在传，还是卡住了。
-        ///
-        /// 环用 <see cref="UIElement.Opacity"/> 收放而不是 <see cref="UIElement.Visibility"/>：
-        /// 折叠起来会让右边的文字左右跳，恢复时又跳回去。
-        /// </summary>
-        private sealed class ProbeStatusCell
+        private TextBlock CreateStatus(string text) => new()
         {
-            private readonly FrameworkElement? _bubble;
-
-            private readonly TextBlock? _bubbleText;
-
-            private bool _hasProgress;
-
-            private ProbeStatusCell(
-                TextBlock text,
-                RingMeter? ring,
-                FrameworkElement element,
-                FrameworkElement? bubble,
-                TextBlock? bubbleText)
-            {
-                Text = text;
-                Ring = ring;
-                Element = element;
-                _bubble = bubble;
-                _bubbleText = bubbleText;
-            }
-
-            public TextBlock Text { get; }
-
-            private RingMeter? Ring { get; }
-
-            /// <summary>塞进行里的那个元素：没有环时就是文字本身。</summary>
-            public FrameworkElement Element { get; }
-
-            public static ProbeStatusCell Create(
-                string initial,
-                Brush textBrush,
-                Brush accent,
-                Brush track,
-                bool withRing)
-            {
-                var text = new TextBlock
-                {
-                    Text = initial,
-                    FontSize = 13,
-                    FontWeight = FontWeights.SemiBold,
-                    VerticalAlignment = VerticalAlignment.Center,
-
-                    // 固定占位：拉取中文字会被清空，不留宽度整格就会缩一下、环跟着右移；
-                    // 这段宽度同时是气泡胶囊的位置——气泡浮在它上面，不需要再挤空间
-                    MinWidth = 110,
-                    // 失败原因可能很长（Git 的原始报错），截断但保留完整内容在提示里
-                    MaxWidth = 260,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    Foreground = textBrush,
-                };
-
-                if (!withRing)
-                {
-                    return new ProbeStatusCell(text, null, text, null, null);
-                }
-
-                var ring = new RingMeter(accent, track);
-
-                // 气泡：拉取中自动浮在环的右侧，做成「对话气泡」——左边一个小尖角指着环。
-                // 不挡命中（IsHitTestVisible=false）：它只是读数，不是可点的东西。
-                //
-                // 底色用 accent 兑淡（15%）：卡片色跟弹窗背景只差几个明度，做成气泡根本看不出来；
-                // 兑一点环的颜色，既看得见框，也和进度条是一套。
-                Color accentColor = (accent as SolidColorBrush)?.Color ?? Color.FromArgb(0xFF, 0x0E, 0x9A, 0xA7);
-                Brush bubbleFill = new SolidColorBrush(
-                    Color.FromArgb(0x26, accentColor.R, accentColor.G, accentColor.B));
-
-                var bubbleText = new TextBlock
-                {
-                    FontSize = 11,
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = accent,
-                    TextWrapping = TextWrapping.NoWrap,
-                    MaxWidth = 200,
-                };
-
-                // 尖角与胶囊同色、无缝拼在一起：Border 加描边的话这一小块就对不上，
-                // 所以整枚气泡都不描边，靠底色区分。
-                var tail = new Polygon
-                {
-                    Fill = bubbleFill,
-                    Points =
-                    {
-                        new Windows.Foundation.Point(8, 0),
-                        new Windows.Foundation.Point(0, 7),
-                        new Windows.Foundation.Point(8, 14),
-                    },
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(0, 0, -1, 0),
-                };
-
-                var bubble = new Border
-                {
-                    Background = bubbleFill,
-                    // 圆角给足 = 胶囊形；高度由字号与内边距定，约 20 px
-                    CornerRadius = new CornerRadius(10),
-                    Padding = new Thickness(10, 2, 10, 2),
-
-                    // 给一个下限：网速那串字（18.99 MiB/s）不能被量窄了裁掉尾巴
-                    MinWidth = 74,
-                    Child = bubbleText,
-                };
-
-                var bubbleBox = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Visibility = Visibility.Collapsed,
-                    IsHitTestVisible = false,
-                };
-
-                bubbleBox.Children.Add(tail);
-                bubbleBox.Children.Add(bubble);
-
-                // 环占 40 宽、24 高（正好一行文字的视觉中线），气泡浮在它右侧的空白上。
-                // 用 Canvas 而不是 Grid：Grid 测量子元素时给的是单元格宽度，胶囊会被量窄再被圆角裁掉。
-                var ringHost = new Canvas
-                {
-                    Width = 40,
-                    Height = 24,
-                };
-
-                Canvas.SetLeft(ring, 8);
-                Canvas.SetTop(ring, 0);
-                ringHost.Children.Add(ring);
-                ringHost.Children.Add(bubbleBox);
-
-                var host = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 8,
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-
-                host.Children.Add(ringHost);
-                host.Children.Add(text);
-
-                var cell = new ProbeStatusCell(text, ring, host, bubbleBox, bubbleText);
-
-                // 高度要等排完版才知道，所以每次尺寸变化都重新摆一次
-                bubbleBox.SizeChanged += (_, _) => cell.PlaceBubble();
-
-                return cell;
-            }
-
-            /// <summary>
-            /// 拉取中：环转着走，右边文字清空，**网速自动浮现在环的左边（胶囊）**。
-            /// 常驻一个每秒跳三次的数字会把这一行变成跑马灯；放进胶囊后它只占环旁边那一点，
-            /// 也不影响行内排版，测完跟着环一起收掉。
-            /// </summary>
-            public void ShowProgress(int percent, string phase, string? speed, string route)
-            {
-                Ring?.SetPercent(percent);
-
-                Text.FontWeight = FontWeights.Normal;
-                Text.Text = string.Empty;
-
-                _hasProgress = true;
-
-                if (_bubbleText is not null)
-                {
-                    // 只报网速：进度看弧就够了，两样挤在一起又会把标签撑宽、换行
-                    _bubbleText.Text = speed is { Length: > 0 } value
-                        ? value
-                        : $"{phase} {percent}% · {route}";
-                }
-
-                SyncBubble();
-                PlaceBubble();
-            }
-
-            /// <summary>
-            /// 把气泡摆在环的右侧、与环垂直居中。环在 Canvas 里居左 8、直径 24（右边缘 x = 32），
-            /// 气泡的左边缘从 38 起，尖角正好指着环。
-            /// 高度随字号/内容变，所以每次尺寸变化都重算一次纵向位置。
-            /// </summary>
-            private void PlaceBubble()
-            {
-                if (_bubble is null)
-                {
-                    return;
-                }
-
-                double height = _bubble.ActualHeight > 1 ? _bubble.ActualHeight : 20;
-
-                Canvas.SetLeft(_bubble, 38);
-                Canvas.SetTop(_bubble, 12 - height / 2);
-            }
-
-            /// <summary>测完（成功 / 失败 / 跳过 / 取消）：环收起来，只留结论文字。</summary>
-            public void HideProgress()
-            {
-                Ring?.Clear();
-
-                Text.FontWeight = FontWeights.SemiBold;
-
-                _hasProgress = false;
-                SyncBubble();
-            }
-
-            /// <summary>拉取中一直显示，测完（<see cref="HideProgress"/>）收起。</summary>
-            private void SyncBubble()
-            {
-                if (_bubble is not null)
-                {
-                    _bubble.Visibility = _hasProgress ? Visibility.Visible : Visibility.Collapsed;
-                }
-            }
-        }
-
-        /// <summary>取主题画刷，缺键时退回三级文字色——不为一个颜色键把弹窗崩掉。</summary>
-        private static Brush CardBrush(string key) =>
-            Application.Current.Resources.TryGetValue(key, out object value) && value is Brush brush
-                ? brush
-                : (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
-
-        /// <summary>主文字色，供悬浮标签用。</summary>
-        private static Brush PrimaryBrush() => (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
-
-        /// <summary>
-        /// 环形进度：底下一圈轨道，上面一段弧，弧长就是进度。
-        ///
-        /// 没用 <see cref="ProgressRing"/>：它在 20~30 px 的尺寸下只有 2 px 细线，弧短的时候
-        /// 几乎看不见，而且 determinate 模式的线宽改不了——想画得清楚只能放大到抢戏。
-        /// 这里两个 Ellipse + <see cref="Shape.StrokeDashArray"/>，粗细、尺寸、颜色都定死：
-        /// dash 的单位是线宽的倍数，所以弧长按「周长 ÷ 线宽」折算，进度就是实实在在的弧。
-        /// </summary>
-        private sealed class RingMeter : Grid
-        {
-            private const double Size = 24;
-            private const double Thickness = 3;
-
-            private readonly Ellipse _track;
-            private readonly Ellipse _arc;
-
-            public RingMeter(Brush accent, Brush track)
-            {
-                Width = Size;
-                Height = Size;
-                VerticalAlignment = VerticalAlignment.Center;
-
-                // 轨道也归 Clear 管：只藏弧的话，测完会留一个空的灰圈，
-                // 看着像「还没开始」或「进度丢了」。宽度一直占着，文字才不会左右跳。
-                _track = new Ellipse
-                {
-                    Width = Size,
-                    Height = Size,
-                    Stroke = track,
-                    StrokeThickness = Thickness,
-                    Opacity = 0,
-                };
-
-                Children.Add(_track);
-
-                _arc = new Ellipse
-                {
-                    Width = Size,
-                    Height = Size,
-                    Stroke = accent,
-                    StrokeThickness = Thickness,
-                    StrokeStartLineCap = PenLineCap.Round,
-                    StrokeEndLineCap = PenLineCap.Round,
-                    Opacity = 0,
-
-                    // 虚线默认从 3 点方向起画，转 -90° 让弧从 12 点开始顺时针长
-                    RenderTransform = new RotateTransform
-                    {
-                        Angle = -90,
-                        CenterX = Size / 2,
-                        CenterY = Size / 2,
-                    },
-                };
-
-                Children.Add(_arc);
-            }
-
-            public void SetPercent(double percent)
-            {
-                double radius = (Size - Thickness) / 2;
-                double units = 2 * Math.PI * radius / Thickness;
-
-                // 圆帽会让两端各多出半个线宽，先减掉这一截，弧长才和百分比对得上
-                double dash = Math.Max(units * Math.Clamp(percent, 0, 100) / 100.0 - 1, 0.001);
-
-                _arc.StrokeDashArray = new DoubleCollection { dash, Math.Max(units - dash, 0.001) };
-                _track.Opacity = 1;
-                _arc.Opacity = 1;
-            }
-
-            public void Clear()
-            {
-                _track.Opacity = 0;
-                _arc.Opacity = 0;
-            }
-        }
-
-        /// <summary>
-        /// 环的底色。用主题自带的描边色：深色下是低透明度白、浅色下是低透明度黑，
-        /// 两种主题里都不抢眼。资源找不到时退回三级文字色，至少不会因为缺一个键就崩。
-        /// </summary>
-        private static Brush RingTrackBrush() =>
-            Application.Current.Resources.TryGetValue("ControlStrokeColorDefaultBrush", out object brush)
-                && brush is Brush stroke
-                ? stroke
-                : (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
+            Text = text,
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+            MaxWidth = 260,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Foreground = Secondary(),
+        };
 
         // ==================== 安装任务弹窗 ====================
 
         private async Task InstallAsync(string name, string version, string field)
         {
-            // Git 已经接了真实安装链路（镜像 → 直连 → 日志落盘），不再走下面的模拟弹窗
+            // 这三个已经接了真实安装链路（镜像 → 直连 / npm → 日志落盘），不再走下面的模拟弹窗
             if (field == "Git")
             {
                 await InstallGitAsync();
+                return;
+            }
+
+            if (field == "Caddy")
+            {
+                await InstallCaddyAsync();
+                return;
+            }
+
+            if (field == "Pm2")
+            {
+                await InstallPm2Async();
                 return;
             }
 
@@ -1990,6 +1716,16 @@ namespace AstraBrew_Launcher.Views
                 "写入版本标记，注册到 PATH 前置目录",
             };
 
+            // 装完三秒自动收起，和真实安装弹窗保持同一套节奏
+            var autoClose = DispatcherQueue.CreateTimer();
+            autoClose.Interval = TimeSpan.FromSeconds(3);
+            autoClose.IsRepeating = false;
+            autoClose.Tick += (_, _) =>
+            {
+                autoClose.Stop();
+                dialog.Hide();
+            };
+
             dialog.Opened += async (_, _) =>
             {
                 for (var i = 0; i < steps.Length; i++)
@@ -2037,6 +1773,16 @@ namespace AstraBrew_Launcher.Views
                 logText.Text = string.Join(Environment.NewLine, lines);
                 logScroll.ChangeView(null, logScroll.ScrollableHeight, null);
                 close.Content = "完成";
+
+                autoClose.Stop();
+                autoClose.Start();
+            };
+
+            // 关掉之后再探一次，卡片上的版本号以磁盘为准
+            dialog.Closed += async (_, _) =>
+            {
+                autoClose.Stop();
+                await RefreshEnvironmentAsync(force: true);
             };
 
             await dialog.ShowAsync();
@@ -2046,24 +1792,67 @@ namespace AstraBrew_Launcher.Views
 
         private Task InstallGitAsync() => InstallComponentAsync(MingitInstaller.Spec, "\uE896");
 
+        /// <summary>Caddy：官方 Release 的 zip，按系统架构选 amd64 / arm64，加速优先、直连兜底。</summary>
+        private Task InstallCaddyAsync() => InstallComponentAsync(CaddyInstaller.Spec, "\uE774");
+
         private Task InstallNodeAsync() => InstallComponentAsync(NodejsInstaller.Spec, "\uE943");
 
         /// <summary>
-        /// 内置环境的真实安装弹窗：下载（镜像优先、直连兜底）→ 解压 → 换成正式目录。
-        /// Git / Node.js 共用这一套，组件之间的差异全部在 <see cref="InstallSpec"/> 里。
+        /// 内置环境里「要跑一段真实安装」的组件：zip 类的 Git / Node.js、npm 类的 PM2 全走这一条。
+        /// 弹窗只负责画进度、把结果翻成人话，怎么装由 <see cref="InstallJob.Run"/> 决定。
+        /// </summary>
+        private Task InstallComponentAsync(InstallSpec spec, string glyph) =>
+            InstallDialogAsync(new InstallJob(
+                spec.DisplayName,
+                $"{spec.VersionLabel} · 镜像优先，失败回退直连",
+                glyph,
+                spec.ProbeKey,
+                (progress, token) => ComponentInstaller.InstallAsync(spec, progress, token),
+                detected => spec.SuccessDetail(detected)));
+
+        /// <summary>
+        /// PM2：npm 包，没有 zip 可解，走 `npm install -g --prefix &lt;共享目录&gt;`。
+        /// 装完命令落在 <see cref="Pm2Installer.CommandPath"/>，内置与系统两个运行时共用这一份。
+        /// </summary>
+        private Task InstallPm2Async() =>
+            InstallDialogAsync(new InstallJob(
+                "PM2",
+                $"v{Pm2Installer.Version} · 全局安装，内置与系统共用一份",
+                "\uE950",
+                "Pm2",
+                (progress, token) => Pm2Installer.InstallAsync(progress, token),
+                detected => $"PM2 {detected} 已就位 · 命令 {Pm2Installer.CommandPath}",
+                HasProgress: false));
+
+        /// <summary>真实安装弹窗里要用到的全部信息。</summary>
+        /// <param name="HasProgress">
+        /// 安装过程会不会报真实百分比。npm 这类只吐日志的传 false：
+        /// 界面上就是一个转着的环，不摆一条永远停在 0% 的进度条。
+        /// </param>
+        private sealed record InstallJob(
+            string DisplayName,
+            string VersionLabel,
+            string Glyph,
+            string ProbeKey,
+            Func<IProgress<InstallProgress>, CancellationToken, Task<InstallResult>> Run,
+            Func<string, string> SuccessDetail,
+            bool HasProgress = true);
+
+        /// <summary>
+        /// 真实安装弹窗：跑 <see cref="InstallJob.Run"/>，把它报的进度画出来、把结果翻成一句能操作的话。
         ///
         /// 界面只做两件事：把 <see cref="InstallProgress"/> 画成进度，把 <see cref="InstallResult"/>
         /// 翻成一句能操作的话。换源细节、HTTP 状态、异常堆栈全部进日志文件——
         /// 弹窗里糊三百行日志，用户看不懂，反馈时也没法整段贴出来。
         /// </summary>
-        private async Task InstallComponentAsync(InstallSpec spec, string glyph)
+        private async Task InstallDialogAsync(InstallJob job)
         {
             var accent = Color.FromArgb(0xFF, 0x2B, 0x88, 0xD8);
             var (dialog, body, footer) = CreateShell(
-                glyph,
+                job.Glyph,
                 accent,
-                $"安装 {spec.DisplayName}",
-                $"{spec.VersionLabel} · 镜像优先，失败回退直连",
+                $"安装 {job.DisplayName}",
+                job.VersionLabel,
                 580);
 
             var phaseText = new TextBlock
@@ -2083,14 +1872,34 @@ namespace AstraBrew_Launcher.Views
                 Foreground = Secondary(),
             };
 
+            // 没有真实百分比时用这个环代替「进度条 + 0%」：npm 只吐日志，
+            // 一条永远停在 0% 的进度条比没有更让人以为卡住了
+            var ring = new ProgressRing
+            {
+                Width = 20,
+                Height = 20,
+                IsActive = false,
+                VerticalAlignment = VerticalAlignment.Center,
+                Visibility = job.HasProgress ? Visibility.Collapsed : Visibility.Visible,
+            };
+
             var progressHead = new Grid { ColumnSpacing = 12 };
             progressHead.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             progressHead.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             progressHead.Children.Add(phaseText);
             Grid.SetColumn(percentText, 1);
             progressHead.Children.Add(percentText);
+            Grid.SetColumn(ring, 1);
+            progressHead.Children.Add(ring);
 
-            var bar = new ProgressBar { Minimum = 0, Maximum = 100, Height = 4, Value = 0 };
+            var bar = new ProgressBar
+            {
+                Minimum = 0,
+                Maximum = 100,
+                Height = 4,
+                Value = 0,
+                Visibility = job.HasProgress ? Visibility.Visible : Visibility.Collapsed,
+            };
 
             var detailText = new TextBlock
             {
@@ -2146,6 +1955,22 @@ namespace AstraBrew_Launcher.Views
             string? lastMessage = null;
             string? logPath = null;
 
+            // 装完停三秒自动收起：结论能看清，又不用再点一次「关闭」
+            var autoClose = DispatcherQueue.CreateTimer();
+            autoClose.Interval = TimeSpan.FromSeconds(3);
+            autoClose.IsRepeating = false;
+            autoClose.Tick += (_, _) =>
+            {
+                autoClose.Stop();
+                if (!closed)
+                {
+                    dialog.Hide();
+                }
+            };
+
+            static string Clip(string value, int max) =>
+                value.Length <= max ? value : value[..max] + "…";
+
             void Append(string text)
             {
                 if (lines.Count > 0 && lines[^1].Contains(text, StringComparison.Ordinal))
@@ -2170,31 +1995,41 @@ namespace AstraBrew_Launcher.Views
                     return;
                 }
 
-                phaseText.Text = p.Message;
                 phaseText.Foreground = Primary();
-                bar.Value = p.Percent;
-                percentText.Text = $"{p.Percent:0}%";
 
-                switch (p.Stage)
+                if (job.HasProgress)
                 {
-                    case InstallStage.Downloading:
-                        // 服务器没给 Content-Length 时不假装知道进度，改成滚动条
-                        bar.IsIndeterminate = p.Total <= 0;
-                        detailText.Text = DescribeDownload(p);
-                        break;
-                    case InstallStage.Extracting:
-                        bar.IsIndeterminate = false;
-                        detailText.Text = "解压到内置环境…";
-                        break;
-                    case InstallStage.Done:
-                        bar.IsIndeterminate = false;
-                        bar.Value = 100;
-                        percentText.Text = "100%";
-                        detailText.Text = $"正在重新检测 {spec.DisplayName}…";
-                        break;
-                    default:
-                        bar.IsIndeterminate = false;
-                        break;
+                    phaseText.Text = p.Message;
+                    bar.Value = p.Percent;
+                    percentText.Text = $"{p.Percent:0}%";
+
+                    switch (p.Stage)
+                    {
+                        case InstallStage.Downloading:
+                            // 服务器没给 Content-Length 时不假装知道进度，改成滚动条
+                            bar.IsIndeterminate = p.Total <= 0;
+                            detailText.Text = DescribeDownload(p);
+                            break;
+                        case InstallStage.Extracting:
+                            bar.IsIndeterminate = false;
+                            detailText.Text = "解压到内置环境…";
+                            break;
+                        case InstallStage.Done:
+                            bar.IsIndeterminate = false;
+                            bar.Value = 100;
+                            percentText.Text = "100%";
+                            detailText.Text = $"正在重新检测 {job.DisplayName}…";
+                            break;
+                        default:
+                            bar.IsIndeterminate = false;
+                            break;
+                    }
+                }
+                else
+                {
+                    // 无进度：标题固定不晃，包管理器的输出挪到下面一行小字
+                    ring.IsActive = true;
+                    detailText.Text = Clip(p.Message, 110);
                 }
 
                 if (!string.Equals(p.Message, lastMessage, StringComparison.Ordinal))
@@ -2208,11 +2043,18 @@ namespace AstraBrew_Launcher.Views
             {
                 attempt.Dispose();
                 attempt = new CancellationTokenSource();
+                autoClose.Stop();
 
                 bar.IsIndeterminate = false;
                 bar.Value = 0;
                 percentText.Text = "0%";
-                phaseText.Text = "准备中…";
+                percentText.Visibility = job.HasProgress ? Visibility.Visible : Visibility.Collapsed;
+                bar.Visibility = job.HasProgress ? Visibility.Visible : Visibility.Collapsed;
+                ring.Visibility = job.HasProgress ? Visibility.Collapsed : Visibility.Visible;
+                ring.IsActive = !job.HasProgress;
+
+                // 有进度的从「准备中」起步；没有进度的直接写死一句话，别让它随日志抖
+                phaseText.Text = job.HasProgress ? "准备中…" : $"正在安装 {job.DisplayName}…";
                 phaseText.Foreground = Primary();
                 detailText.Text = "正在检查安装目录…";
                 hintText.Visibility = Visibility.Collapsed;
@@ -2223,11 +2065,13 @@ namespace AstraBrew_Launcher.Views
                 logText.Text = string.Empty;
                 lastMessage = null;
 
-                InstallResult result = await ComponentInstaller.InstallAsync(spec, progress, attempt.Token);
+                InstallResult result = await job.Run(progress, attempt.Token);
                 logPath = result.LogPath;
 
                 if (result.Error == InstallError.Cancelled)
                 {
+                    ring.IsActive = false;
+                    ring.Visibility = Visibility.Collapsed;
                     return;
                 }
 
@@ -2238,29 +2082,43 @@ namespace AstraBrew_Launcher.Views
                     return;
                 }
 
+                ring.IsActive = false;
+                ring.Visibility = Visibility.Collapsed;
+
                 if (result.Success)
                 {
-                    bar.IsIndeterminate = false;
-                    bar.Value = 100;
-                    percentText.Text = "100%";
+                    if (job.HasProgress)
+                    {
+                        bar.IsIndeterminate = false;
+                        bar.Value = 100;
+                        percentText.Text = "100%";
+                    }
+
                     phaseText.Text = "安装完成";
-                    detailText.Text = $"正在重新检测 {spec.DisplayName}…";
+                    detailText.Text = $"正在重新检测 {job.DisplayName}…";
 
                     await RefreshEnvironmentAsync(force: true);
 
-                    string? detected = CurrentEnvironment?.VersionOf(spec.ProbeKey);
+                    string? detected = CurrentEnvironment?.VersionOf(job.ProbeKey);
                     detailText.Text = detected is null
-                        ? $"已解压到 {spec.InstallRoot}，但没检测到可执行文件，请查看日志。"
-                        : spec.SuccessDetail(detected);
+                        ? "安装跑完了，但没检测到可用的命令，请查看日志。"
+                        : job.SuccessDetail(detected);
                     Append(detected is null
-                        ? "安装完成，但没检测到可执行文件"
-                        : $"检测到 {spec.DisplayName} {detected}");
+                        ? "安装完成，但没检测到可用的命令"
+                        : $"检测到 {job.DisplayName} {detected}");
+
+                    autoClose.Stop();
+                    autoClose.Start();
                 }
                 else
                 {
-                    bar.IsIndeterminate = false;
-                    bar.Value = 0;
-                    percentText.Text = string.Empty;
+                    if (job.HasProgress)
+                    {
+                        bar.IsIndeterminate = false;
+                        bar.Value = 0;
+                        percentText.Text = string.Empty;
+                    }
+
                     phaseText.Text = result.Message;   // 一句话，不带堆栈
                     phaseText.Foreground = Caution();
                     detailText.Text = string.Empty;
@@ -2295,6 +2153,7 @@ namespace AstraBrew_Launcher.Views
             // Hide() / Esc / 关窗统一走这里：安装线程收到取消信号后自己清理暂存目录
             dialog.Closing += (_, _) =>
             {
+                autoClose.Stop();
                 closed = true;
                 try
                 {
@@ -2307,6 +2166,13 @@ namespace AstraBrew_Launcher.Views
             };
 
             dialog.Opened += async (_, _) => await RunAsync();
+
+            // 关掉之后再探一次：弹窗里那份是安装当口的快照，卡片上的版本号必须以磁盘为准
+            dialog.Closed += async (_, _) =>
+            {
+                autoClose.Stop();
+                await RefreshEnvironmentAsync(force: true);
+            };
 
             await dialog.ShowAsync();
         }
@@ -2375,18 +2241,19 @@ namespace AstraBrew_Launcher.Views
                 "真的去访问网页、API、Raw，再把仓库完整拉一份下来；数字是这次实测出来的。",
                 640);
 
-            body.Children.Add(new TextBlock
+            // 出口由「代理方式 × 加速开关」四种组合决定，这里直说这一次测试实际走的哪条
+            var exitText = new TextBlock
             {
-                // 出口由「代理方式 × 加速开关」四种组合决定，这里直说这一次测试实际走的哪条
-                Text = GithubConnectivity.DescribeExit() + "。四项并发进行；克隆会真拉完整仓库"
-                    + "（约 100 MB）到临时目录，拉取时显示进度与速度，测完自动删除。",
+                Text = DescribeExitLine(),
                 FontSize = 11,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Tertiary(),
-            });
+            };
+
+            body.Children.Add(exitText);
 
             IReadOnlyList<GithubProbe> probes = GithubConnectivity.BuildProbes();
-            var statuses = new List<ProbeStatusCell>();
+            var statuses = new List<TextBlock>();
             int cloneIndex = -1;
 
             for (int index = 0; index < probes.Count; index++)
@@ -2398,12 +2265,9 @@ namespace AstraBrew_Launcher.Views
                     cloneIndex = index;
                 }
 
-                // 只有克隆那一行带环形进度：HTTP 三条一两百毫秒就回来了，给它们配环只是闪一下
-                ProbeStatusCell status = ProbeStatusCell.Create(
-                    "等待", Tertiary(), new SolidColorBrush(accent), RingTrackBrush(), probe.IsGit);
-
+                TextBlock status = CreateStatus("等待");
                 statuses.Add(status);
-                body.Children.Add(ProbeRow(probe.Name, probe.Hint, status.Element));
+                body.Children.Add(ProbeRow(probe.Name, probe.Hint, status));
             }
 
             var summary = new TextBlock
@@ -2421,38 +2285,98 @@ namespace AstraBrew_Launcher.Views
             footer.Children.Add(close);
             footer.Children.Add(retest);
 
-            close.Click += (_, _) => dialog.Hide();
-            retest.Click += async (_, _) => await ProbeGithubAsync(probes, statuses, summary, retest, cloneIndex);
+            // 每一轮测试都拿自己的取消源：出口一变就把旧的那一轮作废，
+            // 否则它会继续按旧出口把四条探测（尤其是几十秒的克隆）跑完，
+            // 用户看到的就是「点了开启加速，进度还在没加速的环境里往前爬」
+            var runCts = new CancellationTokenSource();
 
-            dialog.Opened += async (_, _) => await ProbeGithubAsync(probes, statuses, summary, retest, cloneIndex);
+            void Restart() => runCts.Cancel();
+
+            async Task RunAsync()
+            {
+                // 同一时刻只允许一轮：旧的那轮还挂着的话先作废，两轮结果会互相盖
+                runCts.Cancel();
+                runCts = new CancellationTokenSource();
+                await ProbeGithubAsync(probes, statuses, summary, retest, cloneIndex, runCts.Token);
+            }
+
+            close.Click += (_, _) => dialog.Hide();
+            retest.Click += async (_, _) => await RunAsync();
+
+            // 加速 / 代理被改动 → 立刻重来一轮，并把顶部那行「当前出口」一起刷新。
+            // 弹窗是模态的，正常点不到设置里的开关；但设置可能被别处（仪表盘、引导、命令行同步）
+            // 改掉，而且这一条也让「开着加速再点开始测试」永远是新的出口。
+            (bool Accel, ProxyModeSetting Proxy) exit = (GithubAccel.Enabled, LauncherSettings.Proxy);
+
+            void OnExitChanged(object? sender, EventArgs e)
+            {
+                // 设置可能被后台（命令行同步、引导）改掉：换到 UI 线程再动控件
+                if (!DispatcherQueue.HasThreadAccess)
+                {
+                    DispatcherQueue.TryEnqueue(() => OnExitChanged(sender, e));
+                    return;
+                }
+
+                (bool Accel, ProxyModeSetting Proxy) now = (GithubAccel.Enabled, LauncherSettings.Proxy);
+                if (now == exit)
+                {
+                    return;
+                }
+
+                exit = now;
+                exitText.Text = DescribeExitLine();
+                Restart();
+                _ = RunAsync();
+            }
+
+            LauncherSettings.Changed += OnExitChanged;
+            dialog.Closed += (_, _) =>
+            {
+                LauncherSettings.Changed -= OnExitChanged;
+                Restart();
+            };
+
+            dialog.Opened += async (_, _) => await RunAsync();
             await dialog.ShowAsync();
         }
+
+        /// <summary>弹窗顶部那句说明：出口 + 四项怎么跑 + 克隆的时限。</summary>
+        private static string DescribeExitLine() =>
+            GithubConnectivity.DescribeExit() + "。四项并发进行；克隆会真拉完整仓库"
+            + $"（约 100 MB）到临时目录，拉取时显示进度与速度，测完自动删除；"
+            + $"超过 {GithubConnectivity.CloneBudgetSeconds} 秒还没拉完就按超时算。";
 
         /// <summary>
         /// 并发探测所有节点：各自计时、各自回填那一行，最后汇总。
         /// 并发而不是逐个来，是因为最坏的超时是 8 秒一条——串行六条能让人等到关掉弹窗。
-        /// 克隆那条是例外：它要真拉约 100 MB，跑得比 HTTP 三条久得多，过程中把进度画在它自己那一行上。
+        /// 克隆那条是例外：它要真拉约 100 MB，跑得比 HTTP 三条久得多，过程中把进度写进它自己那一行。
         /// </summary>
         private async Task ProbeGithubAsync(
             IReadOnlyList<GithubProbe> probes,
-            List<ProbeStatusCell> statuses,
+            List<TextBlock> statuses,
             TextBlock summary,
             Button retest,
-            int cloneIndex)
+            int cloneIndex,
+            CancellationToken token)
         {
             retest.IsEnabled = false;
             summary.Text = "正在探测…";
             summary.Foreground = Secondary();
 
-            foreach (ProbeStatusCell status in statuses)
+            foreach (TextBlock status in statuses)
             {
-                status.HideProgress();
-                status.Text.Text = "探测中…";
-                status.Text.Foreground = Secondary();
+                status.Text = "探测中…";
+                status.Foreground = Secondary();
             }
 
             IProgress<GithubCloneProgress>? live = cloneIndex >= 0 && cloneIndex < statuses.Count
-                ? new Progress<GithubCloneProgress>(update => ApplyCloneProgress(statuses[cloneIndex], update))
+                ? new Progress<GithubCloneProgress>(update =>
+                {
+                    if (!token.IsCancellationRequested)
+                    {
+                        ApplyCloneProgress(statuses[cloneIndex], update);
+                    }
+                })
                 : null;
 
             GithubProbeResult[] results = await Task.WhenAll(
@@ -2460,46 +2384,62 @@ namespace AstraBrew_Launcher.Views
                 {
                     GithubProbeResult result = await GithubConnectivity.RunAsync(
                         probe,
-                        CancellationToken.None,
+                        token,
                         probe.IsGit ? live : null);
 
-                    ApplyProbeResult(statuses[index], result);
+                    // 这一轮已经被作废（出口改了 / 点了重新测试）：结果只属于旧出口，别写进界面
+                    if (!token.IsCancellationRequested)
+                    {
+                        ApplyProbeResult(statuses[index], result);
+                    }
+
                     return result;
                 }));
+
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
 
             SummarizeProbe(results, summary);
             retest.IsEnabled = true;
         }
 
         /// <summary>
-        /// 克隆拉取中的实时进度：**环走百分比，网速放进悬浮提示**。
-        /// 之前把「下载 45% · 1.2 MB/s」塞成一行常驻文字，数字每秒跳三次，整行跟着抖；
-        /// 现在弧长表达进度、鼠标移上去看速度，这一行既安静又读得懂。
+        /// 克隆拉取中的实时进度。与引导里「从哪下载最快」同一套写法：
+        /// 「下载 45% · 1.2 MiB/s」——阶段 + 百分比 + 网速，一行读完就知道传到哪、多快。
         /// </summary>
-        private void ApplyCloneProgress(ProbeStatusCell cell, GithubCloneProgress update)
+        private void ApplyCloneProgress(TextBlock status, GithubCloneProgress update)
         {
-            cell.ShowProgress(update.Percent, update.Phase, update.Speed, update.Route);
+            status.MaxWidth = 260;
+            status.TextTrimming = TextTrimming.CharacterEllipsis;
+
+            string head = $"{update.Phase} {update.Percent}%";
+            status.Text = update.Speed is { Length: > 0 } speed ? $"{head} · {speed}" : head;
+            status.Foreground = Secondary();
         }
 
-        private void ApplyProbeResult(ProbeStatusCell cell, GithubProbeResult result)
+        private void ApplyProbeResult(TextBlock status, GithubProbeResult result)
         {
-            cell.HideProgress();
-            ToolTipService.SetToolTip(cell.Element, null);
+            // 失败原因可能很长（Git 的原始报错），截断但保留完整内容在提示里
+            status.MaxWidth = 260;
+            status.TextTrimming = TextTrimming.CharacterEllipsis;
+            ToolTipService.SetToolTip(status, null);
 
             if (result.Error is { Length: > 0 } error)
             {
-                cell.Text.Text = error;
-                ToolTipService.SetToolTip(cell.Element, error);
-                cell.Text.Foreground = Critical();
+                status.Text = error;
+                ToolTipService.SetToolTip(status, error);
+                status.Foreground = Critical();
                 return;
             }
 
             if (result.Note is { Length: > 0 } note)
             {
                 // 「跳过」是没测，「中转 403」是测了但不理想，两者颜色要分开
-                cell.Text.Text = note;
-                ToolTipService.SetToolTip(cell.Element, note);
-                cell.Text.Foreground = result.Probe.IsGit ? Tertiary() : Caution();
+                status.Text = note;
+                ToolTipService.SetToolTip(status, note);
+                status.Foreground = result.Probe.IsGit ? Tertiary() : Caution();
                 return;
             }
 
@@ -2510,17 +2450,17 @@ namespace AstraBrew_Launcher.Views
                 if (result.Probe.IsGit)
                 {
                     string via = result.Route is { Length: > 0 } route ? $" · {route}" : string.Empty;
-                    cell.Text.Text = MirrorBenchmark.DescribeElapsed(latency) + via;
-                    cell.Text.Foreground = Success();
+                    status.Text = MirrorBenchmark.DescribeElapsed(latency) + via;
+                    status.Foreground = Success();
                     return;
                 }
 
-                cell.Text.Text = $"{latency} ms";
-                cell.Text.Foreground = latency <= 300 ? Success() : Caution();
+                status.Text = $"{latency} ms";
+                status.Foreground = latency <= 300 ? Success() : Caution();
                 return;
             }
 
-            cell.Text.Text = "—";
+            status.Text = "—";
         }
 
         private void SummarizeProbe(IReadOnlyList<GithubProbeResult> results, TextBlock summary)

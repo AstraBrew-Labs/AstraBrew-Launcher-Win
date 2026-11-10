@@ -74,10 +74,23 @@ namespace AstraBrew_Launcher.Services
         private static readonly TimeSpan HttpTimeout = TimeSpan.FromSeconds(10);
 
         /// <summary>
-        /// 克隆超时：现在拉的是完整工作区（约 100 MB），60 秒对慢速通道不够；
-        /// 但再拖下去用户只会以为弹窗卡住了，两分钟是「慢网也能拉完」与「别让人干等」的折中。
+        /// 单条克隆线路最多等多久。拉的是完整工作区（约 100 MB），45 秒意味着
+        /// 低于约 2.3 MB/s 的通道直接判超时——**装酒馆时也是这点文件，再慢就等于不能用**，
+        /// 与其让用户以为「通了、只是慢」，不如老实报超时。
         /// </summary>
-        private static readonly TimeSpan CloneTimeout = TimeSpan.FromSeconds(120);
+        private static readonly TimeSpan CloneRouteTimeout = TimeSpan.FromSeconds(45);
+
+        /// <summary>
+        /// 整个克隆探测的总预算（加速 → 直连最多两条线路共用）。
+        /// 没有这个上限时，两条线路各等一遍最坏要 90 秒以上，弹窗一直转，用户只会以为卡死。
+        /// </summary>
+        private static readonly TimeSpan CloneBudget = TimeSpan.FromSeconds(90);
+
+        /// <summary>剩余预算少于这个数就别再开下一条线路了——刚启动就要超时，纯属浪费。</summary>
+        private static readonly TimeSpan MinCloneWindow = TimeSpan.FromSeconds(8);
+
+        /// <summary>克隆探测的总时限（秒）。界面文案直接引用它，免得改了常量忘了改说明。</summary>
+        public static int CloneBudgetSeconds => (int)CloneBudget.TotalSeconds;
 
         /// <summary>按当前设置列出四条要测的项（顺序就是界面上的顺序）。</summary>
         public static IReadOnlyList<GithubProbe> BuildProbes() => new[]
@@ -317,10 +330,22 @@ namespace AstraBrew_Launcher.Services
                 bool proxyOn = ProxyRoute.Resolve().UseProxy;
                 var attempts = new List<GithubProbeResult>();
 
+                // 两条线路共用一份预算：第一条把时间吃光，就不该再开第二条熬着
+                var budget = Stopwatch.StartNew();
+
                 foreach ((string routeName, string url) in ResolveUrls(probe))
                 {
+                    TimeSpan left = CloneBudget - budget.Elapsed;
+
+                    if (left < MinCloneWindow)
+                    {
+                        break;
+                    }
+
+                    TimeSpan window = left < CloneRouteTimeout ? left : CloneRouteTimeout;
+
                     GithubProbeResult attempt = RunOneClone(
-                        probe, git, url, routeName, proxyOn, progress, token);
+                        probe, git, url, routeName, proxyOn, window, progress, token);
 
                     if (attempt.Ok)
                     {
@@ -340,7 +365,8 @@ namespace AstraBrew_Launcher.Services
         }
 
         /// <summary>
-        /// 跑一次完整克隆（<c>--depth 1 --single-branch --progress</c>，约 100 MB）。
+        /// 跑一次完整克隆（<c>--depth 1 --single-branch --progress</c>，约 100 MB），
+        /// 超过 <paramref name="timeout"/> 直接杀掉进程并判超时——「能下完但很慢」同样算不可用。
         ///
         /// 以前这里用 <c>--filter=blob:none --no-checkout</c> 只取元数据：一两秒就绿，
         /// 可安装时下的是完整仓库——那条通道到底能不能把文件传下来，测的根本不是同一件事
@@ -356,6 +382,7 @@ namespace AstraBrew_Launcher.Services
             string url,
             string routeName,
             bool proxyOn,
+            TimeSpan timeout,
             IProgress<GithubCloneProgress>? progress,
             CancellationToken token)
         {
@@ -434,14 +461,15 @@ namespace AstraBrew_Launcher.Services
                         return new GithubProbeResult(probe, false, null, "已取消", null, null, label);
                     }
 
-                    if (clock.Elapsed > CloneTimeout)
+                    // 到点就掐：慢到这种程度的通道，装上酒馆也是这个速度，判定为不可用
+                    if (clock.Elapsed > timeout)
                     {
                         GitCommand.Kill(process);
                         return new GithubProbeResult(
                             probe,
                             false,
                             null,
-                            $"超时（{CloneTimeout.TotalSeconds:0} 秒没拉完）",
+                            $"超时（{timeout.TotalSeconds:0} 秒没拉完，通道太慢）",
                             null,
                             null,
                             label);

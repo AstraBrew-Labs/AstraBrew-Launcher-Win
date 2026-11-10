@@ -334,7 +334,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             UpdateActionRow();
         }
 
-        private async void Side_Checked(object sender, RoutedEventArgs e)
+        private void Side_Checked(object sender, RoutedEventArgs e)
         {
             if (_syncing)
             {
@@ -346,17 +346,10 @@ namespace AstraBrew_Launcher.Views.Onboarding
             _selected = side;
             LauncherSettings.SetRuntime(side == RuntimeSide.Builtin ? RuntimeSource.Builtin : RuntimeSource.System);
 
+            // 切过来只刷新卡片与按钮，**不自动弹安装窗**：
+            // 用户可能只是想看看这边缺什么，弹窗跳出来会像「已经动手装了」
             UpdateActionRow();
             RaiseState();
-
-            RuntimeProfile? profile = SelectedProfile;
-
-            // 只有内置侧能代装，才顺手把安装窗推出来；系统侧只能弹说明，
-            // 切过去就弹窗会让人以为已经在装了
-            if (side == RuntimeSide.Builtin && profile is { BasicReady: false })
-            {
-                await InstallAsync();
-            }
         }
 
         private void UpdateActionRow()
@@ -464,7 +457,12 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             try
             {
-                await InstallTaskDialog.ShowAsync(XamlRoot, tasks);
+                // 清单只有 Node.js 时别让人以为漏了：把「当前包的范围」写在弹窗顶上
+                string? note = _package == RuntimePackage.Basic
+                    ? "这次只装基础包（Node.js + npm）。Git、Caddy、PM2 在下面的「一次装齐」里。"
+                    : null;
+
+                await InstallTaskDialog.ShowAsync(XamlRoot, tasks, autoStart: true, note: note);
             }
             finally
             {

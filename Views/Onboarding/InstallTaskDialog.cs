@@ -34,10 +34,15 @@ namespace AstraBrew_Launcher.Views.Onboarding
         /// 弹出安装窗口并执行。<paramref name="autoStart"/> 为 true 时倒计时 3 秒自动开始。
         /// 返回 null 表示用户在开始前就取消了。
         /// </summary>
+        /// <param name="note">
+        /// 装在弹窗顶部的一句范围说明（例如「这次只装基础包，Git / Caddy / PM2 在『一次装齐』里」）。
+        /// 没有它，用户看到清单里只有 Node.js 会以为漏了。
+        /// </param>
         public static async Task<RuntimeBatchResult?> ShowAsync(
             XamlRoot root,
             IReadOnlyList<RuntimeTask> tasks,
-            bool autoStart = true)
+            bool autoStart = true,
+            string? note = null)
         {
             var rows = new List<RowControls>();
             var cts = new CancellationTokenSource();
@@ -46,6 +51,17 @@ namespace AstraBrew_Launcher.Views.Onboarding
             bool started = false;
 
             var body = new StackPanel { Spacing = 12 };
+
+            if (note is { Length: > 0 })
+            {
+                body.Children.Add(new TextBlock
+                {
+                    Text = note,
+                    FontSize = 12,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = Res("TextFillColorTertiaryBrush"),
+                });
+            }
 
             var summary = new TextBlock
             {
@@ -107,8 +123,21 @@ namespace AstraBrew_Launcher.Views.Onboarding
             dialog.Resources["ContentDialogMinWidth"] = 420.0;
             dialog.Resources["ControlCornerRadius"] = new CornerRadius(8);
 
+            // 装完后自动收起的计时器：关闭时停掉，免得对着已经消失的弹窗再 Hide 一次
+            var autoClose = dialog.DispatcherQueue.CreateTimer();
+            autoClose.Interval = TimeSpan.FromSeconds(3);
+            autoClose.IsRepeating = false;
+            autoClose.Tick += (_, _) =>
+            {
+                autoClose.Stop();
+                dialog.Hide();
+            };
+
             dialog.Closing += (_, args) =>
             {
+                // 关的时候顺手停掉自动收起，别对着已经消失的弹窗再 Hide 一次
+                autoClose.Stop();
+
                 if (!allowClose)
                 {
                     args.Cancel = true;
@@ -152,6 +181,14 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 start.IsEnabled = true;
                 start.Visibility = Visibility.Visible;
                 cancel.Visibility = Visibility.Collapsed;
+
+                // 装好了停三秒让人看清结论，然后自己收起；失败/取消留在原地，
+                // 那时的信息比「关得快」重要，交给用户自己点
+                if (ok)
+                {
+                    autoClose.Stop();
+                    autoClose.Start();
+                }
             }
 
             countdown.Tick += (_, _) =>
