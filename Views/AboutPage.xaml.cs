@@ -33,9 +33,8 @@ namespace AstraBrew_Launcher.Views
 
         private void FillEnvironment()
         {
-            var assembly = Assembly.GetExecutingAssembly();
-            var version = assembly.GetName().Version ?? new Version(1, 0, 0);
-            string versionText = $"v{version.Major}.{version.Minor}.{version.Build}";
+            // 版本号带渠道后缀（0.3.0-Alpha.0），正式版没有后缀——统一由 BuildChannelInfo 给出
+            string versionText = BuildChannelInfo.DisplayVersion;
 
             VersionValue.Text = versionText;
             HeroVersionChipText.Text = versionText;

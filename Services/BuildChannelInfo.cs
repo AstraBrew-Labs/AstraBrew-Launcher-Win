@@ -72,6 +72,51 @@ namespace AstraBrew_Launcher.Services
         /// <summary>给日志 / 复制信息用的一行字，例如「预览版 · Alpha」。</summary>
         public static string Describe => Badge is { Length: > 0 } badge ? $"{badge}（{Channel}）" : "正式版";
 
+        /// <summary>
+        /// 完整版本号，含渠道后缀：<c>0.3.0-Alpha.0</c> / <c>0.3.0-Beta.0</c> / <c>0.3.0-Debug.0</c>，
+        /// 正式版就是 <c>0.3.0</c>（没有后缀）。
+        ///
+        /// 取自 <see cref="AssemblyInformationalVersionAttribute"/>：csproj 里
+        /// <c>VersionPrefix</c> + 按配置给的 <c>VersionSuffix</c> 生成，末尾的 <c>+&lt;git sha&gt;</c>
+        /// 是 SDK 自动拼的构建来源，界面上不显示，这里截掉。
+        /// </summary>
+        public static string Version { get; } = ResolveVersion();
+
+        /// <summary>界面上显示用的版本号（带 v 前缀），例如 <c>v0.3.0-Alpha.0</c>。</summary>
+        public static string DisplayVersion => "v" + Version;
+
+        private static string ResolveVersion()
+        {
+            try
+            {
+                string? informational = Assembly.GetExecutingAssembly()
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                    ?.InformationalVersion;
+
+                if (informational is { Length: > 0 })
+                {
+                    // "0.3.0-Alpha.0+49cb9b4..." → "0.3.0-Alpha.0"
+                    int plus = informational.IndexOf('+');
+                    string value = plus >= 0 ? informational[..plus] : informational;
+
+                    if (value.Length > 0)
+                    {
+                        return value;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // 读不到就走下面的兜底
+            }
+
+            // 兜底：只有数字版本（例如老构建没写 InformationalVersion），后缀按渠道补上
+            Version fallback = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 3, 0);
+            string core = $"{fallback.Major}.{fallback.Minor}.{fallback.Build}";
+
+            return Badge is { Length: > 0 } ? $"{core}-{Channel}.0" : core;
+        }
+
         private static BuildChannel Resolve()
         {
             try

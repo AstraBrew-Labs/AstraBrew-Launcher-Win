@@ -45,9 +45,22 @@ dotnet build "AstraBrew Launcher.csproj" -c Release -p:Platform=x64
   `dotnet build -c Release -p:WindowsAppSDKSelfContained=true -p:BaseOutputPath=bin/verify/ -t:Rebuild`
   另建一份自包含产物，验完删掉；不要为了跑一下就把 Release 改成自包含。
 - `.sln` 里同步加了 `Alpha|Beta × x86/x64/ARM64`，VS 的配置下拉能直接选。
-- **版本号只有一个源头**：csproj 的 `<Version>0.3.0</Version>`，AssemblyVersion / FileVersion 全由它派生。
-  关于页、设置页都读 `Assembly.GetName().Version`，XAML 里的 `v0.3.0` 只是设计时占位，
-  改版本时**只改 csproj 一处**，不要在各页面里再写死。
+- **版本号规范：`0.3.x-Channel.N`**（正式版只有 `0.3.x`，没有任何后缀）
+
+  | 配置 | 版本号 | 来源 |
+  |---|---|---|
+  | Alpha | `0.3.0-Alpha.0` | `VersionPrefix` + `VersionSuffix=Alpha.$(ChannelIteration)` |
+  | Beta | `0.3.0-Beta.0` | 同上，后缀 `Beta.N` |
+  | Debug | `0.3.0-Debug.0` | 同上，后缀 `Debug.N` |
+  | Release | `0.3.0` | 不给 `VersionSuffix` |
+
+  - `0.3.x` 是版本号，`-Channel` 是渠道，`.N` 是**同版本下的迭代次数**（同一版本里快速修个 bug 就 +1）；
+  - 只改 csproj 的 `VersionPrefix` 与 `ChannelIteration` 两个值，四个渠道自动跟着变；
+  - `VersionSuffix` 只进 `ProductVersion` / `InformationalVersion`（后者末尾还有 SDK 自动加的
+    `+<git sha>`）。`AssemblyVersion` / `FileVersion` 仍是纯数字 `0.3.0.0`，**别指望它们带字母**；
+  - 界面统一读 `BuildChannelInfo.DisplayVersion`（`InformationalVersion` 截掉 `+sha`），
+    关于页、设置页、复制版本信息全走它；XAML 里的 `v0.3.0` 只是设计时占位；
+  - `Package.appxmanifest` 的 Identity `Version` 同步写成 `0.3.0.0`（MSIX 只接受四段数字）。
 - 标题栏胶囊的尺寸与实例徽章（`InstanceChip`）**完全一致**：`Padding="8,2,8,3"` + 11.5 号 SemiBold，
   两枚摆一起高度与基线才齐平（最初用小一号的 10.5 + 1,2 内边距，比旁边矮 4 px，看着一高一低）。
   关于页主卡那三枚（版本 / 渠道 / 架构）同理，纵向内边距统一取 `1,2`

@@ -22,11 +22,26 @@
     <!--  exe / 任务栏 / 窗口图标统一使用 Assets 里的彩色版本  -->
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!--
-      版本号只有一个源头：这里。AssemblyVersion / FileVersion / InformationalVersion 全部由它派生，
-      关于页与设置页都读程序集版本，不要在任何页面里再写死一个「v0.3.0」。
-      0.3 是第一条对外可用的基线：0.1 / 0.2 阶段都还没走到「能装完酒馆并跑起来」。
+      版本号只有一个源头：这个 PropertyGroup。
+      版本规范：  0.3.x-Channel.N
+        · 0.3.x      版本号（VersionPrefix，x 是补丁号；大版本 + 小版本 + 修订）
+        · -Channel  渠道后缀（Alpha / Beta / Debug）；正式版**没有**这一截
+        · .N        同一版本下的迭代次数（ChannelIteration，同版本快速修 bug 时 +1）
+
+      示例：0.3.0-Alpha.0 / 0.3.0-Beta.0 / 0.3.0-Debug.0 / 0.3.0（正式版）
+
+      VersionSuffix 会进 ProductVersion 与 InformationalVersion（后者还带 +<git sha>），
+      AssemblyVersion / FileVersion 仍是纯数字 0.3.0.0 —— 那些字段不接受字母，别指望它们带后缀。
+      界面上显示的是 InformationalVersion 去掉 +sha 的那一截（见 BuildChannelInfo.Version）。
     -->
-    <Version>0.3.0</Version>
+    <VersionPrefix>0.3.0</VersionPrefix>
+
+    <!--  同一版本的迭代次数：只改这一个数，四个渠道的后缀一起动  -->
+    <ChannelIteration Condition="'$(ChannelIteration)' == ''">0</ChannelIteration>
+
+    <VersionSuffix Condition="'$(Configuration)' == 'Alpha'">Alpha.$(ChannelIteration)</VersionSuffix>
+    <VersionSuffix Condition="'$(Configuration)' == 'Beta'">Beta.$(ChannelIteration)</VersionSuffix>
+    <VersionSuffix Condition="'$(Configuration)' == 'Debug'">Debug.$(ChannelIteration)</VersionSuffix>
   </PropertyGroup>
 
   <ItemGroup>

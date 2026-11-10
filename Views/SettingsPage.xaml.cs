@@ -1506,11 +1506,8 @@ namespace AstraBrew_Launcher.Views
             }
         }
 
-        private static string ReadAppVersion()
-        {
-            var version = typeof(SettingsPage).Assembly.GetName().Version;
-            return version is null ? "v0.3.0" : $"v{version.Major}.{version.Minor}.{version.Build}";
-        }
+        /// <summary>启动器版本，含渠道后缀（0.3.0-Debug.0 / 0.3.0），与关于页同源。</summary>
+        private static string ReadAppVersion() => BuildChannelInfo.DisplayVersion;
 
         // ==================== 弹窗外壳 ====================
 
