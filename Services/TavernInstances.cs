@@ -72,29 +72,37 @@ namespace AstraBrew_Launcher.Services
 
         public bool IsBuiltin => Kind == TavernInstanceKind.Builtin;
 
-        public string KindLabel => IsBuiltin ? "内置" : "本地";
+        public string KindLabel => L.Get(IsBuiltin ? "Instance.Kind.Builtin" : "Instance.Kind.Local");
 
         /// <summary>这份实例在磁盘上是否真的存在（内置实例看安装目录，本地实例恒为 true）。</summary>
         public bool IsInstalled => !IsBuiltin || TavernInstances.BuiltinInstalled;
 
         /// <summary>形如 "v1.19.2"；开发版通道显示为 "开发版"；没装就是 "未安装"。</summary>
         public string KernelLabel => !IsInstalled
-            ? "未安装"
+            ? L.Get("Instance.State.NotInstalled")
             : Version == TavernInstances.StagingTag
-                ? "开发版"
+                ? L.Get("Instance.State.Dev")
                 : Version.Length == 0
-                    ? "版本未知"
+                    ? L.Get("Instance.State.VersionUnknown")
                     : "v" + Version;
 
         /// <summary>下拉框里的名字，形如 "内置酒馆" / "本地-1.19.0"。</summary>
         public string DisplayName => IsBuiltin
-            ? "内置酒馆"
-            : Version.Length == 0 ? "本地实例" : $"本地-{Version}";
+            ? L.Get("Instance.Name.Builtin")
+            : Version.Length == 0
+                ? L.Get("Instance.Name.Local")
+                : L.F("Instance.Name.LocalVersioned", Version);
 
-        /// <summary>标题栏徽章文案，形如 "内置-1.19.2" / "本地-1.19.0"；没装时是 "内置-未安装"。</summary>
-        public string DisplayLabel => IsInstalled
-            ? $"{KindLabel}-{(Version.Length == 0 ? "版本未知" : Version)}"
-            : $"{KindLabel}-未安装";
+        /// <summary>
+        /// 标题栏徽章文案，形如「内置 · v1.19.2」/「本地 · v1.19.0」；没装时是「内置 · 未安装」。
+        /// 与仪表盘、扩展页的目标实例胶囊用同一套写法（分隔符 + v 前缀），
+        /// 免得同一个东西在两个地方长得不一样。
+        /// </summary>
+        public string DisplayLabel => !IsInstalled
+            ? L.F("Instance.Label.Missing", KindLabel)
+            : Version.Length == 0
+                ? L.F("Instance.Label.Unknown", KindLabel)
+                : L.F("Instance.Label.Versioned", KindLabel, Version);
     }
 
     /// <summary>
@@ -124,7 +132,7 @@ namespace AstraBrew_Launcher.Services
         public const string StagingTag = "staging";
 
         /// <summary>Node.js 还没探测出来时显示的占位文案。</summary>
-        public const string PendingRuntime = "Node 未检测";
+        public static string PendingRuntime => L.Get("Miss.PendingRuntime");
 
         /// <summary>本地实例清单的落盘位置：<c>%AppData%\AstraBrew Launcher\data\local_instances.json</c>。</summary>
         public static string LocalStorePath { get; } =

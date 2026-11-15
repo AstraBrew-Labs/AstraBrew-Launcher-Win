@@ -1,0 +1,4 @@
+{
+  "Setp.Update.SampleNotes": ["· 控制台支持按关键字过滤日志\n· 资源工作台新增世界书条目搜索\n· 修复 125% 缩放下卡片网格列数算错的问题\n· 启动失败时给出可复制的诊断信息", "· The console can filter the log by keyword\n· The resource workbench can now search world book entries\n· Fixed a wrong card grid column count at 125% scaling\n· A failed start now produces diagnostic details you can copy"],
+  "Cfg.Notify.SaveFail": ["保存失败", "Could not save"]
+}

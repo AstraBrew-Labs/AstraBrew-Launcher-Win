@@ -56,11 +56,11 @@ namespace AstraBrew_Launcher.Services
                 (GithubAccel.DirectName, ReleaseUrl),
             }),
             ExistsAt = root => File.Exists(Path.Combine(root, "caddy.exe")),
-            IncompleteMessage = "解压出来的 Caddy 不完整，请重试。",
-            IncompleteHint = "若反复出现，请先清理磁盘再重试。",
-            BusyMessage = "Caddy 正在被使用，请先在控制台停止反向代理后重试。",
-            BusyHint = "反向代理由酒馆内核托管，停掉酒馆再试即可。",
-            SuccessDetail = detected => $"Caddy {detected} 已就位，可以配置反向代理与 HTTPS。",
+            IncompleteMessage = L.F("Miss.Incomplete", "Caddy"),
+            IncompleteHint = L.Get("Miss.IncompleteHint"),
+            BusyMessage = L.Get("Miss.Busy.Caddy"),
+            BusyHint = L.Get("Miss.Busy.CaddyHint"),
+            SuccessDetail = detected => L.F("Miss.Caddy.Success", detected),
         };
 
         /// <summary>安装内置 Caddy；取消或失败都不留半成品。</summary>

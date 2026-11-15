@@ -44,17 +44,17 @@ namespace AstraBrew_Launcher.Services
             RequiredFreeBytes = 500L * 1024 * 1024,
             Sources = new (string, string)[]
             {
-                ("华为云", $"https://mirrors.huaweicloud.com/nodejs/{Version}/node-{Version}-win-x64.zip"),
+                (L.Get("Miss.Huawei"), $"https://mirrors.huaweicloud.com/nodejs/{Version}/node-{Version}-win-x64.zip"),
                 ("npmmirror", $"https://registry.npmmirror.com/-/binary/node/{Version}/node-{Version}-win-x64.zip"),
-                ("阿里云", $"https://mirrors.aliyun.com/nodejs-release/{Version}/node-{Version}-win-x64.zip"),
-                ("官方直连", $"https://nodejs.org/download/release/{Version}/node-{Version}-win-x64.zip"),
+                (L.Get("Miss.Aliyun"), $"https://mirrors.aliyun.com/nodejs-release/{Version}/node-{Version}-win-x64.zip"),
+                (L.Get("Miss.Official"), $"https://nodejs.org/download/release/{Version}/node-{Version}-win-x64.zip"),
             },
             ExistsAt = ExistsAt,
-            IncompleteMessage = "解压出来的 Node.js 不完整，请重试。",
-            IncompleteHint = "若反复出现，请先清理磁盘再重试。",
-            BusyMessage = "Node.js 正在被使用，请关闭正在运行 Node.js 的程序后重试。",
-            BusyHint = "例如酒馆控制台、PM2 守护进程，或终端里正在跑的 node。",
-            SuccessDetail = detected => $"Node.js {detected} 已就位，npm 与 PM2 现在可以安装。",
+            IncompleteMessage = L.F("Miss.Incomplete", "Node.js"),
+            IncompleteHint = L.Get("Miss.IncompleteHint"),
+            BusyMessage = L.Get("Miss.Busy.Node"),
+            BusyHint = L.Get("Miss.Busy.NodeHint"),
+            SuccessDetail = detected => L.F("Miss.Node.Success", detected),
         };
 
         /// <summary>安装内置 Node.js；取消后不留半成品，失败一律折成 <see cref="InstallResult"/>。</summary>

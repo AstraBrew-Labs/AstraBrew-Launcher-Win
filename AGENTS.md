@@ -31,13 +31,15 @@ dotnet build "AstraBrew Launcher.csproj" -c Release -p:Platform=x64
   **没写就是正式版**。不要改用 `#if` / `DefineConstants` —— SDK 的 targets 会后置追加常量，
   项目体里拼进去的值容易被 `DEBUG;TRACE` 顶掉。
 - 关于页：`HeroBadges` 里的胶囊（正式版中性灰「稳定通道」，其余写「预览版 / 测试版 / 开发版」
-  并换成该渠道的强调色）+「版本与构建 → 更新通道」（预览通道 / 测试通道 / 开发通道 / 稳定通道）。
-  设置页版本行同一套判断（`ApplyBuildChannel`），不要各写一份。
+  并换成该渠道的强调色）。**「版本与构建」里不再有「更新通道」那一行**（渠道由 csproj 的
+  `BuildChannel` 元数据决定、运行时改不了，写出来只会让人想去找开关），要看渠道名就只看那枚胶囊。
+  **「复制版本信息」按钮也删了**（同一份信息在页面上都能看到，复制出来没人用）。
+  **版本号与「检查更新」只在关于页出现**：设置页原来那份（更新分组 + 版本行 + 假下载弹窗）已整组删除，
+  别再往回加——用户明确要求只留关于页这一处。
 - **标题栏左上角也有渠道标记**（`MainWindow.ApplyChannelBadge`）：紧跟「AstraBrew Launcher」之后，
   底色是强调色 0x38 alpha、文字用强调色，10.5 号 SemiBold。**正式版整个 Border 收成
   `Visibility.Collapsed`**（不是空文字）——折叠的子元素不占位，标题栏不会多出空隙。
   这一处是给「截图反馈」用的：用户贴一张图就能看出是哪个渠道的构建，不必再翻关于页。
-- 复制版本信息只在非正式版时多写一行「渠道」，正式版拿到反馈时没有这行就代表稳定版。
 - `Debug / Alpha / Beta` 都把 Windows App SDK 做**自包含**（`WindowsAppSDKSelfContained`），
   本机没有完整运行时也能直接双击跑；`Release` 保持框架依赖，对外发布走 MSIX / 安装包。
   因此在这台机器上 **Release 的 exe 不能直接双击**（会抛 `REGDB_E_CLASSNOTREG`）——
@@ -59,12 +61,151 @@ dotnet build "AstraBrew Launcher.csproj" -c Release -p:Platform=x64
   - `VersionSuffix` 只进 `ProductVersion` / `InformationalVersion`（后者末尾还有 SDK 自动加的
     `+<git sha>`）。`AssemblyVersion` / `FileVersion` 仍是纯数字 `0.3.0.0`，**别指望它们带字母**；
   - 界面统一读 `BuildChannelInfo.DisplayVersion`（`InformationalVersion` 截掉 `+sha`），
-    关于页、设置页、复制版本信息全走它；XAML 里的 `v0.3.0` 只是设计时占位；
+    关于页与标题栏全走它；XAML 里的 `v0.3.0` 只是设计时占位；
   - `Package.appxmanifest` 的 Identity `Version` 同步写成 `0.3.0.0`（MSIX 只接受四段数字）。
 - 标题栏胶囊的尺寸与实例徽章（`InstanceChip`）**完全一致**：`Padding="8,2,8,3"` + 11.5 号 SemiBold，
   两枚摆一起高度与基线才齐平（最初用小一号的 10.5 + 1,2 内边距，比旁边矮 4 px，看着一高一低）。
   关于页主卡那三枚（版本 / 渠道 / 架构）同理，纵向内边距统一取 `1,2`
   ——版本胶囊原来是 `2,3`，比旁边两枚高 2 px。
+
+## 多语言（中 / 英）与文案规范
+
+### 存储：`Strings/<语言>/Resources.resw`
+
+- `Strings/zh-CN/Resources.resw` 是**源语言，必须 100% 完整**；`en-US` 允许残缺，缺条目自动回退中文。
+- key 写法 `模块.元素.属性`，例如 `Settings.Row.Language.Title`、`Shell.Nav.About.Content`。
+  前缀固定为 `Common / Shell / Dashboard / Tavern / Versions / Extensions / Resources / Workbench /
+  Console / Settings / About / Setup / Dialog / Notify / Enum / Error / Format`。
+- **叶子必须带后缀，且同一前缀不能既当资源又当范围**（血泪教训，报了三种 PRI 错）：
+  - ❌ `Settings.Level.Simple` + `Settings.Level.Simple.Title` → `PRI278`（同一实体既是资源又是范围）；
+  - ✅ `Settings.Level.Simple.Label` + `Settings.Level.Simple.Title`；
+  - ❌ `Settings.Row.Git.Description` + `Settings.Row.Git.Description.System`；
+  - ✅ `...Description.Bundled` + `...Description.System`（一律带变体后缀）；
+  - ❌ 同名 key 写两次（例如静态版与带 `{0}` 的版本并存）→ `PRI277` 值冲突。
+    改文案时**改原条目**，不要追加同名条目；加完跑一次去重检查。
+- csproj 里**不要**写 `<PRIResource Include="Strings\**\*.resw" />`：BuildTools.MSIX 已默认收录，
+  再写一条会撞 `NETSDK1022 重复项`。只保留 `<DefaultLanguage>zh-CN</DefaultLanguage>`。
+- `Package.appxmanifest` 的语言显式写成 `zh-CN` + `en-US`（原来是 `x-generate`，
+  手动 register 的 AppX 里会只剩一条 EN-US）。
+
+### XAML 侧：用 `loc:Loc.*`，**不要用 `x:Uid`**
+
+```xml
+<NavigationViewItem controls:Loc.Content="Shell.Nav.About.Content" Tag="about" />
+<TextBlock controls:Loc.Text="Shell.Title.Subtitle.Text" />
+<TextBox controls:Loc.Placeholder="Tavern.Port.PlaceholderText" />
+<Button controls:Loc.ToolTip="Common.Refresh.ToolTip" />
+<controls:SettingRow controls:Loc.Property="Title:Settings.Row.Language.Title" ... />
+```
+
+`x:Uid` 在本项目**不可用**（踩过）：WinUI 的 x:Uid 解析依赖「PRI 索引名 ↔ 应用身份」对齐。
+本项目的 PRI 索引名是包标识 `4f424de3-…`（来自 AppxManifest），
+而直接跑 exe（Debug / Alpha / Beta / Release 都是 unpackaged）时进程没有包身份，运行时按进程名找索引，
+对不上就**静默失效**——元素文字为空，日志里一条错误都没有。
+`Views/Controls/Loc.cs` 走 `L`，两种运行方式下都正常，缺 key 时还会把 key 全名显示出来。
+
+**自定控件首选「资源键属性」而不是 `Loc.Property` 反射**：
+
+```xml
+<controls:SettingRow TitleKey="Settings.Row.Theme.Title"
+                     DescriptionKey="Settings.Row.Theme.Description" />
+<controls:SegmentedPicker OptionsKey="Settings.Theme.Option" />   <!-- 需配 .Count 与 .0/.1/.2 -->
+```
+
+- `SettingRow.TitleKey/DescriptionKey`：控件自己订阅 `LanguageSwitch.LanguageChanged` 重取，
+  页面不用维护对照表。**说明随状态变的那几行（字体 / 代理状态 / Git 版本 / 通道 / 加速）只设 TitleKey**，
+  说明由页面按状态填（`L.Get/L.F`）。
+- `SegmentedPicker.OptionsKey`：选项文字是自己 new 的 TextBlock，同样由控件自己重建。
+- 换语言时控件重建/重取会触发 `SelectionChanged`：页面若在重建期间写设置，必须用 `_sync` 挡一下。
+- `Loc.Name`：无障碍名（`AutomationProperties.Name`），图标按钮没有可见文字时全靠它。
+- **凡是「文案属性」的自定控件，都给它加一对 `*Key` 属性**，而不是让页面拿代码赋值：
+  `SettingRow.TitleKey/DescriptionKey`、`SegmentedPicker.OptionsKey`、
+  `OnboardingRailItem.TitleKey/SubtitleKey`、`CheckRow.TitleKey/DetailKey`。
+  实现统一是「setter 里 `L.Get` + `Loaded` 订阅 `LanguageSwitch.LanguageChanged` 重取」，
+  这样页面只写 XAML，换语言时控件自己刷。
+  注意这些控件的 `Title`/`Subtitle` 是**普通属性**（不是 DP），XAML 里不能挂 `Loc.Property`
+  （同一元素只允许出现一次该附加属性，`Title` 与 `Subtitle` 会打架）。
+
+### C# 侧：`Services/L.cs`
+
+- `L.Get(key)`：取不到时**返回 key 原文**（界面上一眼能看见拼错），DEBUG 下写 `%TEMP%\astrabrew-launcher\i18n.log`。
+- `L.F(key, args)`：带参数的句式。resw 里写完整的一句话（`{0}`），**禁止**代码里「前半句 + 变量 + 后半句」，
+  英文语序不一样，拼出来一定是错的。
+- `L.GetOrEmpty(key)`：可选条目，空串交给控件自己隐藏（`SettingRow.Description` 就是这么做的）。
+- 键里的点会被 MRT 编成层级（PRI dump 里是 `Resources/Shell/Nav/About`），
+  `L` 内部点写法与斜杠写法都试一遍，调用方只写点。`L` 线程安全（`AppNotify` 会从后台调）。
+
+### 语言设置与生效
+
+- 设置项 `ui.language`：`system / zh-CN / en-US`（值别改，存量配置在用）。
+- `Services/LanguageResolver.cs`：`System` 走 `GetUserDefaultUILanguage()`（Windows 显示语言），
+  退化顺序 = `.NET CurrentUICulture` → `ApplicationLanguages`。**只有两种结果**：中文系统给 `zh-CN`，其余给 `en-US`。
+  不要用 `Windows.Globalization.GlobalizationPreferences`（unpackaged 会抛）。
+- 启动顺序（`App.xaml.cs`）：`SettingsStore.Load()` → `L.Initialize()` → `InitializeComponent()`。
+  晚一步，首帧就是旧语言。
+- **切换是实时的，不重建窗口**（`Services/LanguageSwitch.cs`）：
+
+  ```
+  L.SetLanguage(tag)            // 改 ResourceContext.QualifierValues["Language"]
+    → Loc.RefreshAll()          // 把登记过的 loc:Loc.* 元素按新语言重刷
+    → App.MainWindow.RefreshLocalizedText()   // 标题栏里由代码写入的文案
+    → LanguageChanged 事件      // 各页面刷自己用代码赋值的文案
+  ```
+
+  实测一次切换 **6~17 ms**，窗口、页面实例、滚动位置、正在跑的酒馆全都不动。
+  早先是「新建窗口 + 关旧窗口」，观感像重开一次软件，已废弃。
+
+- `L` 的语言挂在 **`ResourceContext`** 上（`_context.QualifierValues["Language"] = tag`），
+  改完下一次 `GetValue(key, context)` 就是新语言。**别用「重建 ResourceManager」或依赖
+  `PrimaryLanguageOverride` 单独生效**——前者要重启，后者只管系统对话框。
+- 页面若在代码里给控件赋文案（`SettingRow.Title`、胶囊提示等），必须订阅
+  `LanguageSwitch.LanguageChanged` 刷新，并在 `Unloaded` 里退订；
+  XAML 里写 `controls:Loc.*` 的不用管，`Loc.RefreshAll()` 会统一处理。
+- **「由状态拼出来的文案」不要设 `Loc`**：那些元素在 XAML 里留空，页面在
+  `LanguageChanged` 里重跑一遍「按当前状态渲染」的方法即可。仪表盘的做法是
+  `ApplyMetrics(_lastMetrics)` + `SyncFromCatalog/SyncFromShared/ApplyModeVisibility/SyncServiceScope/SetServiceRunning`，
+  关于页是 `ApplyChannel/ApplyBrandLockup/ApplyUpdateState`。
+  缓存一份最近的状态（如 `_lastMetrics`）比换语言时重新扫盘划算。
+  若某个状态机只有「当前值」没有留痕（例如「正在检查更新」），补一个字段记住它，
+  否则换语言会把界面重置成初始态。
+- **图片类品牌资产不随语言变**：`Assets/brand-lockup-*.png` 里印着中文「星酿启动器」，
+  英文界面必须换成纯文字（`AboutPage.ApplyBrandLockup`），不要指望翻译图片。
+- `Loc` 用**弱引用**登记元素（`Tracked`），卸载的页面不会拖住内存，重刷时顺手清理死引用。
+- 兜底路径（`LanguageSwitch.Rebuild`）只在资源上下文切不动时才走：重建窗口，
+  旧窗口的 `OnClosed` 靠 `IsRebuilding` 跳过 `DesktopWindow.Close()` 与 `TavernRuntime.Shutdown()`。
+  为此 `MainWindow` 保留 `IsOnboardingVisible`、`PersistGeometryForReload()`、`DetachContent()`、
+  `NavigateTo(tag, force)`，以及 `TavernInstances.Changed` 的**具名**处理器（lambda 退订不掉）。
+
+### 文案规范
+
+| 角色 | 中文 ≤ | 英文 ≤ | 结构 |
+|---|---|---|---|
+| 主文案（Title / 导航 / 按钮） | 14 字 | 34 字符 | 名词或动词短语，不带句号 |
+| 说明（Description / 灰字） | 22 字 | 60 字符 | 「是什么」+ 可选「会怎样 / 怎么做」 |
+| 通知标题 / 正文 | 10 / 22 字 | 24 / 60 字符 | 结论 + 下一步点哪儿 |
+| 错误 | 22 字 | 60 字符 | 哪里坏了 + 怎么办，不贴异常原文 |
+
+- 技术细节三个去向：`ToolTip`（字段值域 / 协议名）、日志文件（异常 / 命令行 / 退出码，**不译**）、
+  高手版 `FieldHint`（config.yaml 键名，等宽小字，小白版隐藏）。
+- 小白 / 高手双层：`..Description` 与 `..Description.Advanced` 成对，后者是同句的加长版。
+- 术语表：内置实例 / 本地实例 / 依赖 / 运行环境 / 下载源 / 镜像 / GitHub 加速 / 代理 /
+  普通·桌面·服务器模式 / 白名单 / 酒馆配置 / 扩展 / 资源 / 首次引导 / 稳定通道·预览版·测试版·开发版 / 更新。
+  不译：AstraBrew Launcher、SillyTavern、Node.js、npm、Git、Caddy、PM2、WebView2、GitHub/Gitee/GitCode、
+  npmmirror、config.yaml 键名、路径、版本号。
+- **不要拿文案当逻辑**：状态一律走枚举/布尔，不许比较中文字符串。已清理的四处（B1）：
+  - `RuntimeTaskUpdate.State`（`RuntimeTaskState`）：安装进度的「准备中/完成/失败」，原来比较 `Message == "完成"`；
+  - `GithubProbeResult.RouteKind`（`GithubRouteKind`）：403 卡片判断「是不是加速线路被限流」，
+    原来比较 `Route == "加速"`；`Route` 只留作显示；
+  - `MirrorTrial.Cancelled`：测速的「已取消」，原来比较 `Error == "已取消"`；
+  - `ChatMessageItem.IsUser`：聊天记录的用户/角色竖条，原来比较 `Role == "用户"`。
+  其它同类：`TavernReleases` 的「限流条目」用列表差集而不是 `Contains("被限流")`；
+  `SystemProxyState.Kind`（`SystemProxyKind`）决定说明文字，不再往状态里塞中文句子。
+  `OnboardingMigration.IsFileInUse` 是唯一例外：它匹配的是 **Windows 自己的异常消息**，与界面语言无关。
+
+### 自检
+
+`tools/check-strings.ps1`：检查中英 key 一致、`{0}` 占位符一致、代码与 XAML 里引用但资源里没有的 key、超长告警。
+（脚本必须是 UTF-8 **带 BOM**，否则 Windows PowerShell 5.1 按 ANSI 读，中文全乱。）
 
 ## 按钮圆角
 
@@ -201,7 +342,7 @@ dotnet build "AstraBrew Launcher.csproj" -c Release -p:Platform=x64
   页面侧逻辑集中在 `Views/SettingsPage.xaml.cs` 的 `ApplyLevel()`，新增可隐藏的行/组时
   给元素起个名字并在这里登记，不要另写一份「小白版页面」。
 - 小白版去掉：界面里的缩放与字体、基础里的 CPU 核心/服务器模式/数据存放/全局数据目录、
-  整个控制台与原型工具、网络里的代理；运行环境收成一行结论（Git / Node.js / WebView2
+  整个控制台、网络里的代理；运行环境收成一行结论（Git / Node.js / WebView2
   齐全 = 正常，缺任意一项 = 环境缺失 + 「修复」按钮逐个补齐）。
 - 条件行（服务器模式的子行、自定义代理）由 `ApplyConditions()` 再夹一层 `!simple`：
   旧配置里开着它们，也不能在小白版下把子行顶出来。分隔线跟着所属行一起收起，
@@ -1110,6 +1251,8 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
   切步骤时取消上一步的 CTS（`Leave()`）。面板改了状态必须发 `StateChanged`，否则按钮会停在旧状态。
 - **完成标记仍是 `OnboardingState`**（`%LOCALAPPDATA%\AstraBrew Launcher\onboarding.state`），
   只在 `Finish()` 里写一次；「跳过引导」全程保留，两步都走同一个出口。
+- **入口只有首启动**（`MainWindow` 里 `!OnboardingState.IsCompleted` 时进引导页）。设置页原来那栏
+  「首次引导」（重放按钮 + 引导状态文件路径）已整组删除，别再往回加。
 
 ### 第 1 步 · 数据迁移（`Services/OnboardingMigration.cs`）
 

@@ -28,6 +28,23 @@ namespace AstraBrew_Launcher.Services
     /// 一次探测的结果。<see cref="Note"/> 是「能用但不理想」的说明，<see cref="Error"/> 是失败原因，
     /// <see cref="Status"/> 是 HTTP 状态码（拿不到响应头时为空）——判断 403 限流靠它，不解析文案。
     /// </summary>
+    /// <summary>
+    /// 这条结果走的是哪条线路。
+    /// **判断线路用这个，别拿 <c>Route</c> 的文字去比**：Route 是给人看的（「加速 · 走代理」），
+    /// 一旦本地化，<c>Route == "加速"</c> 这类判断就会全部落空，403 卡片会给错按钮。
+    /// </summary>
+    public enum GithubRouteKind
+    {
+        /// <summary>没走任何线路（跳过、没线路可用、两条都 403 后归为「无线路」）。</summary>
+        None,
+
+        /// <summary>直连 github.com。</summary>
+        Direct,
+
+        /// <summary>经 GitHub 加速前缀。</summary>
+        Accel,
+    }
+
     public sealed record GithubProbeResult(
         GithubProbe Probe,
         bool Ok,
@@ -35,7 +52,8 @@ namespace AstraBrew_Launcher.Services
         string? Error,
         string? Note,
         int? Status = null,
-        string? Route = null)
+        string? Route = null,
+        GithubRouteKind RouteKind = GithubRouteKind.None)
     {
         /// <summary>没测（例如没装 Git）。</summary>
         public static GithubProbeResult Skipped(GithubProbe probe, string note) =>
@@ -97,24 +115,24 @@ namespace AstraBrew_Launcher.Services
         {
             new GithubProbe(
                 "web",
-                "官网访问",
-                "https://github.com（HTML 页面，加速不代理页面）",
+                L.Get("Gh.Target.WebsiteLabel"),
+                L.Get("Gh.Target.Website.Detail"),
                 "https://github.com",
                 Accelerable: false),
             new GithubProbe(
                 "api",
-                "API 访问",
-                "仓库 Release 元数据",
+                L.Get("Gh.Target.ApiLabel"),
+                L.Get("Gh.Target.Api.Detail"),
                 "https://api.github.com/repos/SillyTavern/SillyTavern/releases"),
             new GithubProbe(
                 "raw",
-                "Raw 访问",
-                "仓库内的 default/config.yaml",
+                L.Get("Gh.Target.RawLabel"),
+                L.Get("Gh.Target.Raw.Detail"),
                 "https://raw.githubusercontent.com/SillyTavern/SillyTavern/refs/heads/release/default/config.yaml"),
             new GithubProbe(
                 "clone",
-                "克隆仓库",
-                "真拉完整仓库（约 100 MB）到临时目录，测完自动删除",
+                L.Get("Gh.Target.CloneLabel"),
+                L.Get("Gh.Target.Clone.Detail"),
                 RepositoryUrl,
                 IsGit: true),
         };
@@ -123,10 +141,10 @@ namespace AstraBrew_Launcher.Services
         public static string DescribeExit()
         {
             string accel = GithubAccel.Enabled
-                ? $"加速开启（API / Raw / 克隆走 {GithubAccel.Prefix}）"
-                : "加速关闭";
+                ? L.F("Gh.Accel.On", GithubAccel.Prefix)
+                : L.Get("Gh.Accel.Off");
 
-            return $"当前出口：{ProxyRoute.Resolve().Describe()} · {accel}";
+            return L.F("Gh.Summary", ProxyRoute.Resolve().Describe(), accel);
         }
 
         /// <summary>
@@ -177,17 +195,17 @@ namespace AstraBrew_Launcher.Services
         /// 加速关着就只有直连——没让用户开的线路不该偷偷用。
         /// 只拼前缀、不改路径：中转端自己会做规范化。
         /// </summary>
-        private static IReadOnlyList<(string Route, string Url)> ResolveUrls(GithubProbe probe)
+        private static IReadOnlyList<(GithubRouteKind Kind, string Route, string Url)> ResolveUrls(GithubProbe probe)
         {
             if (!probe.Accelerable || !GithubAccel.Enabled || !GithubAccel.IsGithubUrl(probe.Url))
             {
-                return new[] { ("直连", probe.Url) };
+                return new[] { (GithubRouteKind.Direct, L.Get("Gh.Name.Direct"), probe.Url) };
             }
 
             return new[]
             {
-                ("加速", GithubAccel.Prefix + probe.Url.Trim()),
-                ("直连", probe.Url),
+                (GithubRouteKind.Accel, L.Get("Gh.Name.Accel"), GithubAccel.Prefix + probe.Url.Trim()),
+                (GithubRouteKind.Direct, L.Get("Gh.Name.Direct"), probe.Url),
             };
         }
 
@@ -198,9 +216,9 @@ namespace AstraBrew_Launcher.Services
             ProxyRoute route = ProxyRoute.Resolve();
             var attempts = new List<GithubProbeResult>();
 
-            foreach ((string routeName, string url) in ResolveUrls(probe))
+            foreach ((GithubRouteKind kind, string routeName, string url) in ResolveUrls(probe))
             {
-                GithubProbeResult attempt = await TryHttpAsync(probe, route, url, routeName, token)
+                GithubProbeResult attempt = await TryHttpAsync(probe, route, url, routeName, kind, token)
                     .ConfigureAwait(false);
 
                 if (attempt.Ok)
@@ -225,6 +243,7 @@ namespace AstraBrew_Launcher.Services
             ProxyRoute route,
             string url,
             string routeName,
+            GithubRouteKind routeKind,
             CancellationToken token)
         {
             var clock = Stopwatch.StartNew();
@@ -247,10 +266,11 @@ namespace AstraBrew_Launcher.Services
 
                 if (response.IsSuccessStatusCode)
                 {
-                    return new GithubProbeResult(probe, true, latency, null, null, code, routeName);
+                    return new GithubProbeResult(probe, true, latency, null, null, code, routeName, routeKind);
                 }
 
-                return new GithubProbeResult(probe, false, latency, $"HTTP {code}", null, code, routeName);
+                return new GithubProbeResult(
+                    probe, false, latency, $"HTTP {code}", null, code, routeName, routeKind);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -259,12 +279,12 @@ namespace AstraBrew_Launcher.Services
             catch (TaskCanceledException)
             {
                 return new GithubProbeResult(
-                    probe, false, null, $"超时（{HttpTimeout.TotalSeconds:0} 秒）", null, null, routeName);
+                    probe, false, null, L.F("Gh.Err.Timeout", HttpTimeout.TotalSeconds.ToString("0")), null, null, routeName, routeKind);
             }
             catch (HttpRequestException ex)
             {
                 return new GithubProbeResult(
-                    probe, false, null, DescribeHttpError(ex), null, null, routeName);
+                    probe, false, null, DescribeHttpError(ex), null, null, routeName, routeKind);
             }
         }
 
@@ -278,7 +298,7 @@ namespace AstraBrew_Launcher.Services
         {
             if (attempts.Count == 0)
             {
-                return new GithubProbeResult(probe, false, null, "没有可用线路", null);
+                return new GithubProbeResult(probe, false, null, L.Get("Gh.Err.NoRoute"), null);
             }
 
             if (attempts.Count == 1)
@@ -288,7 +308,12 @@ namespace AstraBrew_Launcher.Services
 
             if (attempts.All(attempt => attempt.IsRateLimited))
             {
-                return attempts[^1] with { Error = "两条线路都返回 403", Route = null };
+                return attempts[^1] with
+                {
+                    Error = L.Get("Gh.Err.BothForbidden"),
+                    Route = null,
+                    RouteKind = GithubRouteKind.None,
+                };
             }
 
             GithubProbeResult? limited = attempts.FirstOrDefault(attempt => attempt.IsRateLimited);
@@ -298,7 +323,7 @@ namespace AstraBrew_Launcher.Services
             }
 
             string detail = string.Join(" / ", attempts.Select(
-                attempt => $"{attempt.Route}：{attempt.Error ?? "失败"}"));
+                attempt => L.F("Gh.AttemptLabel", attempt.Route, attempt.Error ?? L.Get("Gh.Attempt.Failed"))));
 
             return attempts[^1] with { Error = detail };
         }
@@ -322,7 +347,7 @@ namespace AstraBrew_Launcher.Services
                 string? git = GitCommand.LocateGit();
                 if (git is null)
                 {
-                    return GithubProbeResult.Skipped(probe, "未安装 Git，跳过");
+                    return GithubProbeResult.Skipped(probe, L.Get("Gh.Skipped.NoGit"));
                 }
 
                 // 代理是全局开关：这条测试测的是「当前设置能不能拉」，所以照着设置走，
@@ -333,7 +358,7 @@ namespace AstraBrew_Launcher.Services
                 // 两条线路共用一份预算：第一条把时间吃光，就不该再开第二条熬着
                 var budget = Stopwatch.StartNew();
 
-                foreach ((string routeName, string url) in ResolveUrls(probe))
+                foreach ((GithubRouteKind kind, string routeName, string url) in ResolveUrls(probe))
                 {
                     TimeSpan left = CloneBudget - budget.Elapsed;
 
@@ -345,7 +370,7 @@ namespace AstraBrew_Launcher.Services
                     TimeSpan window = left < CloneRouteTimeout ? left : CloneRouteTimeout;
 
                     GithubProbeResult attempt = RunOneClone(
-                        probe, git, url, routeName, proxyOn, window, progress, token);
+                        probe, git, url, routeName, kind, proxyOn, window, progress, token);
 
                     if (attempt.Ok)
                     {
@@ -381,12 +406,13 @@ namespace AstraBrew_Launcher.Services
             string git,
             string url,
             string routeName,
+            GithubRouteKind routeKind,
             bool proxyOn,
             TimeSpan timeout,
             IProgress<GithubCloneProgress>? progress,
             CancellationToken token)
         {
-            string label = proxyOn ? $"{routeName} · 走代理" : routeName;
+            string label = proxyOn ? L.F("Gh.ViaProxy", routeName) : routeName;
             string workDir = TempDir.Create("gh-connect");
             var clock = Stopwatch.StartNew();
 
@@ -447,7 +473,8 @@ namespace AstraBrew_Launcher.Services
 
                 if (!process.Start())
                 {
-                    return new GithubProbeResult(probe, false, null, "无法启动 git", null, null, label);
+                    return new GithubProbeResult(
+                        probe, false, null, L.Get("Gh.Err.GitCannotStart"), null, null, label, routeKind);
                 }
 
                 process.BeginErrorReadLine();
@@ -458,7 +485,8 @@ namespace AstraBrew_Launcher.Services
                     if (token.IsCancellationRequested)
                     {
                         GitCommand.Kill(process);
-                        return new GithubProbeResult(probe, false, null, "已取消", null, null, label);
+                        return new GithubProbeResult(
+                            probe, false, null, L.Get("Gh.Cancelled"), null, null, label, routeKind);
                     }
 
                     // 到点就掐：慢到这种程度的通道，装上酒馆也是这个速度，判定为不可用
@@ -469,10 +497,11 @@ namespace AstraBrew_Launcher.Services
                             probe,
                             false,
                             null,
-                            $"超时（{timeout.TotalSeconds:0} 秒没拉完，通道太慢）",
+                            L.F("Gh.Err.CloneTimeout", timeout.TotalSeconds.ToString("0")),
                             null,
                             null,
-                            label);
+                            label,
+                            routeKind);
                     }
 
                     Thread.Sleep(50);
@@ -485,7 +514,7 @@ namespace AstraBrew_Launcher.Services
 
                 if (process.ExitCode == 0)
                 {
-                    return new GithubProbeResult(probe, true, latency, null, null, null, label);
+                    return new GithubProbeResult(probe, true, latency, null, null, null, label, routeKind);
                 }
 
                 string detail = LastMeaningful(tail, gate);
@@ -494,15 +523,16 @@ namespace AstraBrew_Launcher.Services
                     probe,
                     false,
                     latency,
-                    detail.Length > 0 ? detail : $"git 退出代码 {process.ExitCode}",
+                    detail.Length > 0 ? detail : L.F("Gh.Err.GitExit", process.ExitCode),
                     null,
                     null,
-                    label);
+                    label,
+                    routeKind);
             }
             catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException or InvalidOperationException)
             {
                 return new GithubProbeResult(
-                    probe, false, null, GitCommand.FirstLine(ex.Message), null, null, label);
+                    probe, false, null, GitCommand.FirstLine(ex.Message), null, null, label, routeKind);
             }
             finally
             {
@@ -558,27 +588,27 @@ namespace AstraBrew_Launcher.Services
 
             if (lower.Contains("ssl") || lower.Contains("tls") || lower.Contains("authentication failed"))
             {
-                return "TLS 握手失败（域名可能被阻断）";
+                return L.Get("Gh.Err.Tls");
             }
 
             if (lower.Contains("no such host") || lower.Contains("name or service not known") || lower.Contains("nodename"))
             {
-                return "域名解析失败";
+                return L.Get("Gh.Err.Dns");
             }
 
             if (lower.Contains("refused"))
             {
-                return "连接被拒绝";
+                return L.Get("Gh.Err.Refused");
             }
 
             if (lower.Contains("reset"))
             {
-                return "连接被重置";
+                return L.Get("Gh.Err.Reset");
             }
 
             if (lower.Contains("timed out") || lower.Contains("timeout"))
             {
-                return "连接超时";
+                return L.Get("Gh.Err.ConnTimeout");
             }
 
             return GitCommand.FirstLine(raw);

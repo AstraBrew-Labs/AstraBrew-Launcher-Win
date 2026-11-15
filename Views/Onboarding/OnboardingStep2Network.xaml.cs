@@ -134,7 +134,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
         {
             foreach (TextBlock status in _mirrorRows.Values)
             {
-                status.Text = "等着";
+                status.Text = L.Get("Setup.Common.Waiting");
                 status.FontWeight = FontWeights.Normal;
                 status.Foreground = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
             }
@@ -179,37 +179,37 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             if (_busy)
             {
-                reason = "正在检查，等一下";
+                reason = L.Get("Setup.S2.Reason.Checking");
                 return false;
             }
 
             if (!_pingOk)
             {
-                reason = "网没通，看看 Wi-Fi 或网线";
+                reason = L.Get("Setup.S2.Reason.Offline");
                 return false;
             }
 
             if (!_dnsOk)
             {
-                reason = "网通了但打不开网页，看看代理";
+                reason = L.Get("Setup.S2.Reason.WebBlocked");
                 return false;
             }
 
             if (!_apiOk && !_githubSkipped)
             {
-                reason = _blocking ?? "连不上 GitHub 接口";
+                reason = _blocking ?? L.Get("Setup.S2.Reason.ApiBlocked");
                 return false;
             }
 
             if (!_rawOk && !_githubSkipped)
             {
-                reason = _blocking ?? "取不到酒馆文件，开加速再试";
+                reason = _blocking ?? L.Get("Setup.S2.Reason.NoTavernFiles");
                 return false;
             }
 
             if (!_mirrorOk)
             {
-                reason = "四条线都不通，下不了酒馆";
+                reason = L.Get("Setup.S2.Reason.NoMirror");
                 return false;
             }
 
@@ -248,7 +248,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 if (!_pingOk)
                 {
                     _busy = false;
-                    SummaryText.Text = "上不了网。检查 Wi-Fi、网线或代理，再点「再查一次」。";
+                    SummaryText.Text = L.Get("Setup.S2.Summary.Offline");
                     RaiseState();
                     return;
                 }
@@ -265,7 +265,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 if (!_dnsOk)
                 {
                     _busy = false;
-                    SummaryText.Text = "网络是通的，但网页打不开。看看代理，再查一次。";
+                    SummaryText.Text = L.Get("Setup.S2.Summary.WebBlocked");
                     RaiseState();
                     return;
                 }
@@ -360,11 +360,13 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 // 用户得看得见，否则会以为加速在生效
                 string via = GithubAccel.Enabled && route is { Length: > 0 } ? $" · {route}" : string.Empty;
 
-                row.SetState(CheckState.Ready, latency is { } ms ? $"{ms} ms{via}" : $"正常{via}");
+                row.SetState(CheckState.Ready, latency is { } ms
+                    ? L.F("Setup.S2.Status.Ready", ms, via)
+                    : L.F("Setup.S2.Status.Ok", via));
                 return;
             }
 
-            row.SetState(CheckState.Missing, error is { Length: > 0 } ? error : "失败");
+            row.SetState(CheckState.Missing, error is { Length: > 0 } ? error : L.Get("Setup.Common.Failed"));
         }
 
         /// <summary>
@@ -379,31 +381,31 @@ namespace AstraBrew_Launcher.Views.Onboarding
             {
                 // 两条线路都 403：换线没用，只能等
                 _fix = RateLimitFix.Recheck;
-                _blocking = "GitHub 限流了，过一会儿再试";
-                RateLimitText.Text = "两条线路都被 GitHub 限流了（403）。这不是你的网络问题，过一会儿再点「再查一次」。";
-                FixRouteButton.Content = "再查一次";
+                _blocking = L.Get("Setup.S2.Blocking.RateLimited");
+                RateLimitText.Text = L.Get("Setup.S2.RateLimit.All.Title");
+                FixRouteButton.Content = L.Get("Setup.S2.Fix.Recheck");
             }
-            else if (hit.Route == "加速")
+            else if (hit.RouteKind == GithubRouteKind.Accel)
             {
                 // 加速线路被限流、直连也不通：关掉加速再试
                 _fix = RateLimitFix.DisableAccel;
-                _blocking = "加速线路被限流，关掉加速再试";
-                RateLimitText.Text = "加速线路被限流了（403），直连也没通。可以关掉加速走直连，或者过一会儿再试。";
-                FixRouteButton.Content = "关加速再试";
+                _blocking = L.Get("Setup.S2.Blocking.RateLimitedAccel");
+                RateLimitText.Text = L.Get("Setup.S2.RateLimit.Accel.Title");
+                FixRouteButton.Content = L.Get("Setup.S2.Fix.DisableAccel");
             }
             else
             {
                 // 只试了直连（加速没开）：建议开加速
                 _fix = RateLimitFix.EnableAccel;
-                _blocking = "GitHub 限流了，开加速再试";
-                RateLimitText.Text = accelOn
-                    ? "GitHub 限流了（403）。过一会儿再试，或者先把加速打开换条线路。"
-                    : "直连被 GitHub 限流了（403）。开加速换条线路就能继续。";
-                FixRouteButton.Content = "开加速再试";
+                _blocking = L.Get("Setup.S2.Blocking.RateLimitedEnable");
+                RateLimitText.Text = L.Get(accelOn
+                    ? "Setup.S2.RateLimit.Direct.Title2"
+                    : "Setup.S2.RateLimit.Direct.Title");
+                FixRouteButton.Content = L.Get("Setup.S2.Fix.EnableAccel");
             }
 
             RateLimitCard.Visibility = Visibility.Visible;
-            SummaryText.Text = "限流时拿不到列表，下载测速还能继续。";
+            SummaryText.Text = L.Get("Setup.S2.RateLimit.Summary");
         }
 
         /// <summary>
@@ -413,27 +415,25 @@ namespace AstraBrew_Launcher.Views.Onboarding
         /// </summary>
         private void ShowBlocked(GithubProbeResult hit)
         {
-            string reason = hit.Error is { Length: > 0 } error ? error : "连不上";
+            string reason = hit.Error is { Length: > 0 } error ? error : L.Get("Setup.S2.Unreachable.Reason");
 
             if (GithubAccel.Enabled)
             {
                 _fix = RateLimitFix.Recheck;
-                _blocking = "GitHub 连不上，检查代理后再试";
-                RateLimitText.Text =
-                    $"GitHub 文件地址连不上：{reason}。加速已经开着，检查一下代理或网络，再点「再查一次」。";
-                FixRouteButton.Content = "再查一次";
+                _blocking = L.Get("Setup.S2.Blocking.Unreachable");
+                RateLimitText.Text = L.F("Setup.S2.Unreachable.Accel.Title", reason);
+                FixRouteButton.Content = L.Get("Setup.S2.Fix.Recheck");
             }
             else
             {
                 _fix = RateLimitFix.EnableAccel;
-                _blocking = "GitHub 连不上，开加速再试";
-                RateLimitText.Text =
-                    $"GitHub 文件地址连不上：{reason}。打开加速换条线路就能继续。";
-                FixRouteButton.Content = "开加速再试";
+                _blocking = L.Get("Setup.S2.Blocking.UnreachableEnable");
+                RateLimitText.Text = L.F("Setup.S2.Unreachable.Direct.Title", reason);
+                FixRouteButton.Content = L.Get("Setup.S2.Fix.EnableAccel");
             }
 
             RateLimitCard.Visibility = Visibility.Visible;
-            SummaryText.Text = "拿不到酒馆文件，先开加速换条线路。";
+            SummaryText.Text = L.Get("Setup.S2.Unreachable.Summary");
         }
 
         // ==================== 403 分支 ====================
@@ -460,17 +460,23 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
                     if (sync is { Ok: false } failed)
                     {
-                        AppNotify.Warning(enable ? "加速开了，命令行那部分没设上" : "关加速时命令行没改回来", failed.Message);
+                        AppNotify.Warning(
+                            L.Get(enable
+                                ? "Setup.S2.Notify.AccelGitFailed.On"
+                                : "Setup.S2.Notify.AccelGitFailed.Off"),
+                            failed.Message);
                     }
                     else
                     {
-                        AppNotify.Success(enable ? "加速已打开" : "加速已关闭", "正在重新检查…");
+                        AppNotify.Success(
+                            L.Get(enable ? "Setup.S2.Notify.AccelOn" : "Setup.S2.Notify.AccelOff"),
+                            L.Get("Setup.S2.Notify.Rechecking"));
                     }
                 }
             }
             catch (Exception ex)
             {
-                AppNotify.Warning("切换线路时出错了", ex.Message);
+                AppNotify.Warning(L.Get("Setup.S2.Notify.SwitchFailed"), ex.Message);
             }
             finally
             {
@@ -484,7 +490,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
         {
             _githubSkipped = true;
             RateLimitCard.Visibility = Visibility.Collapsed;
-            SummaryText.Text = "跳过了 GitHub 检查，版本列表只能用旧的。";
+            SummaryText.Text = L.Get("Setup.S2.Summary.Skipped");
             RaiseState();
 
             // 这里也开新一轮：跳过时测速区可能正有一轮在跑，不掐掉会出现两份结果互相覆盖
@@ -515,7 +521,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
                 var status = new TextBlock
                 {
-                    Text = "等着",
+                    Text = L.Get("Setup.Common.Waiting"),
                     MaxWidth = 240,
                     FontSize = 12,
                     TextTrimming = TextTrimming.CharacterEllipsis,
@@ -576,15 +582,17 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
                 string elapsed = MirrorBenchmark.DescribeElapsed(best.ElapsedMs);
 
-                SummaryText.Text = $"以后从 {best.Name} 下载，拉完用了 {elapsed}";
-                AppNotify.Success("已经选好最快的线路", $"{best.Name} · {elapsed}");
+                SummaryText.Text = L.F("Setup.S2.Mirror.Chosen.Line", best.Name, elapsed);
+                AppNotify.Success(
+                    L.Get("Setup.S2.Mirror.Chosen.Title"),
+                    L.F("Setup.S2.Mirror.Row.Selected", $"{best.Name} · {elapsed}"));
             }
             else
             {
                 _mirrorOk = false;
                 SummaryText.Text = result.Error is { Length: > 0 } error
-                    ? $"测速没成功，还是从 {LauncherSettings.ChannelName(LauncherSettings.Channel)} 下载（{error}）"
-                    : "测速没成功，下载线路没变。";
+                    ? L.F("Setup.S2.Mirror.FailedWithError", LauncherSettings.ChannelName(LauncherSettings.Channel), error)
+                    : L.Get("Setup.S2.Mirror.Failed");
             }
 
             _busy = false;
@@ -624,24 +632,24 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 return;
             }
 
-            if (trial.Error == "已取消")
+            if (trial.Cancelled)
             {
                 // 别人先拉完了，这条是我们主动停的：写成「没等它拉完」，别让人以为它坏了
-                status.Text = "没等它拉完";
+                status.Text = L.Get("Setup.S2.Mirror.Cancelled");
                 status.Foreground = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"];
                 return;
             }
 
             if (!trial.Ok)
             {
-                status.Text = trial.Error is { Length: > 0 } error ? error : "没通过";
+                status.Text = trial.Error is { Length: > 0 } error ? error : L.Get("Setup.S2.Mirror.Rejected");
                 status.Foreground = (Brush)Application.Current.Resources["SystemFillColorCriticalBrush"];
                 return;
             }
 
             string elapsed = MirrorBenchmark.DescribeElapsed(trial.ElapsedMs);
 
-            status.Text = selected ? $"{elapsed} · 用这条" : elapsed;
+            status.Text = selected ? L.F("Setup.S2.Mirror.Row.Selected", elapsed) : elapsed;
 
             status.Foreground = selected
                 ? (Brush)Application.Current.Resources["SystemFillColorSuccessBrush"]

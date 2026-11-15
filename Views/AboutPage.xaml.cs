@@ -3,13 +3,11 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading.Tasks;
 using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
-using Windows.ApplicationModel.DataTransfer;
 using Windows.UI;
 
 namespace AstraBrew_Launcher.Views
@@ -23,12 +21,54 @@ namespace AstraBrew_Launcher.Views
         private string _appDir = string.Empty;
         private string _dataDir = string.Empty;
         private string _logDir = string.Empty;
-        private bool _copying;
+
+        /// <summary>更新检查进行到哪一步。换语言时据此重画那两行字，而不是一律重置成「尚未检查」。</summary>
+        private UpdateCheckState _updateState = UpdateCheckState.Never;
+
+        private enum UpdateCheckState
+        {
+            Never,
+            Checking,
+            UpToDate,
+        }
 
         public AboutPage()
         {
             InitializeComponent();
-            Loaded += (_, _) => FillEnvironment();
+            Loaded += (_, _) =>
+            {
+                FillEnvironment();
+                ApplyDocsLink();
+            };
+
+            // 渠道标记、更新通道都是按当前语言取的：换语言后要重画一遍
+            LanguageSwitch.LanguageChanged += OnLanguageChanged;
+            Unloaded += (_, _) => LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+        }
+
+        private void OnLanguageChanged(object? sender, EventArgs e)
+        {
+            ApplyChannel();
+            ApplyBrandLockup();
+            ApplyUpdateState();
+            ApplyDocsLink();
+        }
+
+        /// <summary>
+        /// 品牌标识：中文用横版图片（图里就是中文），英文换成同名字的纯文字。
+        /// 不这么做的话，英文界面上会挂着一张写着「星酿启动器」的图。
+        /// </summary>
+        private void ApplyBrandLockup()
+        {
+            if (HeroBrandImage is null || HeroBrandText is null)
+            {
+                return;
+            }
+
+            bool chinese = !L.IsEnglish;
+            HeroBrandImage.Visibility = chinese ? Visibility.Visible : Visibility.Collapsed;
+            HeroBrandText.Visibility = chinese ? Visibility.Collapsed : Visibility.Visible;
+            HeroBrandText.Text = L.Get("Shell.AppName.Full");
         }
 
         private void FillEnvironment()
@@ -40,6 +80,7 @@ namespace AstraBrew_Launcher.Views
             HeroVersionChipText.Text = versionText;
 
             ApplyChannel();
+            ApplyBrandLockup();
 
             // 构建号取 exe 的写入时间，重新构建后自动跟着变
             string exePath = Environment.ProcessPath ?? string.Empty;
@@ -52,7 +93,10 @@ namespace AstraBrew_Launcher.Views
             RuntimeValue.Text = RuntimeInformation.FrameworkDescription;
 
             var os = Environment.OSVersion.Version;
-            OsValue.Text = $"{OsName(os.Build)}（内部版本 {os.Build}.{os.Revision}）";
+            OsValue.Text = L.F(
+                "About.Os.Value",
+                OsName(os.Build),
+                $"{os.Build}.{os.Revision}");
 
             string arch = RuntimeInformation.ProcessArchitecture switch
             {
@@ -81,15 +125,28 @@ namespace AstraBrew_Launcher.Views
         }
 
         /// <summary>
+        /// 文档站分中英两套（/zh/guide 与 /en/guide），链接跟着界面语言走；
+        /// 站上没有对应语言时退回中文页——总比给一个 404 强。
+        /// </summary>
+        private void ApplyDocsLink()
+        {
+            if (DocsRowButton is null || DocsRowUrl is null)
+            {
+                return;
+            }
+
+            string path = L.IsEnglish ? "en/guide" : "zh/guide";
+            DocsRowButton.Tag = $"https://launcher.astrabrew.cn/{path}";
+            DocsRowUrl.Text = $"launcher.astrabrew.cn/{path}";
+        }
+
+        /// <summary>
         /// 渠道标记。构建配置（Alpha / Beta / Debug）已经编进程序集，这里只负责画：
         /// · 正式版：胶囊保持 MetaChipStyle 的中性灰，写「稳定通道」，不出现任何「预览 / 测试」字样；
         /// · 其余三种：胶囊写「预览版 / 测试版 / 开发版」，文字与底色都换成该渠道的强调色。
-        /// 「更新通道」那一行跟着换名字——预览版还写「稳定通道」会自相矛盾。
         /// </summary>
         private void ApplyChannel()
         {
-            ChannelValue.Text = BuildChannelInfo.ChannelName;
-
             if (BuildChannelInfo.Badge is not { Length: > 0 } badge)
             {
                 return;
@@ -115,65 +172,42 @@ namespace AstraBrew_Launcher.Views
 
         // ==================== 交互 ====================
 
-        private async void CopyVersionInfo_Click(object sender, RoutedEventArgs e)
-        {
-            if (_copying)
-            {
-                return;
-            }
-
-            _copying = true;
-
-            var text = new StringBuilder();
-            text.AppendLine("AstraBrew Launcher 星酿启动器");
-            text.AppendLine($"版本       {VersionValue.Text}");
-            text.AppendLine($"构建       {BuildValue.Text}");
-
-            // 正式版不写这一行：拿到反馈时，没有渠道字样就代表是稳定版
-            if (BuildChannelInfo.Badge is { Length: > 0 })
-            {
-                text.AppendLine($"渠道       {BuildChannelInfo.Describe}");
-            }
-
-            text.AppendLine($"酒馆实例   {TavernInstances.Current.DisplayLabel}");
-            text.AppendLine($"运行时     {RuntimeValue.Text}");
-            text.AppendLine($"操作系统   {OsValue.Text}");
-            text.AppendLine($"进程架构   {ArchValue.Text}");
-            text.AppendLine($"数据目录   {_dataDir}");
-
-            try
-            {
-                var package = new DataPackage();
-                package.SetText(text.ToString());
-                Clipboard.SetContent(package);
-
-                CopyIcon.Glyph = "\uE8FB";
-                CopyLabel.Text = "已复制";
-                await Task.Delay(1600);
-            }
-            catch
-            {
-                // 剪贴板被别的进程占用时静默跳过，不打断演示
-            }
-
-            CopyIcon.Glyph = "\uE8C8";
-            CopyLabel.Text = "复制版本信息";
-            _copying = false;
-        }
-
         private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
         {
             CheckUpdateButton.IsEnabled = false;
-            CheckUpdateText.Text = "检查中…";
-            LastCheckText.Text = "正在连接更新服务…";
+            _updateState = UpdateCheckState.Checking;
+            ApplyUpdateState();
 
             await Task.Delay(1200);
-            CheckUpdateText.Text = "已是最新";
-            LastCheckText.Text = "刚刚检查 · 已是最新版本";
+            _updateState = UpdateCheckState.UpToDate;
+            ApplyUpdateState();
 
             await Task.Delay(1800);
-            CheckUpdateText.Text = "检查更新";
+            _updateState = UpdateCheckState.Never;
+            ApplyUpdateState();
             CheckUpdateButton.IsEnabled = true;
+        }
+
+        /// <summary>按当前检查状态刷那两行文字（换语言时也会走到这里）。</summary>
+        private void ApplyUpdateState()
+        {
+            switch (_updateState)
+            {
+                case UpdateCheckState.Checking:
+                    CheckUpdateText.Text = L.Get("About.Update.Checking");
+                    LastCheckText.Text = L.Get("About.Update.Connecting");
+                    break;
+
+                case UpdateCheckState.UpToDate:
+                    CheckUpdateText.Text = L.Get("About.Update.Latest");
+                    LastCheckText.Text = L.Get("About.Update.LatestHint");
+                    break;
+
+                default:
+                    CheckUpdateText.Text = L.Get("About.Action.CheckUpdate");
+                    LastCheckText.Text = L.Get("About.Update.Never");
+                    break;
+            }
         }
 
         private async void OpenLink_Click(object sender, RoutedEventArgs e)

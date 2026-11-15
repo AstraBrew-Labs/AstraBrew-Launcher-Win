@@ -31,7 +31,7 @@ namespace AstraBrew_Launcher.Services
         public static int MaxLimitMb { get; } = ComputeMaxLimit();
 
         /// <summary>给界面用的一行说明：本机 16 GB，上限可到 12 GB。</summary>
-        public static string DescribeGb(long mb) => mb > 0 ? $"{mb / 1024.0:0.#} GB" : "未知";
+        public static string DescribeGb(long mb) => mb > 0 ? $"{mb / 1024.0:0.#} GB" : L.Get("Cmp.Unknown");
 
         private static int ComputeMaxLimit()
         {

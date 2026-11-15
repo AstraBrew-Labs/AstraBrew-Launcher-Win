@@ -3,6 +3,7 @@
     x:Class="AstraBrew_Launcher.Views.Controls.NotifyToast"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:loc="using:AstraBrew_Launcher.Views.Controls"
     AutomationProperties.LiveSetting="Polite"
     IsTabStop="False">
 
@@ -57,10 +58,10 @@
                 Grid.Column="2"
                 Margin="0,-6,-4,0"
                 VerticalAlignment="Top"
-                AutomationProperties.Name="关闭提示"
+                loc:Loc.Name="Notify.Toast.Close"
                 Click="Close_Click"
                 Style="{StaticResource SubtleIconButtonStyle}"
-                ToolTipService.ToolTip="关闭">
+                loc:Loc.ToolTip="Common.Action.Close.Content">
                 <FontIcon FontSize="11" Glyph="&#xE711;" />
             </Button>
 

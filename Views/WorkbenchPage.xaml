@@ -24,7 +24,7 @@
                     <Button
                         Click="TagRemove_Click"
                         Style="{StaticResource ChipCloseButtonStyle}"
-                        ToolTipService.ToolTip="移除这个标签">
+ panels:Loc.ToolTip="Wb.Tag.Remove.Tip">
                         <FontIcon FontSize="8" Glyph="&#xE711;" />
                     </Button>
                 </StackPanel>
@@ -78,14 +78,14 @@
                         <TextBlock
                             Foreground="{ThemeResource SystemFillColorSuccessBrush}"
                             Style="{StaticResource StatePillTextStyle}"
-                            Text="启用" />
+ panels:Loc.Text="Wb.Entry.On" />
                     </Border>
                     <Border
                         Grid.Column="2"
                         VerticalAlignment="Center"
                         Style="{StaticResource StatePillStyle}"
                         Visibility="{x:Bind DisabledVisibility}">
-                        <TextBlock Style="{StaticResource StatePillTextStyle}" Text="停用" />
+                        <TextBlock Style="{StaticResource StatePillTextStyle}" panels:Loc.Text="Wb.Entry.Off" />
                     </Border>
                 </Grid>
             </Border>
@@ -132,7 +132,7 @@
                             Background="Transparent"
                             BorderThickness="0"
                             Click="ToggleEntry_Click"
-                            ToolTipService.ToolTip="展开 / 收起这条的编辑区">
+ panels:Loc.ToolTip="Wb.Entry.Toggle.Tip">
                             <StackPanel Spacing="1">
                                 <TextBlock
                                     FontSize="12.5"
@@ -165,7 +165,7 @@
                                 VerticalAlignment="Center"
                                 FontSize="11"
                                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                Text="启用" />
+ panels:Loc.Text="Wb.Entry.On" />
                             <ToggleSwitch
                                 MinWidth="0"
                                 IsOn="{x:Bind Enabled, Mode=TwoWay}"
@@ -178,10 +178,10 @@
                             Width="26"
                             Height="26"
                             Padding="0"
-                            AutomationProperties.Name="展开条目"
+ panels:Loc.Name="Wb.Entry.Toggle.Name"
                             Click="ToggleEntry_Click"
                             Style="{StaticResource SubtleIconButtonStyle}"
-                            ToolTipService.ToolTip="展开 / 收起">
+ panels:Loc.ToolTip="Wb.Entry.Toggle.Tip">
                             <FontIcon FontSize="10" Glyph="{x:Bind ChevronGlyph, Mode=OneWay}" />
                         </Button>
                     </Grid>
@@ -200,7 +200,7 @@
 
                         <TextBox
                             FontSize="12"
-                            PlaceholderText="备注（只用于识别条目，不参与匹配）"
+ panels:Loc.Placeholder="Wb.Entry.Comment.Placeholder"
                             Text="{x:Bind Comment, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
 
                         <Grid ColumnSpacing="10">
@@ -210,7 +210,7 @@
                             </Grid.ColumnDefinitions>
 
                             <StackPanel Spacing="5">
-                                <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="关键词" />
+                                <TextBlock Style="{StaticResource MetaCellLabelStyle}" panels:Loc.Text="Wb.Entry.Keys.Title" />
                                 <ItemsControl ItemsSource="{x:Bind Keys}">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
@@ -229,7 +229,7 @@
                                     <TextBox
                                         FontSize="12"
                                         KeyDown="KeyInput_KeyDown"
-                                        PlaceholderText="回车添加"
+ panels:Loc.Placeholder="Wb.Entry.Keys.Placeholder"
                                         Tag="primary"
                                         Text="{x:Bind KeysInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                     <Button
@@ -239,14 +239,14 @@
                                         Padding="0"
                                         Click="AddKey_Click"
                                         Tag="primary"
-                                        ToolTipService.ToolTip="添加关键词">
+ panels:Loc.ToolTip="Wb.Entry.Keys.Add.Tip">
                                         <FontIcon FontSize="12" Glyph="&#xE710;" />
                                     </Button>
                                 </Grid>
                             </StackPanel>
 
                             <StackPanel Grid.Column="1" Spacing="5">
-                                <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="次关键词" />
+                                <TextBlock Style="{StaticResource MetaCellLabelStyle}" panels:Loc.Text="Wb.Entry.Secondary.Title" />
                                 <ItemsControl ItemsSource="{x:Bind SecondaryKeys}">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
@@ -265,7 +265,7 @@
                                     <TextBox
                                         FontSize="12"
                                         KeyDown="KeyInput_KeyDown"
-                                        PlaceholderText="回车添加"
+ panels:Loc.Placeholder="Wb.Entry.Keys.Placeholder"
                                         Tag="secondary"
                                         Text="{x:Bind SecondaryKeysInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                     <Button
@@ -275,7 +275,7 @@
                                         Padding="0"
                                         Click="AddKey_Click"
                                         Tag="secondary"
-                                        ToolTipService.ToolTip="添加次关键词">
+ panels:Loc.ToolTip="Wb.Entry.Secondary.Add.Tip">
                                         <FontIcon FontSize="12" Glyph="&#xE710;" />
                                     </Button>
                                 </Grid>
@@ -284,7 +284,7 @@
 
                         <TextBox
                             Height="96"
-                            PlaceholderText="命中后插入到上下文中的正文"
+ panels:Loc.Placeholder="Wb.Entry.Body.Placeholder"
                             Style="{StaticResource BodyTextBoxStyle}"
                             Text="{x:Bind Content, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
 
@@ -297,14 +297,14 @@
                             </Grid.ColumnDefinitions>
 
                             <StackPanel Spacing="4">
-                                <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="顺序" />
+                                <TextBlock Style="{StaticResource MetaCellLabelStyle}" panels:Loc.Text="Wb.Entry.Order.Title" />
                                 <TextBox
                                     FontSize="12"
                                     Text="{x:Bind Order, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                             </StackPanel>
 
                             <StackPanel Grid.Column="1" Spacing="4">
-                                <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="插入位置" />
+                                <TextBlock Style="{StaticResource MetaCellLabelStyle}" panels:Loc.Text="Wb.Entry.Position.Title" />
                                 <ComboBox
                                     HorizontalAlignment="Stretch"
                                     FontSize="12"
@@ -313,14 +313,14 @@
                             </StackPanel>
 
                             <StackPanel Grid.Column="2" Spacing="4">
-                                <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="触发概率" />
+                                <TextBlock Style="{StaticResource MetaCellLabelStyle}" panels:Loc.Text="Wb.Entry.Probability.Title" />
                                 <TextBox
                                     FontSize="12"
                                     Text="{x:Bind Probability, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                             </StackPanel>
 
                             <StackPanel Grid.Column="3" Spacing="4">
-                                <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="深度" />
+                                <TextBlock Style="{StaticResource MetaCellLabelStyle}" panels:Loc.Text="Wb.Entry.Depth.Title" />
                                 <TextBox
                                     FontSize="12"
                                     Text="{x:Bind Depth, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
@@ -381,17 +381,17 @@
                                 <TextBlock
                                     Foreground="{ThemeResource SystemFillColorSuccessBrush}"
                                     Style="{StaticResource StatePillTextStyle}"
-                                    Text="启用" />
+ panels:Loc.Text="Wb.Prompt.On" />
                             </Border>
                             <Border
                                 Style="{StaticResource StatePillStyle}"
                                 Visibility="{x:Bind DisabledVisibility}">
-                                <TextBlock Style="{StaticResource StatePillTextStyle}" Text="停用" />
+                                <TextBlock Style="{StaticResource StatePillTextStyle}" panels:Loc.Text="Wb.Prompt.Off" />
                             </Border>
                             <Border
                                 Style="{StaticResource StatePillStyle}"
                                 Visibility="{x:Bind MarkerVisibility}">
-                                <TextBlock Style="{StaticResource StatePillTextStyle}" Text="占位" />
+                                <TextBlock Style="{StaticResource StatePillTextStyle}" panels:Loc.Text="Wb.Prompt.PlaceholderChip" />
                             </Border>
 
                             <ToggleSwitch
@@ -405,7 +405,7 @@
                                 Height="24"
                                 Click="DeletePrompt_Click"
                                 Style="{StaticResource DangerIconButtonStyle}"
-                                ToolTipService.ToolTip="删除这条提示词"
+ panels:Loc.ToolTip="Wb.Prompt.Delete.Tip"
                                 Visibility="{x:Bind EditorVisibility}">
                                 <FontIcon FontSize="12" Glyph="&#xE74D;" />
                             </Button>
@@ -430,7 +430,7 @@
 
                             <TextBox
                                 FontSize="12"
-                                PlaceholderText="提示词名称"
+ panels:Loc.Placeholder="Wb.Prompt.Name.Placeholder"
                                 Text="{x:Bind Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                             <ComboBox
                                 Grid.Column="1"
@@ -444,10 +444,10 @@
                                 Width="28"
                                 Height="28"
                                 Padding="0"
-                                AutomationProperties.Name="编辑提示词正文"
+ panels:Loc.Name="Wb.Prompt.Body.Name"
                                 Click="EditPrompt_Click"
                                 Style="{StaticResource SubtleIconButtonStyle}"
-                                ToolTipService.ToolTip="放大编辑提示词正文"
+ panels:Loc.ToolTip="Wb.Prompt.Body.Tip"
                                 Visibility="{x:Bind EditorVisibility}">
                                 <FontIcon FontSize="12" Glyph="&#xE70F;" />
                             </Button>
@@ -465,7 +465,7 @@
                         <TextBlock
                             FontSize="11.5"
                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                            Text="占位提示词：由酒馆在运行时填入内容，预设里没有正文。"
+ panels:Loc.Text="Wb.Prompt.PlaceholderNote"
                             TextWrapping="Wrap"
                             Visibility="{x:Bind MarkerVisibility}" />
                     </StackPanel>
@@ -497,7 +497,7 @@
                     VerticalAlignment="Center"
                     Click="Back_Click"
                     Style="{StaticResource SubtleIconButtonStyle}"
-                    ToolTipService.ToolTip="返回资源管理">
+ panels:Loc.ToolTip="Wb.Back.Tip">
                     <FontIcon FontSize="14" Glyph="&#xE72B;" />
                 </Button>
 
@@ -521,13 +521,13 @@
                         FontSize="16"
                         FontWeight="SemiBold"
                         Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                        Text="角色卡工作台" />
+ panels:Loc.Text="Wb.Title.Character" />
                     <TextBlock
                         x:Name="KindSubText"
                         FontFamily="Consolas"
                         FontSize="10.5"
                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        Text="characters/… · 正在读取" />
+ panels:Loc.Text="Wb.Subtitle.Reading" />
                 </StackPanel>
             </StackPanel>
 
@@ -542,7 +542,7 @@
                     Click="Undo_Click"
                     IsEnabled="False"
                     Style="{StaticResource SubtleIconButtonStyle}"
-                    ToolTipService.ToolTip="撤销（Ctrl+Z）">
+ panels:Loc.ToolTip="Wb.Undo.Tip">
                     <FontIcon FontSize="13" Glyph="&#xE7A7;" />
                 </Button>
                 <Button
@@ -550,7 +550,7 @@
                     Click="Redo_Click"
                     IsEnabled="False"
                     Style="{StaticResource SubtleIconButtonStyle}"
-                    ToolTipService.ToolTip="重做（Ctrl+Y）">
+ panels:Loc.ToolTip="Wb.Redo.Tip">
                     <FontIcon FontSize="13" Glyph="&#xE7A6;" />
                 </Button>
 
@@ -581,7 +581,7 @@
                             VerticalAlignment="Center"
                             FontSize="11"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Text="已保存" />
+ panels:Loc.Text="Wb.State.Saved" />
                     </StackPanel>
                 </Grid>
 
@@ -591,12 +591,12 @@
                     Click="Retry_Click"
                     FontSize="12"
                     Visibility="Collapsed">
-                    <TextBlock Text="重试" />
+                    <TextBlock panels:Loc.Text="Wb.Action.Retry" />
                 </HyperlinkButton>
 
                 <Button
                     Click="Done_Click"
-                    Content="完成"
+ panels:Loc.Content="Wb.Action.Done"
                     Style="{StaticResource AccentActionButtonStyle}" />
             </StackPanel>
         </Grid>
@@ -654,11 +654,11 @@
                                             FontSize="13"
                                             FontWeight="SemiBold"
                                             Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                            Text="角色资料" />
+ panels:Loc.Text="Wb.Card.Section.Profile" />
                                         <TextBlock
                                             FontSize="11"
                                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                            Text="改动会自动写回角色卡文件（PNG 卡改写的是卡里的文本块，图片不动）" />
+ panels:Loc.Text="Wb.Card.Section.Hint" />
                                     </StackPanel>
                                 </Grid>
 
@@ -688,7 +688,7 @@
                                                 VerticalAlignment="Center"
                                                 FontSize="11"
                                                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                                Text="无卡面"
+ panels:Loc.Text="Wb.Card.NoCover"
                                                 TextAlignment="Center"
                                                 TextWrapping="Wrap"
                                                 Visibility="{x:Bind Character.CoverEmptyVisibility, Mode=OneWay}" />
@@ -703,11 +703,11 @@
                                             FontSize="12"
                                             FontWeight="SemiBold"
                                             Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                            Text="卡面" />
+ panels:Loc.Text="Wb.Card.CoverLabel" />
                                         <TextBlock
                                             FontSize="11"
                                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                            Text="换图不会丢设定：新图的像素会接上这张卡自己的文本块。"
+ panels:Loc.Text="Wb.Card.Cover.Hint"
                                             TextWrapping="Wrap" />
                                         <StackPanel Orientation="Horizontal" Spacing="6">
                                             <Button
@@ -716,7 +716,7 @@
                                                 IsEnabled="{x:Bind Character.CanReplaceCover}">
                                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                                     <FontIcon FontSize="11" Glyph="&#xEB9F;" />
-                                                    <TextBlock FontSize="12" Text="更换卡面" />
+                                                    <TextBlock FontSize="12" panels:Loc.Text="Wb.Card.Cover.Change" />
                                                 </StackPanel>
                                             </Button>
                                         </StackPanel>
@@ -728,10 +728,10 @@
                                 <!--  基本字段  -->
                                 <StackPanel Padding="14,12,14,14" Spacing="10">
                                     <StackPanel Spacing="4">
-                                        <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="名称" />
+                                        <TextBlock Style="{StaticResource MetaCellLabelStyle}" panels:Loc.Text="Wb.Card.Name.Title" />
                                         <TextBox
                                             FontSize="12.5"
-                                            PlaceholderText="角色名"
+ panels:Loc.Placeholder="Wb.Card.Name.Placeholder"
                                             Text="{x:Bind Character.Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                     </StackPanel>
 
@@ -741,13 +741,13 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Spacing="4">
-                                            <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="作者" />
+                                            <TextBlock Style="{StaticResource MetaCellLabelStyle}" panels:Loc.Text="Wb.Card.Creator.Title" />
                                             <TextBox
                                                 FontSize="12.5"
                                                 Text="{x:Bind Character.Creator, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="1" Spacing="4">
-                                            <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="版本" />
+                                            <TextBlock Style="{StaticResource MetaCellLabelStyle}" panels:Loc.Text="Wb.Card.Version.Title" />
                                             <TextBox
                                                 FontSize="12.5"
                                                 Text="{x:Bind Character.Version, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
@@ -759,7 +759,7 @@
                                             <TextBlock
                                                 HorizontalAlignment="Left"
                                                 Style="{StaticResource MetaCellLabelStyle}"
-                                                Text="标签" />
+ panels:Loc.Text="Wb.Card.Tags.Title" />
                                             <TextBlock
                                                 HorizontalAlignment="Right"
                                                 Style="{StaticResource MetaCellLabelStyle}"
@@ -786,7 +786,7 @@
                                                 x:Name="CharTagInput"
                                                 FontSize="12.5"
                                                 KeyDown="CharTagInput_KeyDown"
-                                                PlaceholderText="回车添加标签"
+ panels:Loc.Placeholder="Wb.Card.Tags.Placeholder"
                                                 Text="{x:Bind Character.TagInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                             <Button
                                                 Grid.Column="1"
@@ -794,7 +794,7 @@
                                                 Height="32"
                                                 Padding="0"
                                                 Click="AddCharTag_Click"
-                                                ToolTipService.ToolTip="添加标签">
+ panels:Loc.ToolTip="Wb.Card.Tags.Add.Tip">
                                                 <FontIcon FontSize="12" Glyph="&#xE710;" />
                                             </Button>
                                         </Grid>
@@ -838,7 +838,7 @@
                                             FontSize="12"
                                             FontWeight="SemiBold"
                                             Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                            Text="简介" />
+ panels:Loc.Text="Wb.Card.DescriptionLabel" />
                                         <TextBlock
                                             Grid.Column="1"
                                             VerticalAlignment="Center"
@@ -850,18 +850,18 @@
                                             Width="24"
                                             Height="24"
                                             Padding="0"
-                                            AutomationProperties.Name="放大编辑简介"
+ panels:Loc.Name="Wb.Card.Description.Expand"
                                             Click="ExpandText_Click"
                                             Style="{StaticResource SubtleIconButtonStyle}"
                                             Tag="description"
-                                            ToolTipService.ToolTip="放大编辑">
+ panels:Loc.ToolTip="Wb.Common.Expand.Tip">
                                             <FontIcon FontSize="11" Glyph="&#xE740;" />
                                         </Button>
                                     </Grid>
                                     <TextBox
                                         Grid.Row="1"
                                         Padding="12,0,12,10"
-                                        PlaceholderText="外貌、身份、与你的关系…"
+ panels:Loc.Placeholder="Wb.Card.Description.Placeholder"
                                         Style="{StaticResource BodyTextBoxStyle}"
                                         Text="{x:Bind Character.Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                 </Grid>
@@ -888,7 +888,7 @@
                                             FontSize="12"
                                             FontWeight="SemiBold"
                                             Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                            Text="性格" />
+ panels:Loc.Text="Wb.Card.PersonalityLabel" />
                                         <TextBlock
                                             Grid.Column="1"
                                             VerticalAlignment="Center"
@@ -900,18 +900,18 @@
                                             Width="24"
                                             Height="24"
                                             Padding="0"
-                                            AutomationProperties.Name="放大编辑性格"
+ panels:Loc.Name="Wb.Card.Personality.Expand"
                                             Click="ExpandText_Click"
                                             Style="{StaticResource SubtleIconButtonStyle}"
                                             Tag="personality"
-                                            ToolTipService.ToolTip="放大编辑">
+ panels:Loc.ToolTip="Wb.Common.Expand.Tip">
                                             <FontIcon FontSize="11" Glyph="&#xE740;" />
                                         </Button>
                                     </Grid>
                                     <TextBox
                                         Grid.Row="1"
                                         Padding="12,0,12,10"
-                                        PlaceholderText="说话方式、脾气、在意的事…"
+ panels:Loc.Placeholder="Wb.Card.Personality.Placeholder"
                                         Style="{StaticResource BodyTextBoxStyle}"
                                         Text="{x:Bind Character.Personality, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                 </Grid>
@@ -938,7 +938,7 @@
                                             FontSize="12"
                                             FontWeight="SemiBold"
                                             Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                            Text="场景" />
+ panels:Loc.Text="Wb.Card.ScenarioLabel" />
                                         <TextBlock
                                             Grid.Column="1"
                                             VerticalAlignment="Center"
@@ -950,18 +950,18 @@
                                             Width="24"
                                             Height="24"
                                             Padding="0"
-                                            AutomationProperties.Name="放大编辑场景"
+ panels:Loc.Name="Wb.Card.Scenario.Expand"
                                             Click="ExpandText_Click"
                                             Style="{StaticResource SubtleIconButtonStyle}"
                                             Tag="scenario"
-                                            ToolTipService.ToolTip="放大编辑">
+ panels:Loc.ToolTip="Wb.Common.Expand.Tip">
                                             <FontIcon FontSize="11" Glyph="&#xE740;" />
                                         </Button>
                                     </Grid>
                                     <TextBox
                                         Grid.Row="1"
                                         Padding="12,0,12,10"
-                                        PlaceholderText="故事发生在哪、此刻正在做什么…"
+ panels:Loc.Placeholder="Wb.Card.Scenario.Placeholder"
                                         Style="{StaticResource BodyTextBoxStyle}"
                                         Text="{x:Bind Character.Scenario, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                 </Grid>
@@ -989,7 +989,7 @@
                                             FontSize="12"
                                             FontWeight="SemiBold"
                                             Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                            Text="开场白" />
+ panels:Loc.Text="Wb.Card.FirstMessageLabel" />
                                         <TextBlock
                                             Grid.Column="1"
                                             VerticalAlignment="Center"
@@ -1001,18 +1001,18 @@
                                             Width="24"
                                             Height="24"
                                             Padding="0"
-                                            AutomationProperties.Name="放大编辑开场白"
+ panels:Loc.Name="Wb.Card.FirstMessage.Expand"
                                             Click="ExpandText_Click"
                                             Style="{StaticResource SubtleIconButtonStyle}"
                                             Tag="firstMessage"
-                                            ToolTipService.ToolTip="放大编辑">
+ panels:Loc.ToolTip="Wb.Common.Expand.Tip">
                                             <FontIcon FontSize="11" Glyph="&#xE740;" />
                                         </Button>
                                     </Grid>
                                     <TextBox
                                         Grid.Row="1"
                                         Padding="12,0,12,10"
-                                        PlaceholderText="见面时说的第一句话…"
+ panels:Loc.Placeholder="Wb.Card.FirstMessage.Placeholder"
                                         Style="{StaticResource BodyTextBoxStyle}"
                                         Text="{x:Bind Character.FirstMessage, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                 </Grid>
@@ -1058,12 +1058,12 @@
                                         <TextBlock
                                             VerticalAlignment="Center"
                                             Style="{StaticResource CellTitleTextStyle}"
-                                            Text="内嵌世界书" />
+ panels:Loc.Text="Wb.Card.Embedded.Title" />
                                         <Border Style="{StaticResource MetaChipStyle}">
                                             <TextBlock
                                                 x:Name="EmbeddedCountChip"
                                                 Style="{StaticResource MetaChipTextStyle}"
-                                                Text="6 个条目" />
+ />
                                         </Border>
                                         <Border
                                             x:Name="EmbeddedStatePill"
@@ -1072,14 +1072,14 @@
                                             <TextBlock
                                                 Foreground="{ThemeResource SystemFillColorSuccessBrush}"
                                                 Style="{StaticResource StatePillTextStyle}"
-                                                Text="已绑定" />
+ panels:Loc.Text="Wb.Card.Embedded.Bound" />
                                         </Border>
                                     </StackPanel>
                                     <TextBlock
                                         x:Name="EmbeddedSubText"
                                         FontSize="11"
                                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                        Text="未绑定"
+ panels:Loc.Text="Wb.Card.Embedded.Unbound"
                                         TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
 
@@ -1091,13 +1091,13 @@
                                     <Button Click="ChangeWorldBook_Click">
                                         <StackPanel Orientation="Horizontal" Spacing="6">
                                             <FontIcon FontSize="11" Glyph="&#xE8B7;" />
-                                            <TextBlock x:Name="ChangeWorldText" FontSize="12" Text="更换" />
+                                            <TextBlock x:Name="ChangeWorldText" FontSize="12" panels:Loc.Text="Wb.Card.Embedded.Change" />
                                         </StackPanel>
                                     </Button>
                                     <Button x:Name="UnbindWorldButton" Click="UnbindWorldBook_Click">
                                         <StackPanel Orientation="Horizontal" Spacing="6">
                                             <FontIcon FontSize="11" Glyph="&#xE894;" />
-                                            <TextBlock FontSize="12" Text="解绑" />
+                                            <TextBlock FontSize="12" panels:Loc.Text="Wb.Card.Embedded.Unbind" />
                                         </StackPanel>
                                     </Button>
                                 </StackPanel>
@@ -1137,7 +1137,7 @@
                                     VerticalAlignment="Center"
                                     Style="{StaticResource FieldHintTextStyle}"
                                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                    Text="条目正文与关键词在世界书工作台里编辑；这里只随角色卡保存一份副本。" />
+ panels:Loc.Text="Wb.Card.Embedded.Note" />
                             </Border>
 
                             <!--  未绑定：只留一句说明与一个绑定入口  -->
@@ -1163,13 +1163,13 @@
                                 <TextBlock
                                     HorizontalAlignment="Center"
                                     Style="{StaticResource CardTitleTextStyle}"
-                                    Text="没有绑定世界书" />
+ panels:Loc.Text="Wb.Card.Embedded.Empty.Title" />
                                 <TextBlock
                                     MaxWidth="360"
                                     HorizontalAlignment="Center"
                                     Style="{StaticResource FieldHintTextStyle}"
                                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                    Text="角色卡可以内嵌一份世界书，让设定随卡一起分发。"
+ panels:Loc.Text="Wb.Card.Embedded.Empty.Hint"
                                     TextAlignment="Center" />
                                 <Button
                                     Margin="0,4,0,0"
@@ -1177,7 +1177,7 @@
                                     Click="BindWorldBook_Click">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <FontIcon FontSize="11" Glyph="&#xE710;" />
-                                        <TextBlock FontSize="12" Text="绑定世界书" />
+                                        <TextBlock FontSize="12" panels:Loc.Text="Wb.Card.Embedded.Bind" />
                                     </StackPanel>
                                 </Button>
                             </StackPanel>
@@ -1215,11 +1215,11 @@
                                     Spacing="3">
                                     <TextBlock
                                         Style="{StaticResource CellTitleTextStyle}"
-                                        Text="世界书" />
+ panels:Loc.Text="Wb.Title.WorldBook" />
                                     <TextBlock
                                         FontSize="11"
                                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                        Text="点条目展开编辑；改动会自动写回 worlds 目录下的 JSON" />
+ panels:Loc.Text="Wb.World.Subtitle" />
                                 </StackPanel>
                             </Grid>
                             <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
@@ -1232,13 +1232,13 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Spacing="4">
-                                    <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="名称" />
+                                    <TextBlock Style="{StaticResource MetaCellLabelStyle}" panels:Loc.Text="Wb.World.Name" />
                                     <TextBox
                                         FontSize="12.5"
                                         Text="{x:Bind WorldBook.Name, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                 </StackPanel>
                                 <StackPanel Grid.Column="1" Spacing="4">
-                                    <TextBlock Style="{StaticResource MetaCellLabelStyle}" Text="作者" />
+                                    <TextBlock Style="{StaticResource MetaCellLabelStyle}" panels:Loc.Text="Wb.World.Creator" />
                                     <TextBox
                                         FontSize="12.5"
                                         Text="{x:Bind WorldBook.Author, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
@@ -1250,7 +1250,7 @@
                                     <TextBlock
                                         HorizontalAlignment="Right"
                                         Style="{StaticResource MetaCellLabelStyle}"
-                                        Text="文件体积" />
+ panels:Loc.Text="Wb.World.Size" />
                                     <Border
                                         Padding="9,5,9,6"
                                         VerticalAlignment="Bottom"
@@ -1293,24 +1293,24 @@
                                         <TextBlock
                                             VerticalAlignment="Center"
                                             Style="{StaticResource CellTitleTextStyle}"
-                                            Text="条目" />
+ panels:Loc.Text="Wb.World.EntriesLabel" />
                                         <Border Style="{StaticResource MetaChipStyle}">
                                             <TextBlock
                                                 x:Name="EntryCountChip"
                                                 Style="{StaticResource MetaChipTextStyle}"
-                                                Text="6 个" />
+ />
                                         </Border>
                                         <Border Style="{StaticResource MetaChipStyle}">
                                             <TextBlock
                                                 x:Name="EntryEnabledChip"
                                                 Style="{StaticResource MetaChipTextStyle}"
-                                                Text="2 个启用" />
+ />
                                         </Border>
                                     </StackPanel>
                                     <TextBlock
                                         FontSize="11"
                                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                        Text="关键词命中后按插入位置进入上下文" />
+ panels:Loc.Text="Wb.World.Entries.Hint" />
                                 </StackPanel>
                                 <StackPanel
                                     Grid.Column="2"
@@ -1320,7 +1320,7 @@
                                     <Button Click="AddEntry_Click">
                                         <StackPanel Orientation="Horizontal" Spacing="6">
                                             <FontIcon FontSize="11" Glyph="&#xE710;" />
-                                            <TextBlock FontSize="12" Text="新增条目" />
+                                            <TextBlock FontSize="12" panels:Loc.Text="Wb.World.Entry.Add" />
                                         </StackPanel>
                                     </Button>
                                 </StackPanel>
@@ -1400,18 +1400,18 @@
                                     <TextBlock
                                         VerticalAlignment="Center"
                                         Style="{StaticResource CellTitleTextStyle}"
-                                        Text="提示词" />
+ panels:Loc.Text="Wb.Preset.Prompts" />
                                     <Border Style="{StaticResource MetaChipStyle}">
                                         <TextBlock
                                             x:Name="PromptCountChip"
                                             Style="{StaticResource MetaChipTextStyle}"
-                                            Text="14 条" />
+ />
                                     </Border>
                                 </StackPanel>
                                 <TextBlock
                                     FontSize="11"
                                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                    Text="顺序与开关写在预设文件的 prompt_order 里；内容改动会自动写回文件" />
+ panels:Loc.Text="Wb.Preset.Hint" />
                             </StackPanel>
                             <Button
                                 Grid.Column="2"
@@ -1419,7 +1419,7 @@
                                 Click="AddPrompt_Click">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon FontSize="11" Glyph="&#xE710;" />
-                                    <TextBlock FontSize="12" Text="添加提示词" />
+                                    <TextBlock FontSize="12" panels:Loc.Text="Wb.Preset.Prompt.Add" />
                                 </StackPanel>
                             </Button>
                         </Grid>
@@ -1450,7 +1450,7 @@
                                 VerticalAlignment="Center"
                                 Style="{StaticResource FieldHintTextStyle}"
                                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                Text="本页 6 条 · 共 14 条" />
+ />
                             <StackPanel
                                 x:Name="PagerHost"
                                 Grid.Column="1"

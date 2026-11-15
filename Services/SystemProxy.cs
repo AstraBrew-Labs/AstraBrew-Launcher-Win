@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Net;
 using Microsoft.Win32;
 
@@ -13,14 +13,48 @@ namespace AstraBrew_Launcher.Services
     /// · <b>自动检测</b>：<c>AutoDetect=1</c>（WPAD）——有代理但没有固定地址。
     /// 只有三者都不成立才是真正的「未开启」。
     /// </summary>
+    /// <summary>系统代理处在哪种形态。说明文字按它取资源，**不要再往状态里塞中文句子**。</summary>
+    public enum SystemProxyKind
+    {
+        /// <summary>没配代理。</summary>
+        Off,
+
+        /// <summary>手动代理，有固定地址。</summary>
+        Manual,
+
+        /// <summary>PAC 脚本，地址由脚本决定。</summary>
+        Pac,
+
+        /// <summary>自动检测（WPAD），有代理但没有固定地址。</summary>
+        AutoDetect,
+
+        /// <summary>读不到注册表。</summary>
+        Unreadable,
+
+        /// <summary>读取时抛异常。</summary>
+        Error,
+    }
+
     public sealed record SystemProxyState(
         bool Enabled,
         string Server,
         string? PacUrl,
         bool AutoDetect,
-        string Detail)
+        SystemProxyKind Kind,
+        string? Error = null)
     {
-        public string Label => Enabled ? "已开启" : "未开启";
+        public string Label => L.Get(Enabled ? "Settings.SystemProxy.Label.On" : "Settings.SystemProxy.Label.Off");
+
+        /// <summary>给人看的一句说明。按形态取资源，随界面语言变。</summary>
+        public string Detail => Kind switch
+        {
+            SystemProxyKind.Manual => L.F("Settings.SystemProxy.Detail.Manual", Server),
+            SystemProxyKind.Pac => L.F("Settings.SystemProxy.Detail.Pac", PacUrl ?? string.Empty),
+            SystemProxyKind.AutoDetect => L.Get("Settings.SystemProxy.Detail.AutoDetect"),
+            SystemProxyKind.Unreadable => L.Get("Settings.SystemProxy.Detail.Unreadable"),
+            SystemProxyKind.Error => L.F("Settings.SystemProxy.Detail.Error", Error ?? string.Empty),
+            _ => L.Get("Settings.SystemProxy.Detail.Off"),
+        };
 
         /// <summary>给 node / git 之类只能接受固定地址的组件用；PAC 与自动检测返回 null。</summary>
         public string? EffectiveUrl => Server.Length > 0 ? Server : null;
@@ -40,8 +74,7 @@ namespace AstraBrew_Launcher.Services
 
                 if (key is null)
                 {
-                    return new SystemProxyState(false, string.Empty, null, false,
-                        "读不到 Windows 的 Internet 选项，按未开启代理处理。");
+                    return new SystemProxyState(false, string.Empty, null, false, SystemProxyKind.Unreadable);
                 }
 
                 int enable = key.GetValue("ProxyEnable") is int value ? value : 0;
@@ -55,47 +88,27 @@ namespace AstraBrew_Launcher.Services
                 {
                     string effective = Normalize(server);
 
-                    return new SystemProxyState(
-                        true,
-                        effective,
-                        pac,
-                        autoDetect,
-                        $"Windows 手动代理已开启并生效：{effective}");
+                    return new SystemProxyState(true, effective, pac, autoDetect, SystemProxyKind.Manual);
                 }
 
                 if (pac is not null)
                 {
-                    return new SystemProxyState(
-                        true,
-                        string.Empty,
-                        pac,
-                        autoDetect,
-                        $"Windows 使用 PAC 脚本：{pac}（地址由脚本决定，界面无法提前列出）");
+                    return new SystemProxyState(true, string.Empty, pac, autoDetect, SystemProxyKind.Pac);
                 }
 
                 if (autoDetect)
                 {
-                    return new SystemProxyState(
-                        true,
-                        string.Empty,
-                        null,
-                        true,
-                        "Windows 开着「自动检测设置」（WPAD），有代理但没有固定地址。");
+                    return new SystemProxyState(true, string.Empty, null, true, SystemProxyKind.AutoDetect);
                 }
 
-                return new SystemProxyState(
-                    false,
-                    string.Empty,
-                    pac,
-                    autoDetect,
-                    "Windows 当前没有配置代理，选这一项等于直连。");
+                return new SystemProxyState(false, string.Empty, pac, autoDetect, SystemProxyKind.Off);
             }
             catch (Exception ex) when (ex is System.Security.SecurityException
                 or UnauthorizedAccessException
                 or System.IO.IOException)
             {
-                return new SystemProxyState(false, string.Empty, null, false,
-                    $"读取系统代理失败：{ex.Message}");
+                return new SystemProxyState(
+                    false, string.Empty, null, false, SystemProxyKind.Error, ex.Message);
             }
         }
 
@@ -168,7 +181,7 @@ namespace AstraBrew_Launcher.Services
         public static string Describe()
         {
             SystemProxyState state = Read();
-            return state.Enabled ? state.Detail : "系统代理未开启";
+            return state.Enabled ? state.Detail : L.Get("Settings.SystemProxy.Detail.Off");
         }
 
         /// <summary>

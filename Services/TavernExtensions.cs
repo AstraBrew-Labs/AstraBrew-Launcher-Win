@@ -324,7 +324,7 @@ namespace AstraBrew_Launcher.Services
 
                 if (!JsonArrayEditor.TrySetStringArray(text, "disabledExtensions", names, out string updated))
                 {
-                    error = "settings.json 结构不认识，没能写回。请直接在酒馆的扩展面板里开关。";
+                    error = L.Get("ExtS.SaveFail.NoStruct");
                     return false;
                 }
 
@@ -368,7 +368,7 @@ namespace AstraBrew_Launcher.Services
             string? git = RuntimeProbe.LocateGit(LauncherSettings.Runtime);
             if (git is null)
             {
-                return (0, 0, "没有找到 Git，无法检查更新。可在「设置 → 运行环境」里补装。");
+                return (0, 0, L.Get("ExtS.Check.NoGit"));
             }
 
             var repos = extensions.Where(item => item.IsGitRepo && !item.Broken).ToList();
@@ -497,13 +497,13 @@ namespace AstraBrew_Launcher.Services
             string? git = RuntimeProbe.LocateGit(LauncherSettings.Runtime);
             if (git is null)
             {
-                return new ExtensionInstallResult(false, string.Empty, "没有找到 Git。可在「设置 → 运行环境」里补装，或改用离线包安装。");
+                return new ExtensionInstallResult(false, string.Empty, L.Get("ExtS.Install.NoGit"));
             }
 
             string name = BaseName(url);
             if (name.Length == 0)
             {
-                return new ExtensionInstallResult(false, string.Empty, "从地址里取不到仓库名。");
+                return new ExtensionInstallResult(false, string.Empty, L.Get("ExtS.Install.NoRepoName"));
             }
 
             string root = ThirdPartyRoot(instance);
@@ -512,7 +512,7 @@ namespace AstraBrew_Launcher.Services
             string target = UniqueTarget(root, name);
             string cloneUrl = GithubAccel.Apply(url);
 
-            progress?.Report(new ExtensionInstallStep(5, "正在克隆仓库…", $"$ git clone --depth 1 -b {branch} {cloneUrl}"));
+            progress?.Report(new ExtensionInstallStep(5, L.Get("ExtS.Step.Cloning"), $"$ git clone --depth 1 -b {branch} {cloneUrl}"));
 
             var result = await RunGitWithProgressAsync(
                 git,
@@ -523,25 +523,25 @@ namespace AstraBrew_Launcher.Services
             if (!result.Ok)
             {
                 SafeDelete(target);
-                return new ExtensionInstallResult(false, string.Empty, result.Error ?? "克隆失败，请检查网络或仓库地址。");
+                return new ExtensionInstallResult(false, string.Empty, result.Error ?? L.Get("ExtS.Install.CloneFail"));
             }
 
-            progress?.Report(new ExtensionInstallStep(88, "正在校验 manifest.json…"));
+            progress?.Report(new ExtensionInstallStep(88, L.Get("ExtS.Step.Manifest")));
 
             if (!File.Exists(System.IO.Path.Combine(target, "manifest.json")))
             {
                 SafeDelete(target);
 
                 // 有些仓库把扩展放在子目录里；这里不做猜测，直接说清楚
-                return new ExtensionInstallResult(false, string.Empty, "仓库根目录里没有 manifest.json，这不像一个酒馆扩展。");
+                return new ExtensionInstallResult(false, string.Empty, L.Get("ExtS.Install.NoManifest"));
             }
 
-            progress?.Report(new ExtensionInstallStep(95, "正在启用扩展…"));
+            progress?.Report(new ExtensionInstallStep(95, L.Get("ExtS.Step.Enabling")));
 
             string folder = System.IO.Path.GetFileName(target);
             SetDisabledMember(folder, disabled: false, out _);
 
-            progress?.Report(new ExtensionInstallStep(100, "安装完成", $"已创建 {target}"));
+            progress?.Report(new ExtensionInstallStep(100, L.Get("ExtS.Step.Done"), L.F("ExtS.Step.Created", target)));
 
             return new ExtensionInstallResult(true, folder, null);
         }
@@ -559,7 +559,7 @@ namespace AstraBrew_Launcher.Services
         {
             if (!File.Exists(zipPath))
             {
-                return new ExtensionInstallResult(false, string.Empty, "找不到这个离线包。");
+                return new ExtensionInstallResult(false, string.Empty, L.Get("ExtS.Install.ZipMissing"));
             }
 
             string root = ThirdPartyRoot(instance);
@@ -569,16 +569,16 @@ namespace AstraBrew_Launcher.Services
 
             try
             {
-                progress?.Report(new ExtensionInstallStep(10, "正在解压离线包…", $"$ unzip \"{zipPath}\""));
+                progress?.Report(new ExtensionInstallStep(10, L.Get("ExtS.Step.Unzipping"), $"$ unzip \"{zipPath}\""));
 
                 await Task.Run(() => ZipFile.ExtractToDirectory(zipPath, staging, overwriteFiles: true)).ConfigureAwait(false);
 
-                progress?.Report(new ExtensionInstallStep(60, "正在定位扩展目录…"));
+                progress?.Report(new ExtensionInstallStep(60, L.Get("ExtS.Step.Locating")));
 
                 string source = FindManifestFolder(staging);
                 if (source.Length == 0)
                 {
-                    return new ExtensionInstallResult(false, string.Empty, "离线包里没有 manifest.json，这不像一个酒馆扩展。");
+                    return new ExtensionInstallResult(false, string.Empty, L.Get("ExtS.Install.ZipNoManifest"));
                 }
 
                 // 压缩包套了一层目录时用那一层的名字；清单就在根上时退回压缩包文件名
@@ -590,14 +590,14 @@ namespace AstraBrew_Launcher.Services
 
                 string target = UniqueTarget(root, name);
 
-                progress?.Report(new ExtensionInstallStep(80, "正在写入 third-party…", $"→ {target}"));
+                progress?.Report(new ExtensionInstallStep(80, L.Get("ExtS.Step.Writing"), $"→ {target}"));
 
                 await Task.Run(() => MoveDirectory(source, target)).ConfigureAwait(false);
 
                 string folder = System.IO.Path.GetFileName(target);
                 SetDisabledMember(folder, disabled: false, out _);
 
-                progress?.Report(new ExtensionInstallStep(100, "安装完成", $"已创建 {target}"));
+                progress?.Report(new ExtensionInstallStep(100, L.Get("ExtS.Step.Done"), L.F("ExtS.Step.Created", target)));
 
                 return new ExtensionInstallResult(true, folder, null);
             }
@@ -628,7 +628,7 @@ namespace AstraBrew_Launcher.Services
 
                 if (!File.Exists(path))
                 {
-                    inspected.Add(new OfflinePackage(path, fileName, null, false, "文件不存在"));
+                    inspected.Add(new OfflinePackage(path, fileName, null, false, L.Get("ExtS.Package.NoFile")));
                     continue;
                 }
 
@@ -640,7 +640,7 @@ namespace AstraBrew_Launcher.Services
                     if (manifest is null)
                     {
                         inspected.Add(new OfflinePackage(path, fileName, null, false,
-                            "里面没有 manifest.json（最多向下找三层），不像酒馆扩展"));
+                            L.Get("ExtS.Package.NoManifest")));
                         continue;
                     }
 
@@ -667,7 +667,7 @@ namespace AstraBrew_Launcher.Services
 
             return inspected
                 .Select(item => duplicates.Contains(item.FileName)
-                    ? item with { Valid = false, Error = $"同一批里有多个包都叫「{item.Folder}」，先去掉重复的再装" }
+                    ? item with { Valid = false, Error = L.F("ExtS.Package.Duplicate", item.Folder) }
                     : item)
                 .ToList();
         }
@@ -699,14 +699,14 @@ namespace AstraBrew_Launcher.Services
 
                 if (!package.Valid)
                 {
-                    failed.Add(new OfflinePackageFailure(package.FileName, package.Error ?? "预检未通过"));
+                    failed.Add(new OfflinePackageFailure(package.FileName, package.Error ?? L.Get("ExtS.Package.PrecheckFailed")));
                     progress?.Report(new OfflineBatchStep(index, packages.Count, package.FileName, start,
-                        $"跳过 {package.FileName}", $"✗ {package.FileName}：{package.Error}"));
+                        L.F("ExtS.Batch.Skip", package.FileName), L.F("ExtS.Batch.SkipDetail", package.FileName, package.Error)));
                     continue;
                 }
 
                 progress?.Report(new OfflineBatchStep(index, packages.Count, package.FileName, start,
-                    $"正在安装 {package.FileName}（{index + 1}/{packages.Count}）",
+                    L.F("ExtS.Batch.Installing", package.FileName, index + 1, packages.Count),
                     $"▶ {package.FileName} → {package.Folder}"));
 
                 // 单包进度换算成整批的百分比，进度条才不会一包一跳
@@ -729,12 +729,12 @@ namespace AstraBrew_Launcher.Services
                 }
                 else
                 {
-                    failed.Add(new OfflinePackageFailure(package.FileName, result.Error ?? "安装失败"));
+                    failed.Add(new OfflinePackageFailure(package.FileName, result.Error ?? L.Get("ExtS.Batch.Failed")));
                 }
             }
 
             progress?.Report(new OfflineBatchStep(packages.Count, packages.Count, string.Empty, 100,
-                $"批量安装完成：成功 {installed.Count} 个，失败 {failed.Count} 个", null));
+                L.F("ExtS.Batch.Done", installed.Count, failed.Count), null));
 
             return new OfflineBatchResult(installed, failed);
         }
@@ -972,11 +972,11 @@ namespace AstraBrew_Launcher.Services
                 if (int.TryParse(text[start..percentAt].Trim(), out int value))
                 {
                     // 克隆占 5–85，解析/检出再推到 88
-                    return new ExtensionInstallStep(5 + value * 0.8, "正在克隆仓库…", text);
+                    return new ExtensionInstallStep(5 + value * 0.8, L.Get("ExtS.Step.Cloning"), text);
                 }
             }
 
-            return new ExtensionInstallStep(5, "正在克隆仓库…", text);
+            return new ExtensionInstallStep(5, L.Get("ExtS.Step.Cloning"), text);
         }
 
         /// <summary>跑一条 git 命令并取 stdout；失败返回 null。</summary>
@@ -1056,7 +1056,7 @@ namespace AstraBrew_Launcher.Services
 
                     if (!process.Start())
                     {
-                        return new GitRun(false, "无法启动 git 进程。");
+                        return new GitRun(false, L.Get("ExtS.Err.GitCannotStart"));
                     }
 
                     process.BeginErrorReadLine();
@@ -1065,7 +1065,7 @@ namespace AstraBrew_Launcher.Services
                     if (!process.WaitForExit((int)timeout.TotalMilliseconds))
                     {
                         TryKill(process);
-                        return new GitRun(false, "克隆超时。请检查网络，或改用离线包安装。");
+                        return new GitRun(false, L.Get("ExtS.Err.CloneTimeout"));
                     }
 
                     if (process.ExitCode == 0)
@@ -1079,7 +1079,7 @@ namespace AstraBrew_Launcher.Services
                         detail = string.Join(" / ", errorLines.TakeLast(3).Select(line => line.Trim()));
                     }
 
-                    return new GitRun(false, detail.Length > 0 ? detail : $"git 退出代码 {process.ExitCode}");
+                    return new GitRun(false, detail.Length > 0 ? detail : L.F("ExtS.Err.GitExit", process.ExitCode));
                 }
                 catch (Exception ex)
                 {

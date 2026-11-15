@@ -753,6 +753,7 @@
     </Style>
 
     <!--  状态胶囊（带底色）：语义色底 + 同色文字，用于「依赖就绪 / 缺少依赖」  -->
+    
     <Style x:Key="StatePillStyle" TargetType="Border">
         <Setter Property="CornerRadius" Value="9" />
         <Setter Property="Padding" Value="8,1,8,2" />

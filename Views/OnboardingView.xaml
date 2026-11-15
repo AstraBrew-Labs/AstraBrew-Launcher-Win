@@ -5,6 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
     xmlns:onboarding="using:AstraBrew_Launcher.Views.Onboarding"
     mc:Ignorable="d">
 
@@ -41,7 +42,7 @@
                             <Image
                                 Height="24"
                                 VerticalAlignment="Center"
-                                AutomationProperties.Name="星酿启动器"
+                                controls:Loc.Name="Shell.AppName.Short"
                                 Source="{ThemeResource BrandIconSource}"
                                 Stretch="Uniform" />
                             <StackPanel VerticalAlignment="Center" Spacing="0">
@@ -53,7 +54,7 @@
                                 <TextBlock
                                     FontSize="11"
                                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                    Text="第一次用" />
+                                    controls:Loc.Text="Setup.Page.Badge" />
                             </StackPanel>
                         </StackPanel>
 
@@ -64,24 +65,24 @@
                             <onboarding:OnboardingRailItem
                                 x:Name="Rail1"
                                 Number="1"
-                                Subtitle="可跳过"
-                                Title="搬数据" />
+                                SubtitleKey="Setup.Rail.Step1.Subtitle"
+                                TitleKey="Setup.Rail.Step1.Title" />
                             <onboarding:OnboardingRailItem
                                 x:Name="Rail2"
                                 Number="2"
-                                Subtitle="要能通"
-                                Title="测网络" />
+                                SubtitleKey="Setup.Rail.Step2.Subtitle"
+                                TitleKey="Setup.Rail.Step2.Title" />
                             <onboarding:OnboardingRailItem
                                 x:Name="Rail3"
                                 Number="3"
-                                Subtitle="要装齐"
-                                Title="装工具" />
+                                SubtitleKey="Setup.Rail.Step3.Subtitle"
+                                TitleKey="Setup.Rail.Step3.Title" />
                             <onboarding:OnboardingRailItem
                                 x:Name="Rail4"
                                 Number="4"
                                 IsLast="True"
-                                Subtitle="最后一步"
-                                Title="选酒馆" />
+                                SubtitleKey="Setup.Rail.Step4.Subtitle"
+                                TitleKey="Setup.Rail.Step4.Title" />
                         </StackPanel>
 
                         <TextBlock
@@ -90,7 +91,7 @@
                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                             LineHeight="16"
                             MaxLines="2"
-                            Text="每步都能跳过，之后在设置里能重看。"
+                            controls:Loc.Text="Setup.Page.Hint"
                             TextTrimming="CharacterEllipsis"
                             TextWrapping="Wrap" />
                     </Grid>
@@ -110,22 +111,23 @@
                     <StackPanel MinHeight="89" Spacing="0">
                         <TextBlock
                             x:Name="StepEyebrow"
-                            Style="{StaticResource OnboardingStepEyebrowTextStyle}"
-                            Text="第 1 步，共 4 步" />
+                            Style="{StaticResource OnboardingStepEyebrowTextStyle}" />
                         <TextBlock
                             x:Name="StepTitle"
                             Margin="0,2,0,0"
-                            Style="{StaticResource OnboardingStepTitleTextStyle}"
-                            Text="把旧数据搬过来" />
+                            Style="{StaticResource OnboardingStepTitleTextStyle}" />
                         <TextBlock
                             x:Name="StepDescription"
                             Margin="0,4,0,0"
                             Style="{StaticResource OnboardingStepDescTextStyle}" />
                     </StackPanel>
 
+                    <!--  右侧留出滚动条的宽度：条是浮在内容上的，
+                          不留白的话整宽的行（如测速结果的数值列）会被它压掉最后几个字  -->
                     <ScrollViewer
                         Grid.Row="1"
                         Margin="0,16,0,0"
+                        Padding="0,0,14,0"
                         HorizontalScrollBarVisibility="Disabled"
                         VerticalScrollBarVisibility="Auto">
                         <Grid>
@@ -153,7 +155,7 @@
                                 x:Name="SkipButton"
                                 HorizontalAlignment="Left"
                                 Click="Skip_Click"
-                                Content="先跳过"
+                                controls:Loc.Content="Setup.Action.Skip"
                                 Style="{StaticResource GhostButtonStyle}" />
 
                             <StackPanel
@@ -163,12 +165,12 @@
                                 <Button
                                     x:Name="BackButton"
                                     Click="Back_Click"
-                                    Content="上一步"
+                                    controls:Loc.Content="Setup.Action.Back"
                                     Visibility="Collapsed" />
                                 <Button
                                     x:Name="NextButton"
                                     Click="Next_Click"
-                                    Content="下一步"
+                                    controls:Loc.Content="Setup.Action.Next"
                                     IsEnabled="False"
                                     Style="{StaticResource AccentActionButtonStyle}" />
                             </StackPanel>

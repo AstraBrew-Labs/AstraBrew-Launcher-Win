@@ -28,9 +28,9 @@ namespace AstraBrew_Launcher.Services
         /// <summary>发布日期；拿不到时明说，不猜一个看起来合理的日期。</summary>
         public string DateLabel => PublishedAt is { } at
             ? at.ToLocalTime().ToString("yyyy-MM-dd")
-            : "日期未知";
+            : L.Get("Rel.DateUnknown");
 
-        public string ChannelLabel => Prerelease ? "预发布" : "稳定版";
+        public string ChannelLabel => Prerelease ? L.Get("Rel.Prerelease") : L.Get("Rel.Stable");
 
         public bool HasNotes => !string.IsNullOrWhiteSpace(Notes);
     }
@@ -147,7 +147,7 @@ namespace AstraBrew_Launcher.Services
                     return cached with
                     {
                         FromCache = true,
-                        Error = $"刚才没能刷新，先看缓存的列表。{_lastFailure}",
+                        Error = L.F("Rel.Stale.First", _lastFailure),
                     };
                 }
 
@@ -196,7 +196,7 @@ namespace AstraBrew_Launcher.Services
                         return fallback with
                         {
                             FromCache = true,
-                            Error = $"这次没能刷新，显示的是上次缓存的版本列表。{_lastFailure}",
+                            Error = L.F("Rel.Stale.Again", _lastFailure),
                         };
                     }
 
@@ -237,6 +237,10 @@ namespace AstraBrew_Launcher.Services
         {
             var failures = new List<string>();
             var throttled = new List<string>();
+
+            // 限流那几条的原话单独留一份：下面要把「其余失败」挑出来另外播报，
+            // 不能再靠 failures 里有没有「被限流」这几个字来判断——错误文案迟早要翻译。
+            var throttledDetails = new List<string>();
             string? resumeHint = null;
 
             foreach (SourceTarget target in GithubAccel.Targets(ApiUrl))
@@ -246,7 +250,8 @@ namespace AstraBrew_Launcher.Services
                 // 中转端偶发的 403 值得再来一次：它前面挂着 CDN（响应带 60 秒缓存），
                 // 换个时间点常常就命中缓存直接成了。
                 // 直连不信这一套——GitHub 的 403 是「这一小时的 60 次用完了」，重试只是再花一次额度。
-                int attempts = target.Name == GithubAccel.AccelName ? 2 : 1;
+                // 按 URL 判断「这条是不是加速出口」：名称是给人看的文案，会跟着语言变，不能拿来做逻辑
+                int attempts = target.Url.StartsWith(GithubAccel.Prefix, StringComparison.Ordinal) ? 2 : 1;
 
                 for (int attempt = 1; attempt <= attempts; attempt++)
                 {
@@ -292,7 +297,10 @@ namespace AstraBrew_Launcher.Services
 
                             throttled.Add(target.Name);
                             resumeHint ??= ResumeHint(response);
-                            failures.Add($"{target.Name} 被限流（HTTP {(int)response.StatusCode}）");
+
+                            string throttledDetail = L.F("Rel.Throttled", target.Name, (int)response.StatusCode);
+                            throttledDetails.Add(throttledDetail);
+                            failures.Add(throttledDetail);
                             break;
                         }
 
@@ -309,14 +317,14 @@ namespace AstraBrew_Launcher.Services
 
                         if (payload is null)
                         {
-                            failures.Add($"{target.Name} 返回的内容无法解析");
+                            failures.Add(L.F("Rel.ParseFail", target.Name));
                             break;
                         }
 
                         IReadOnlyList<TavernRelease> releases = Map(payload);
                         if (releases.Count == 0)
                         {
-                            failures.Add($"{target.Name} 返回的发布列表为空");
+                            failures.Add(L.F("Rel.EmptyList", target.Name));
                             break;
                         }
 
@@ -335,7 +343,7 @@ namespace AstraBrew_Launcher.Services
                             continue;
                         }
 
-                        failures.Add($"{target.Name} 连接失败");
+                        failures.Add(L.F("Rel.ConnectFail", target.Name));
                         break;
                     }
                 }
@@ -346,15 +354,16 @@ namespace AstraBrew_Launcher.Services
                 // 只有真的存在加速出口时才说「两条都试过了」：
                 // 开关开着但链接不是 GitHub 的（或开关关着）时，那样说是不符合事实的
                 bool accelerated = GithubAccel.Targets(ApiUrl)
-                    .Any(target => target.Name == GithubAccel.AccelName);
+                    .Any(target => target.Url.StartsWith(GithubAccel.Prefix, StringComparison.Ordinal));
 
-                throw new FetchException(BuildThrottleMessage(throttled, failures, resumeHint, accelerated));
+                throw new FetchException(
+                    BuildThrottleMessage(throttled, throttledDetails, failures, resumeHint, accelerated));
             }
 
             throw new FetchException(
                 failures.Count > 0
-                    ? $"拿不到版本列表（{string.Join("；", failures)}）。"
-                    : "拿不到版本列表。");
+                    ? L.F("Rel.Unavailable.Detail", string.Join("; ", failures))
+                    : L.Get("Rel.Unavailable.Plain"));
         }
 
         /// <summary>
@@ -366,26 +375,27 @@ namespace AstraBrew_Launcher.Services
 
         private static string BuildThrottleMessage(
             List<string> throttled,
+            List<string> throttledDetails,
             List<string> failures,
             string? resumeHint,
             bool accelerated)
         {
-            string when = resumeHint is null ? string.Empty : $"额度大约 {resumeHint}恢复。";
+            string when = resumeHint is null ? string.Empty : L.F("Rel.ResumeHint", resumeHint);
 
-            // 另一条出口可能是因为别的原因失败的（连不上、502），如实带上，别一律说成「被限流」
+            // 另一条出口可能是因为别的原因失败的（连不上、502），如实带上，别一律说成「被限流」。
+            // 按「哪几条是限流」的列表做差集，不要匹配文字。
             List<string> others = failures
-                .Where(item => !item.Contains("被限流", StringComparison.Ordinal))
+                .Where(item => !throttledDetails.Contains(item))
                 .ToList();
 
-            string detail = others.Count > 0 ? $"另外{string.Join("；", others)}。" : string.Empty;
+            string detail = others.Count > 0 ? L.F("Rel.Others", string.Join("; ", others)) : string.Empty;
             // 中转端的 403 往往是它自己的频率限制（响应带 60 秒 CDN 缓存），
             // 和「配置错了」不是一回事，别让用户去翻设置
             string advice = accelerated
-                ? "加速与直连都试过了：中转端对同一 IP 有频率限制，隔一两分钟再点「刷新版本列表」通常就能过；"
-                    + "直连那边则是 GitHub 的每小时 60 次。"
-                : "打开「设置 → 网络 → GitHub 加速服务」可以换一条出口——中转端有自己的配额，不用等直连那 60 次/小时恢复。";
+                ? L.Get("Rel.Advice.Both")
+                : L.Get("Rel.Advice.Switch");
 
-            return $"GitHub 接口限流（{string.Join("、", throttled)} 被拒）。{when}{detail}{advice}";
+            return L.F("Rel.RateLimited", string.Join(L.Get("Common.List.And"), throttled), when, detail, advice);
         }
 
         /// <summary>从限流响应里读「什么时候恢复」：优先 Retry-After，其次 X-RateLimit-Reset。</summary>
@@ -396,12 +406,12 @@ namespace AstraBrew_Launcher.Services
                 if (retry.Delta is { } delta)
                 {
                     int minutes = (int)Math.Ceiling(delta.TotalMinutes);
-                    return minutes <= 1 ? "在 1 分钟内" : $"在 {minutes} 分钟内";
+                    return minutes <= 1 ? L.Get("Rel.Within.Minute") : L.F("Rel.Within.Minutes", minutes);
                 }
 
                 if (retry.Date is { } date)
                 {
-                    return $"在 {date.ToLocalTime():HH:mm} 之后";
+                    return L.F("Rel.After.Time", date.ToLocalTime().ToString("HH:mm"));
                 }
             }
 
@@ -409,7 +419,7 @@ namespace AstraBrew_Launcher.Services
                 && long.TryParse(values.FirstOrDefault(), out long epoch)
                 && epoch > 0 && epoch < 4102444800)
             {
-                return $"在 {DateTimeOffset.FromUnixTimeSeconds(epoch).ToLocalTime():HH:mm} 之后";
+                return L.F("Rel.After.Time", DateTimeOffset.FromUnixTimeSeconds(epoch).ToLocalTime().ToString("HH:mm"));
             }
 
             return null;
@@ -443,7 +453,7 @@ namespace AstraBrew_Launcher.Services
                 string? notes = item.Body;
                 if (notes is { Length: > NotesLimit })
                 {
-                    notes = notes[..NotesLimit] + "\n\n…（发布说明过长，已截断）";
+                    notes = notes[..NotesLimit] + "\n\n" + L.Get("Rel.NotesTruncated");
                 }
 
                 releases.Add(new TavernRelease(
@@ -510,7 +520,7 @@ namespace AstraBrew_Launcher.Services
                 return new ReleaseResult(
                     releases,
                     file.FetchedAt,
-                    string.IsNullOrWhiteSpace(file.Source) ? "本地缓存" : file.Source,
+                    string.IsNullOrWhiteSpace(file.Source) ? L.Get("Rel.LocalCache") : file.Source,
                     true,
                     null);
             }
@@ -575,9 +585,9 @@ namespace AstraBrew_Launcher.Services
         private static string Describe(Exception ex) => ex switch
         {
             FetchException fetch => fetch.Message,
-            HttpRequestException => "连不上 GitHub，请检查网络或代理后重试。",
-            TaskCanceledException => "连接 GitHub 超时，请检查网络或代理后重试。",
-            _ => "读取版本列表时出错，请稍后重试。",
+            HttpRequestException => L.Get("Rel.Err.Unreachable"),
+            TaskCanceledException => L.Get("Rel.Err.Timeout"),
+            _ => L.Get("Rel.Err.Read"),
         };
 
         private sealed class FetchException : Exception

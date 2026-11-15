@@ -80,6 +80,9 @@ namespace AstraBrew_Launcher.Views
             DesktopWindow.Changed -= Desktop_Changed;
             DesktopWindow.Changed += Desktop_Changed;
 
+            LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+            LanguageSwitch.LanguageChanged += OnLanguageChanged;
+
             SyncFromCatalog();
             SyncFromShared();
             ApplyModeVisibility();
@@ -94,6 +97,28 @@ namespace AstraBrew_Launcher.Views
             _ = SyncRuntimeLabelAsync();
         }
 
+        /// <summary>
+        /// 换语言：页面上的静态文字由 <c>Loc</c> 重刷，
+        /// 这里负责**由状态拼出来的那些**——服务状态、版本说明、模式说明、指标卡说明。
+        /// 全部走「重新按当前状态渲染」，不碰任何设置值。
+        /// </summary>
+        private void OnLanguageChanged(object? sender, EventArgs e)
+        {
+            if (_lastMetrics is { } metrics)
+            {
+                ApplyMetrics(metrics);
+            }
+
+            SyncFromCatalog();
+            SyncFromShared();
+            ApplyModeVisibility();
+            SyncServiceScope();
+            SetServiceRunning();
+
+            // 快捷按钮的提示语跟着启动模式变，也得重写一遍，否则换语言后悬停还是旧语言
+            SyncOpenTavernAction();
+        }
+
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             TavernSettings.Changed -= Shared_Changed;
@@ -102,6 +127,7 @@ namespace AstraBrew_Launcher.Views
             LauncherSettings.Changed -= Settings_Changed;
             GlobalTavernConfig.Saved -= Config_Saved;
             DesktopWindow.Changed -= Desktop_Changed;
+            LanguageSwitch.LanguageChanged -= OnLanguageChanged;
 
             _tick.Stop();
 
@@ -136,6 +162,8 @@ namespace AstraBrew_Launcher.Views
         }
 
         /// <summary>把采集结果铺到四张卡上。</summary>
+        private TavernMetrics? _lastMetrics;
+
         private void ApplyMetrics(TavernMetrics metrics)
         {
             if (ExtensionsValue is null)
@@ -143,31 +171,36 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
+            _lastMetrics = metrics;
+
             int extensions = metrics.BuiltinExtensions + metrics.ThirdPartyExtensions;
 
             ExtensionsValue.Text = extensions.ToString();
             ExtensionsCaption.Text = extensions == 0
-                ? "还没有安装扩展"
-                : $"内置 {metrics.BuiltinExtensions} · 第三方 {metrics.ThirdPartyExtensions}";
+                ? L.Get("Dashboard.Metric.Extensions.None")
+                : L.F("Dashboard.Metric.Extensions.Count", metrics.BuiltinExtensions, metrics.ThirdPartyExtensions);
 
+            CharactersUnit.Text = L.GetOrEmpty("Dashboard.Metric.Cards.Unit");
             CharactersCount.Text = metrics.CharacterCount.ToString();
             CharactersUnit.Visibility = metrics.CharacterCount > 0 ? Visibility.Visible : Visibility.Collapsed;
             CharactersCaption.Text = metrics.CharacterCount == 0
-                ? "还没有角色卡，右键导入即可"
-                : "共 " + TavernMetricsService.FormatSize(metrics.CharacterBytes);
+                ? L.Get("Dashboard.Metric.Cards.None")
+                : L.F("Dashboard.Metric.Cards.Total", TavernMetricsService.FormatSize(metrics.CharacterBytes));
 
             DiskValue.Text = TavernMetricsService.FormatSize(metrics.TotalBytes);
-            DiskCaption.Text = $"安装 {TavernMetricsService.FormatSize(metrics.InstallBytes)} · "
-                + $"数据 {TavernMetricsService.FormatSize(metrics.DataBytes)}";
+            DiskCaption.Text = L.F(
+                "Dashboard.Metric.Disk.Breakdown",
+                TavernMetricsService.FormatSize(metrics.InstallBytes),
+                TavernMetricsService.FormatSize(metrics.DataBytes));
 
             RequestsValue.Text = metrics.AccessLogEnabled ? metrics.TodayConnections.ToString() : "—";
             ToolTipService.SetToolTip(
                 RequestsValue,
                 metrics.AccessLogEnabled
-                    ? "来自酒馆的 access.log（今天零点起）"
-                    : "酒馆的访问日志未开启（logging.enableAccessLog），无法统计");
+                    ? L.Get("Dashboard.Metric.Requests.Tip")
+                    : L.Get("Dashboard.Metric.Requests.TipOff"));
 
-            LastSyncText.Text = $"最后同步 {metrics.SampledAt:HH:mm:ss}";
+            LastSyncText.Text = L.F("Dashboard.Metrics.LastSync", $"{metrics.SampledAt:HH:mm:ss}");
         }
 
         /// <summary>
@@ -226,17 +259,18 @@ namespace AstraBrew_Launcher.Views
             bool builtin = LauncherSettings.Runtime == RuntimeSource.Builtin;
             string node = TavernInstances.Current.Node;
 
-            RuntimeEnvText.Text = $"运行环境 · {(builtin ? "内置环境" : "系统环境")} · {node}";
+            RuntimeEnvText.Text = L.F(
+                "Dashboard.Env.Line",
+                L.Get(builtin ? "Dashboard.Env.Builtin.Label" : "Dashboard.Env.System.Label"),
+                node);
             ToolTipService.SetToolTip(
                 RuntimeEnvText,
-                builtin
-                    ? @"内置环境装在 %AppData%\AstraBrew Launcher\bin，可随启动器搬走"
-                    : "系统环境使用 PATH 里的 Node.js 与 Git，由你自己维护");
+                L.Get(builtin ? "Dashboard.Env.Builtin.Tip" : "Dashboard.Env.System.Tip"));
 
             string dataRoot = TavernRuntime.ResolveDataRoot();
-            DataModeText.Text = LauncherSettings.DataLocation == DataLocationMode.Global
-                ? "数据存放 · 全局目录（所有实例共用）"
-                : "数据存放 · 跟随实例目录";
+            DataModeText.Text = L.Get(LauncherSettings.DataLocation == DataLocationMode.Global
+                ? "Dashboard.Data.Global"
+                : "Dashboard.Data.PerInstance");
             ToolTipService.SetToolTip(DataModeText, dataRoot);
         }
 
@@ -276,9 +310,9 @@ namespace AstraBrew_Launcher.Views
             {
                 // 三个 chip 全不选中表示「跟随系统」，这件事得说出来，
                 // 不然用户只会看到一排都没亮的按钮
-                BrowserHint.Text = TavernSettings.Browser == BrowserKind.System
-                    ? "当前跟随系统默认浏览器；点上面任一项可以固定使用。"
-                    : "启动酒馆后自动用所选浏览器打开界面。";
+                BrowserHint.Text = L.Get(TavernSettings.Browser == BrowserKind.System
+                    ? "Dashboard.Browser.Hint.System"
+                    : "Dashboard.Browser.Hint.Custom");
             }
         }
 
@@ -360,7 +394,9 @@ namespace AstraBrew_Launcher.Views
             await RefreshMetricsAsync(force: true);
             _ = SyncRuntimeLabelAsync();
 
-            AppNotify.Success("指标已刷新", "服务状态、资源占用与磁盘数据已重新采集。");
+            AppNotify.Success(
+                L.Get("Dashboard.Notify.Metrics.Title"),
+                L.Get("Dashboard.Notify.Metrics.Body"));
         }
 
         private void CopyEndpoint_Click(object sender, RoutedEventArgs e)
@@ -370,7 +406,7 @@ namespace AstraBrew_Launcher.Views
             Clipboard.SetContent(package);
 
             FlashCopiedFeedback();
-            AppNotify.Success("地址已复制", EndpointText.Text);
+            AppNotify.Success(L.Get("Dashboard.Notify.Copied.Title"), EndpointText.Text);
         }
 
         private void FlashCopiedFeedback()
@@ -403,7 +439,9 @@ namespace AstraBrew_Launcher.Views
 
             if (state.IsRunning)
             {
-                AppNotify.Info("正在重启酒馆", "停止旧进程后会重新启动，进度可在控制台查看。");
+                AppNotify.Info(
+                    L.Get("Dashboard.Notify.Restarting.Title"),
+                    L.Get("Dashboard.Notify.Restarting.Body"));
                 await TavernRuntime.RestartAsync();
                 return;
             }
@@ -421,10 +459,10 @@ namespace AstraBrew_Launcher.Views
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = "停止酒馆服务？",
-                Content = $"正在进行的对话请求会被中断，本地端口 {TavernRuntime.CurrentPort} 将被释放。",
-                PrimaryButtonText = "停止服务",
-                CloseButtonText = "取消",
+                Title = L.Get("Dashboard.Notify.Stop.Title"),
+                Content = L.F("Dashboard.Notify.Stop.Body", TavernRuntime.CurrentPort),
+                PrimaryButtonText = L.Get("Dashboard.Notify.Stop.Confirm"),
+                CloseButtonText = L.Get("Dashboard.Notify.Stop.Cancel"),
                 DefaultButton = ContentDialogButton.Close,
             };
 
@@ -532,11 +570,14 @@ namespace AstraBrew_Launcher.Views
         private void ShowInstanceDetails(TavernInstance instance)
         {
             VersionTypeText.Text = instance.KindLabel;
-            VersionKernelText.Text = $"内核 {instance.KernelLabel}";
+            VersionKernelText.Text = L.F("Dashboard.Version.Kernel", instance.KernelLabel);
             VersionPathText.Text = instance.Path;
             VersionSizeText.Text = instance.Size;
 
-            HeroVersionPillText.Text = $"{instance.KindLabel} · {instance.KernelLabel}";
+            HeroVersionPillText.Text = L.F(
+                "Dashboard.Version.Pill",
+                instance.KindLabel,
+                instance.KernelLabel);
             CurrentVersionValue.Text = instance.KernelLabel;
             CurrentVersionCaption.Text = BuildVersionCaption(instance);
         }
@@ -547,25 +588,25 @@ namespace AstraBrew_Launcher.Views
             {
                 if (!instance.IsInstalled)
                 {
-                    return "内置酒馆还没有安装代码，去「版本管理」装一个版本";
+                    return L.Get("Dashboard.Version.NotInstalled");
                 }
 
                 // 依赖没装好的那份代码起不来，先让用户去补依赖，别显示「可更新」误导
                 if (!TavernInstances.BuiltinDepsReady)
                 {
-                    return $"{instance.DisplayName} · 缺少依赖，去「版本管理」点「安装依赖」";
+                    return L.F("Dashboard.Version.MissingDeps", instance.DisplayName);
                 }
 
                 return instance.Version == TavernInstances.LatestStable
-                    ? $"{instance.DisplayName} · 已是最新"
+                    ? L.F("Dashboard.Version.Latest", instance.DisplayName)
                     : instance.Version == TavernInstances.StagingTag
-                        ? $"{instance.DisplayName} · 开发版"
-                        : $"{instance.DisplayName} · 可更新到 v{TavernInstances.LatestStable}";
+                        ? L.F("Dashboard.Version.Dev", instance.DisplayName)
+                        : L.F("Dashboard.Version.Updatable", instance.DisplayName, TavernInstances.LatestStable);
             }
 
             return instance.DepsReady
-                ? $"{instance.DisplayName} · 依赖就绪"
-                : $"{instance.DisplayName} · 缺少依赖";
+                ? L.F("Dashboard.Version.DepsReady", instance.DisplayName)
+                : L.F("Dashboard.Version.DepsMissing", instance.DisplayName);
         }
 
         private void VersionCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -585,8 +626,11 @@ namespace AstraBrew_Launcher.Views
             if (!instance.DepsReady)
             {
                 AppNotify.Warning(
-                    "该实例缺少依赖",
-                    $"{instance.DisplayName} 需要先在「版本管理」安装 Node 依赖才能启动，当前仍使用 {TavernInstances.Current.DisplayName}。");
+                    L.Get("Dashboard.Notify.DepsMissing.Title"),
+                    L.F(
+                        "Dashboard.Notify.DepsMissing.Body",
+                        instance.DisplayName,
+                        TavernInstances.Current.DisplayName));
 
                 SelectCurrentInCombo();
                 return;
@@ -605,10 +649,10 @@ namespace AstraBrew_Launcher.Views
             _ = RefreshMetricsAsync(force: true);
 
             AppNotify.Success(
-                "已切换版本",
+                L.Get("Dashboard.Notify.Switched.Title"),
                 instance.IsBuiltin
-                    ? $"后续启动将使用内置实例 {instance.KernelLabel}。"
-                    : $"后续启动将使用本地 {instance.KernelLabel}，目录：{instance.Path}");
+                    ? L.F("Dashboard.Notify.Switched.Builtin", instance.KernelLabel)
+                    : L.F("Dashboard.Notify.Switched.Local", instance.KernelLabel, instance.Path));
         }
 
         private void RescanVersions_Click(object sender, RoutedEventArgs e)
@@ -633,10 +677,10 @@ namespace AstraBrew_Launcher.Views
             }
 
             AppNotify.Success(
-                "已重新扫描本地版本",
+                L.Get("Dashboard.Notify.Rescan.Title"),
                 missing == 0
-                    ? $"发现 {TavernInstances.Locals.Count} 个本地版本，均可正常启动。"
-                    : $"发现 {TavernInstances.Locals.Count} 个本地版本，其中 {missing} 个缺少 Node 依赖。");
+                    ? L.F("Dashboard.Notify.Rescan.Ok", TavernInstances.Locals.Count)
+                    : L.F("Dashboard.Notify.Rescan.Missing", TavernInstances.Locals.Count, missing));
         }
 
         private void ManageVersions_Click(object sender, RoutedEventArgs e)
@@ -683,15 +727,15 @@ namespace AstraBrew_Launcher.Views
             DesktopModePanel.Visibility = desktop ? Visibility.Visible : Visibility.Collapsed;
             ServerModePanel.Visibility = server ? Visibility.Visible : Visibility.Collapsed;
 
-            ModeSettingsTag.Text = normal ? "普通模式" : desktop ? "桌面模式" : "服务器模式";
+            ModeSettingsTag.Text = L.Get(normal
+                ? "Dashboard.Mode.Normal.Label"
+                : desktop ? "Dashboard.Mode.Desktop.Label" : "Dashboard.Mode.Server.Label");
 
             if (ModeDescriptionText is not null)
             {
-                ModeDescriptionText.Text = normal
-                    ? "用默认浏览器打开酒馆，适合日常对话。"
-                    : desktop
-                        ? "在独立窗口中运行酒馆界面，不经过浏览器。"
-                        : "开放给其他设备访问，按服务模式决定可访问范围。";
+                ModeDescriptionText.Text = L.Get(normal
+                    ? "Dashboard.Mode.Normal.Hint"
+                    : desktop ? "Dashboard.Mode.Desktop.Hint" : "Dashboard.Mode.Server.Hint");
             }
         }
 
@@ -731,10 +775,8 @@ namespace AstraBrew_Launcher.Views
             // 复用这次读到的 v4：HttpUrl(port) 会再枚举一遍网卡（100 ms 起步）
             AccessAddressText.Text = NetworkInfo.HttpUrl(port, v4);
             ServiceScopeHint.Text = lan
-                ? "同一 Wi-Fi 下的设备可直接访问，无需额外配置。"
-                : v4 is null
-                    ? "没有检测到局域网地址；公网访问需要路由器端口映射或反向代理。"
-                    : "公网访问需要路由器端口映射或反向代理；这里显示的是本机网卡地址。";
+                ? L.Get("Dashboard.Scope.Lan.Hint")
+                : L.Get(v4 is null ? "Dashboard.Scope.Wan.NoLan" : "Dashboard.Scope.Wan.Hint");
         }
 
         private void Browser_Checked(object sender, RoutedEventArgs e)
@@ -761,13 +803,13 @@ namespace AstraBrew_Launcher.Views
                 GlobalTavernConfig.PatchScalar("browserLaunch.browser", BrowserKey(browser));
             }
 
-            OpenTavernHint.Text = $"用 {TavernSettings.BrowserName} 打开";
+            OpenTavernHint.Text = L.F("Dashboard.Action.OpenWith", TavernSettings.BrowserName);
 
             if (BrowserHint is not null)
             {
-                BrowserHint.Text = TavernSettings.Browser == BrowserKind.System
-                    ? "当前跟随系统默认浏览器；点上面任一项可以固定使用。"
-                    : "启动酒馆后自动用所选浏览器打开界面。";
+                BrowserHint.Text = L.Get(TavernSettings.Browser == BrowserKind.System
+                    ? "Dashboard.Browser.Hint.System"
+                    : "Dashboard.Browser.Hint.Custom");
             }
         }
 
@@ -814,17 +856,17 @@ namespace AstraBrew_Launcher.Views
             switch (TavernSettings.Mode)
             {
                 case LaunchMode.Desktop:
-                    OpenTavernHint.Text = DesktopWindow.IsOpen
-                        ? "窗口已打开 · 点击唤到前台"
-                        : "窗口已关闭 · 点击重新打开";
+                    OpenTavernHint.Text = L.Get(DesktopWindow.IsOpen
+                        ? "Dashboard.Open.Desktop.Focused"
+                        : "Dashboard.Open.Desktop.Closed");
                     break;
 
                 case LaunchMode.Server:
-                    OpenTavernHint.Text = "查看连接地址";
+                    OpenTavernHint.Text = L.Get("Dashboard.Open.Server");
                     break;
 
                 default:
-                    OpenTavernHint.Text = $"用 {TavernSettings.BrowserName} 打开";
+                    OpenTavernHint.Text = L.F("Dashboard.Action.OpenWith", TavernSettings.BrowserName);
                     break;
             }
 
@@ -854,22 +896,22 @@ namespace AstraBrew_Launcher.Views
 
                 if (HeroOpenText is not null && HeroOpenGlyph is not null)
                 {
-                    HeroOpenText.Text = "访问酒馆";
+                    HeroOpenText.Text = L.Get("Dashboard.Action.OpenTavern.Label");
                     HeroOpenGlyph.Glyph = glyph;
 
                     ToolTipService.SetToolTip(
                         HeroOpenButton,
                         TavernSettings.Mode switch
                         {
-                            LaunchMode.Desktop => "打开酒馆窗口（已开着就唤到前台）",
-                            LaunchMode.Server => "查看手机 / 平板的访问地址与二维码",
-                            _ => "用浏览器打开酒馆",
+                            LaunchMode.Desktop => L.Get("Dash.Open.Desktop"),
+                            LaunchMode.Server => L.Get("Dash.Open.Server"),
+                            _ => L.Get("Dash.Open.Normal"),
                         });
                 }
 
                 if (Qa1Text is not null && Qa1Glyph is not null)
                 {
-                    Qa1Text.Text = "访问酒馆";
+                    Qa1Text.Text = L.Get("Dashboard.Action.OpenTavern.Label");
                     Qa1Glyph.Glyph = glyph;
                 }
             }
@@ -880,9 +922,9 @@ namespace AstraBrew_Launcher.Views
             if (!TavernRuntime.IsRunning)
             {
                 AppNotify.Info(
-                    "酒馆还没启动",
-                    "点「启动服务」把酒馆跑起来之后，这里会直接用浏览器打开它。",
-                    "启动",
+                    L.Get("Dash.NotRunning.Title"),
+                    L.Get("Dash.NotRunning.Body"),
+                    L.Get("Dash.NotRunning.Action"),
                     () => _ = TavernRuntime.StartAsync());
                 return;
             }
@@ -902,14 +944,14 @@ namespace AstraBrew_Launcher.Views
             if (DesktopWindow.OpenTavern(url, out string detail))
             {
                 string title = TavernSettings.Mode == LaunchMode.Desktop
-                    ? windowOpen ? "桌面窗口已在前台" : "已打开桌面窗口"
-                    : "已在浏览器中打开酒馆";
+                    ? L.Get(windowOpen ? "Dash.Opened.DesktopFront" : "Dash.Opened.Desktop")
+                    : L.Get("Dash.Opened.Browser");
 
                 AppNotify.Success(title, $"{url} · {detail}");
                 return;
             }
 
-            AppNotify.Error("打开失败", $"{url} · {detail}");
+            AppNotify.Error(L.Get("Dash.OpenFail.Title"), $"{url} · {detail}");
         }
 
         private void OpenDataDir_Click(object sender, RoutedEventArgs e)
@@ -918,18 +960,18 @@ namespace AstraBrew_Launcher.Views
 
             if (!Directory.Exists(path))
             {
-                AppNotify.Warning("数据目录还不存在", path + " 会在酒馆第一次启动时创建。");
+                AppNotify.Warning(L.Get("Dash.DataDirMissing.Title"), L.F("Dash.DataDirMissing.Body", path));
                 return;
             }
 
             try
             {
                 Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
-                AppNotify.Success("已打开数据目录", path);
+                AppNotify.Success(L.Get("Dash.DataDirOpened"), path);
             }
             catch (Exception ex)
             {
-                AppNotify.Error("打不开数据目录", ex.Message);
+                AppNotify.Error(L.Get("Dash.DataDirFail.Title"), ex.Message);
             }
         }
 
@@ -964,7 +1006,7 @@ namespace AstraBrew_Launcher.Views
             }
             catch (Exception ex)
             {
-                AppNotify.Error("打开文件选择器失败", ex.Message);
+                AppNotify.Error(L.Get("Dash.PickerFail.Title"), ex.Message);
                 return;
             }
 
@@ -982,7 +1024,7 @@ namespace AstraBrew_Launcher.Views
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                AppNotify.Error("角色卡目录不可写", target + "：" + ex.Message);
+                AppNotify.Error(L.Get("Dash.CardsNotWritable.Title"), $"{target}: {ex.Message}");
                 return;
             }
 
@@ -1001,15 +1043,15 @@ namespace AstraBrew_Launcher.Views
 
             if (copied == 0)
             {
-                AppNotify.Error("导入失败", firstError ?? "没有文件被复制。");
+                AppNotify.Error(L.Get("Dash.ImportFail.Title"), firstError ?? L.Get("Dash.Import.None"));
                 return;
             }
 
             AppNotify.Success(
-                $"已导入 {copied} 张角色卡",
+                L.F("Dash.ImportOk.Title", copied),
                 firstError is null
-                    ? "已复制到酒馆的角色卡目录，刷新酒馆页面即可看到。"
-                    : $"其中 {files.Count - copied} 张失败：{firstError}");
+                    ? L.Get("Dash.ImportOk.Body")
+                    : L.F("Dash.Import.Partial", files.Count - copied, firstError));
 
             await RefreshMetricsAsync(force: true);
         }
@@ -1054,14 +1096,14 @@ namespace AstraBrew_Launcher.Views
             bool running = state.IsRunning;
             bool busy = state.IsBusy;
 
-            ServiceStateText.Text = state.State switch
+            ServiceStateText.Text = L.Get(state.State switch
             {
-                TavernRunState.Starting => "正在启动…",
-                TavernRunState.Running => "服务运行中",
-                TavernRunState.Stopping => "正在停止…",
-                TavernRunState.Failed => "启动失败",
-                _ => "服务已停止",
-            };
+                TavernRunState.Starting => "Dashboard.Service.Starting",
+                TavernRunState.Running => "Dashboard.Service.Running",
+                TavernRunState.Stopping => "Dashboard.Service.Stopping",
+                TavernRunState.Failed => "Dashboard.Service.Failed",
+                _ => "Dashboard.Service.Stopped",
+            });
 
             StatusHalo.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
             StatusDotRunning.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
@@ -1080,7 +1122,9 @@ namespace AstraBrew_Launcher.Views
             // 没在跑时主按钮是「启动」，跑起来才变成「重启」——一个按钮兼顾两件事，
             // 也避免「停止状态点重启什么都不会发生」
             PrimaryActionButton.IsEnabled = !busy;
-            PrimaryActionText.Text = running ? "重启服务" : "启动服务";
+            PrimaryActionText.Text = L.Get(running
+                ? "Dashboard.Action.Restart"
+                : "Dashboard.Action.Start");
             PrimaryActionGlyph.Glyph = running ? "\uE72C" : "\uE768";
             HeroStopButton.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
 

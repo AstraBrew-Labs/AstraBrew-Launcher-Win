@@ -34,13 +34,13 @@ namespace AstraBrew_Launcher.Services
         {
             if (string.IsNullOrWhiteSpace(path))
             {
-                return (false, "路径为空");
+                return (false, L.Get("Miss.PathEmpty"));
             }
 
             bool exists = File.Exists(path) || Directory.Exists(path);
             if (!exists)
             {
-                return (false, "文件已经不存在了");
+                return (false, L.Get("Miss.FileGone"));
             }
 
             try
@@ -60,7 +60,7 @@ namespace AstraBrew_Launcher.Services
                     return (true, null);
                 }
 
-                return (false, code == 0 ? "操作被取消" : $"系统返回错误 0x{code:X}");
+                return (false, code == 0 ? L.Get("Miss.Cancelled") : L.F("Miss.SystemError", code.ToString("X")));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DllNotFoundException)
             {

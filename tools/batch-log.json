@@ -1,0 +1,4 @@
+{
+  "Run.Log.Node": ["Node.js {0} · {1}", "Node.js {0} · {1}"],
+  "Run.Log.WhitelistDone": ["白名单（{0}）：{1} · 已写入 config.yaml", "Whitelist ({0}): {1} · written to config.yaml"]
+}

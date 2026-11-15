@@ -49,7 +49,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
         public bool IsBusy => _busy;
 
-        public string? BlockingReason => _busy ? "正在搬数据，等一下" : null;
+        public string? BlockingReason => _busy ? L.Get("Setup.S1.Blocking.Busy") : null;
 
         // ==================== 生命周期 ====================
 
@@ -84,7 +84,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             GuiRescanButton.Visibility = Visibility.Collapsed;
             GuiRunButton.Visibility = Visibility.Collapsed;
             GuiProgressPanel.Visibility = Visibility.Collapsed;
-            GuiStatusText.Text = "正在找旧数据…";
+            GuiStatusText.Text = L.Get("Setup.S1.Gui.Searching");
             PickFolderButton.Visibility = Visibility.Collapsed;
 
             LegacyListCard.Visibility = Visibility.Collapsed;
@@ -92,7 +92,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             LegacyRescanButton.Visibility = Visibility.Collapsed;
             LegacyRunButton.Visibility = Visibility.Collapsed;
             LegacyProgressPanel.Visibility = Visibility.Collapsed;
-            LegacyStatusText.Text = "正在找旧版留下的东西…";
+            LegacyStatusText.Text = L.Get("Setup.S1.Legacy.Searching");
 
             RaiseState();
         }
@@ -124,13 +124,13 @@ namespace AstraBrew_Launcher.Views.Onboarding
         {
             if (OnboardingMigration.TryFindGuiData(out string root))
             {
-                SetGuiPlan(OnboardingMigration.PlanGui(root), "找到这里的数据了", showPicker: false, path: root);
+                SetGuiPlan(OnboardingMigration.PlanGui(root), L.Get("Setup.S1.Gui.Found"), showPicker: false, path: root);
             }
             else
             {
                 _guiPlan = null;
 
-                GuiStatusText.Text = "常见位置没找到。可以自己选文件。";
+                GuiStatusText.Text = L.Get("Setup.S1.Gui.NotFound");
                 SetMeta(GuiMetaText, OnboardingMigration.GuiDataRoot);
                 PickFolderButton.Visibility = Visibility.Visible;
                 GuiSummaryText.Visibility = Visibility.Collapsed;
@@ -163,7 +163,13 @@ namespace AstraBrew_Launcher.Views.Onboarding
             }
 
             GuiSummaryText.Visibility = Visibility.Visible;
-            GuiSummaryText.Text = $"共 {plan.Entries.Count} 个文件 · 新加 {plan.NewCount} · 替换 {plan.OverwriteCount} · 一样 {plan.SkipCount} · {FormatSize(plan.TotalBytes)}";
+            GuiSummaryText.Text = L.F(
+                "Setup.S1.Gui.Summary",
+                plan.Entries.Count,
+                plan.NewCount,
+                plan.OverwriteCount,
+                plan.SkipCount,
+                FormatSize(plan.TotalBytes));
 
             GuiListCard.Visibility = Visibility.Visible;
             GuiListHost.Children.Clear();
@@ -180,7 +186,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
                     Margin = new Thickness(8, 4, 8, 4),
                     FontSize = 11,
                     Foreground = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"],
-                    Text = $"还有 {plan.Entries.Count - MaxRows} 个没列出来，照样会搬",
+                    Text = L.F("Setup.S1.Gui.MoreRows", plan.Entries.Count - MaxRows),
                 });
             }
 
@@ -188,7 +194,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             if (!plan.HasWork)
             {
-                GuiSummaryText.Text += " · 已经一样了，不用搬";
+                GuiSummaryText.Text += L.Get("Setup.S1.Gui.NothingToDo");
             }
         }
 
@@ -213,7 +219,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             var size = new TextBlock
             {
-                Text = entry.Bytes > 0 ? FormatSize(entry.Bytes) : "文件夹",
+                Text = entry.Bytes > 0 ? FormatSize(entry.Bytes) : L.Get("Setup.S1.Folder"),
                 FontSize = 11,
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground = (Brush)Application.Current.Resources["TextFillColorTertiaryBrush"],
@@ -236,9 +242,9 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 {
                     Text = entry.Action switch
                     {
-                        FileAction.New => "新加",
-                        FileAction.Overwrite => "替换",
-                        _ => "一样",
+                        FileAction.New => L.Get("Setup.S1.Action.New"),
+                        FileAction.Overwrite => L.Get("Setup.S1.Action.Overwrite"),
+                        _ => L.Get("Setup.S1.Action.Same"),
                     },
                     FontSize = 10.5,
                 },
@@ -273,7 +279,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             }
             catch (Exception ex)
             {
-                AppNotify.Error("没能打开选择窗口", ex.Message);
+                AppNotify.Error(L.Get("Setup.S1.Notify.PickerFailed.Title"), ex.Message);
                 return;
             }
 
@@ -286,16 +292,18 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             if (plan.Error is { Length: > 0 })
             {
-                AppNotify.Warning("这个文件夹读不了", plan.Error);
+                AppNotify.Warning(L.Get("Setup.S1.Notify.Unreadable.Title"), plan.Error);
                 return;
             }
 
             if (!File.Exists(Path.Combine(directory, "config.yaml")))
             {
-                AppNotify.Warning("这里好像不是酒馆的数据", "请选里面有 default-user、characters 文件夹的那一层。");
+                AppNotify.Warning(
+                    L.Get("Setup.S1.Notify.NotTavern.Title"),
+                    L.Get("Setup.S1.Notify.NotTavern.Body"));
             }
 
-            SetGuiPlan(plan, "用的是你选的这个文件夹", showPicker: true, path: directory);
+            SetGuiPlan(plan, L.Get("Setup.S1.Gui.Picked"), showPicker: true, path: directory);
         }
 
         private void GuiRescan_Click(object sender, RoutedEventArgs e) => RefreshGui();
@@ -312,10 +320,10 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 var dialog = new ContentDialog
                 {
                     XamlRoot = XamlRoot,
-                    Title = $"有 {_guiPlan.OverwriteCount} 个文件会被替换",
-                    Content = "目标位置已经有同名文件，搬过去会换成新的。旧的先备份，成功后再删。",
-                    PrimaryButtonText = "替换并继续",
-                    CloseButtonText = "先不搬",
+                    Title = L.F("Setup.S1.Confirm.Overwrite.Title", _guiPlan.OverwriteCount),
+                    Content = L.Get("Setup.S1.Confirm.Overwrite.Body"),
+                    PrimaryButtonText = L.Get("Setup.S1.Confirm.Overwrite.Primary"),
+                    CloseButtonText = L.Get("Setup.S1.Confirm.Overwrite.Close"),
                     DefaultButton = ContentDialogButton.Close,
                 };
                 dialog.Resources["ControlCornerRadius"] = new CornerRadius(8);
@@ -329,7 +337,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             SetBusy(true);
             GuiProgressPanel.Visibility = Visibility.Visible;
             GuiProgressBar.Value = 0;
-            GuiProgressText.Text = "准备开始…";
+            GuiProgressText.Text = L.Get("Setup.S1.Progress.Preparing");
             GuiRunButton.IsEnabled = false;
 
             var progress = new Progress<MigrationProgress>(value =>
@@ -351,18 +359,18 @@ namespace AstraBrew_Launcher.Views.Onboarding
                     LauncherSettings.SetDataLocation(DataLocationMode.Global);
 
                     GuiProgressBar.Value = 100;
-                    GuiProgressText.Text = "搬完了";
+                    GuiProgressText.Text = L.Get("Setup.S1.Progress.Done");
 
                     AppNotify.Success(
-                        "搬好了",
-                        $"新加 {result.Copied} 个，替换 {result.Overwritten} 个。以后数据都放同一处。");
+                        L.Get("Setup.S1.Notify.Moved.Title"),
+                        L.F("Setup.S1.Notify.Moved.Body", result.Copied, result.Overwritten));
 
                     RefreshGui();
                 }
                 else
                 {
-                    GuiProgressText.Text = result.Error ?? "没搬成功";
-                    AppNotify.Error("没搬成功", result.Error ?? "未知原因");
+                    GuiProgressText.Text = result.Error ?? L.Get("Setup.S1.Progress.Failed");
+                    AppNotify.Error(L.Get("Setup.S1.Notify.MoveFailed.Title"), result.Error ?? L.Get("Setup.Common.Unknown"));
                 }
             }
             finally
@@ -381,7 +389,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             if (!plan.Detected || plan.Error is { Length: > 0 })
             {
-                LegacyStatusText.Text = "没找到旧版留下的数据";
+                LegacyStatusText.Text = L.Get("Setup.S1.Legacy.NotFound");
                 SetMeta(LegacyMetaText, AppPaths.RoamingRoot);
                 LegacyListCard.Visibility = Visibility.Collapsed;
                 LegacyListHost.Children.Clear();
@@ -394,8 +402,8 @@ namespace AstraBrew_Launcher.Views.Onboarding
             int willMove = moves.Count(move => move.WillMove);
 
             LegacyStatusText.Text = willMove == 0 && plan.Notices.Count == 0
-                ? "旧版的目录已经是新的了，不用再动。"
-                : $"找到 {willMove} 项旧数据，要挪个位置。";
+                ? L.Get("Setup.S1.Legacy.AlreadyOkay")
+                : L.F("Setup.S1.Legacy.Found", willMove);
 
             SetMeta(LegacyMetaText, AppPaths.RoamingRoot);
 
@@ -434,7 +442,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 Text = move.WillMove
                     ? $"{Shorten(move.From)}  →  {Shorten(move.To)}"
-                    : $"{Shorten(move.From)}  →  已经有了，跳过",
+                    : L.F("Setup.S1.Legacy.SkipRow", Shorten(move.From)),
             };
 
             var pill = new Border
@@ -448,7 +456,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 Child = new TextBlock
                 {
                     FontSize = 10.5,
-                    Text = move.Kind == "data" ? "挪上层" : "改名字",
+                    Text = L.Get(move.Kind == "data" ? "Setup.S1.Legacy.Kind.Move" : "Setup.S1.Legacy.Kind.Rename"),
                 },
             };
 
@@ -479,10 +487,10 @@ namespace AstraBrew_Launcher.Views.Onboarding
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = "把旧数据挪到新位置？",
-                Content = "只改名和挪位置，不复制也不删文件。撞名字的先放进备份文件夹。",
-                PrimaryButtonText = "开始整理",
-                CloseButtonText = "先不弄",
+                Title = L.Get("Setup.S1.Legacy.Confirm.Title"),
+                Content = L.Get("Setup.S1.Legacy.Confirm.Body"),
+                PrimaryButtonText = L.Get("Setup.S1.Legacy.Confirm.Primary"),
+                CloseButtonText = L.Get("Setup.S1.Legacy.Confirm.Close"),
                 DefaultButton = ContentDialogButton.Primary,
             };
             dialog.Resources["ControlCornerRadius"] = new CornerRadius(8);
@@ -495,7 +503,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             SetBusy(true);
             LegacyProgressPanel.Visibility = Visibility.Visible;
             LegacyProgressBar.Value = 0;
-            LegacyProgressText.Text = "准备开始…";
+            LegacyProgressText.Text = L.Get("Setup.S1.Progress.Preparing");
             LegacyRunButton.IsEnabled = false;
 
             var progress = new Progress<MigrationProgress>(value =>
@@ -513,13 +521,15 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
                 if (!result.Success)
                 {
-                    LegacyProgressText.Text = result.Error ?? "没整理成功";
-                    AppNotify.Error("没整理成功", result.Error ?? "未知原因");
+                    LegacyProgressText.Text = result.Error ?? L.Get("Setup.S1.Progress.Failed");
+                    AppNotify.Error(L.Get("Setup.S1.Legacy.Notify.Failed.Title"), result.Error ?? L.Get("Setup.Common.Unknown"));
                     return;
                 }
 
                 LegacyProgressBar.Value = 100;
-                AppNotify.Success("旧数据整理好了", "内置工具挪进 bin 文件夹，数据目录也理顺了。");
+                AppNotify.Success(
+                    L.Get("Setup.S1.Legacy.Notify.Done.Title"),
+                    L.Get("Setup.S1.Legacy.Notify.Done.Body"));
 
                 RefreshLegacy();
                 await OfferNodeUpgradeAsync();
@@ -545,12 +555,12 @@ namespace AstraBrew_Launcher.Views.Onboarding
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = "有个小工具要重装",
-                Content = (version is null ? "旧版带的小工具已经无法运行。" : $"旧版带的是 Node.js {version}，")
-                    + $"现在要用 {NodejsInstaller.Version}。混着用在有些电脑上会出怪问题。要现在重装吗？"
-                    + "旧的先留着，装失败自动还原。",
-                PrimaryButtonText = "现在重装",
-                CloseButtonText = "稍后再说",
+                Title = L.Get("Setup.S1.NodeUpgrade.Title"),
+                Content = version is null
+                    ? L.F("Setup.S1.NodeUpgrade.BodyUnknown", NodejsInstaller.Version)
+                    : L.F("Setup.S1.NodeUpgrade.Body", version, NodejsInstaller.Version),
+                PrimaryButtonText = L.Get("Setup.S1.NodeUpgrade.Primary"),
+                CloseButtonText = L.Get("Setup.S1.NodeUpgrade.Close"),
                 DefaultButton = ContentDialogButton.Primary,
             };
             dialog.Resources["ControlCornerRadius"] = new CornerRadius(8);
@@ -563,13 +573,13 @@ namespace AstraBrew_Launcher.Views.Onboarding
             SetBusy(true);
             LegacyProgressPanel.Visibility = Visibility.Visible;
             LegacyProgressBar.Value = 0;
-            LegacyProgressText.Text = "正在重装小工具…";
+            LegacyProgressText.Text = L.Get("Setup.S1.NodeUpgrade.Progress");
 
             var progress = new Progress<InstallProgress>(value =>
             {
                 LegacyProgressBar.Value = value.Percent;
                 LegacyProgressText.Text = string.IsNullOrWhiteSpace(value.Message)
-                    ? $"正在重装小工具… {value.Percent:0}%"
+                    ? L.F("Setup.S1.NodeUpgrade.ProgressPercent", $"{value.Percent:0}")
                     : $"{value.Message} · {value.Percent:0}%";
             });
 
@@ -581,11 +591,11 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
                 if (result.Success)
                 {
-                    AppNotify.Success("小工具重装好了", result.Message);
+                    AppNotify.Success(L.Get("Setup.S1.NodeUpgrade.Done.Title"), result.Message);
                 }
                 else
                 {
-                    AppNotify.Error("小工具没装上", result.Message + (result.Hint is { Length: > 0 } hint ? " " + hint : string.Empty));
+                    AppNotify.Error(L.Get("Setup.S1.NodeUpgrade.Failed.Title"), result.Message + (result.Hint is { Length: > 0 } hint ? " " + hint : string.Empty));
                 }
             }
             finally

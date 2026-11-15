@@ -3,6 +3,7 @@
     x:Class="AstraBrew_Launcher.Views.ConsolePage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     Loaded="OnLoaded"
@@ -118,7 +119,7 @@
                         VerticalAlignment="Center"
                         FontSize="15"
                         FontWeight="SemiBold"
-                        Text="控制台" />
+                        controls:Loc.Text="Console.Title" />
 
                     <!--  状态胶囊：颜色与文案随运行状态走  -->
                     <Border
@@ -131,8 +132,7 @@
                                 Glyph="&#xE73B;" />
                             <TextBlock
                                 x:Name="StatusText"
-                                Style="{StaticResource StatusPillTextStyle}"
-                                Text="未启动" />
+                                Style="{StaticResource StatusPillTextStyle}" />
                         </StackPanel>
                     </Border>
 
@@ -179,8 +179,8 @@
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                         BorderThickness="1"
                         Click="NetworkButton_Click"
+                        controls:Loc.ToolTip="Console.Network.Tip"
                         CornerRadius="8"
-                        ToolTipService.ToolTip="查看手机 / 平板访问地址"
                         Visibility="Collapsed">
                         <StackPanel Orientation="Horizontal" Spacing="5">
                             <FontIcon
@@ -190,8 +190,7 @@
                             <TextBlock
                                 x:Name="NetworkText"
                                 FontSize="11"
-                                FontWeight="SemiBold"
-                                Text="局域网" />
+                                FontWeight="SemiBold" />
                         </StackPanel>
                     </Button>
                 </StackPanel>
@@ -210,7 +209,7 @@
                         Visibility="Collapsed">
                         <StackPanel Orientation="Horizontal" Spacing="5">
                             <FontIcon FontSize="11" Glyph="&#xE74A;" />
-                            <TextBlock FontSize="11.5" Text="跟随" />
+                            <TextBlock FontSize="11.5" controls:Loc.Text="Console.Action.Follow" />
                         </StackPanel>
                     </Button>
 
@@ -220,7 +219,7 @@
                         Style="{StaticResource ConsoleActionButtonStyle}">
                         <StackPanel Orientation="Horizontal" Spacing="5">
                             <FontIcon FontSize="11" Glyph="&#xE896;" />
-                            <TextBlock FontSize="11.5" Text="导出" />
+                            <TextBlock FontSize="11.5" controls:Loc.Text="Console.Action.Export" />
                         </StackPanel>
                     </Button>
 
@@ -230,8 +229,8 @@
                         Height="30"
                         Padding="0"
                         Click="Clear_Click"
-                        Style="{StaticResource SubtleIconButtonStyle}"
-                        ToolTipService.ToolTip="清空本次会话日志">
+                        controls:Loc.ToolTip="Console.Action.Clear.Tip"
+                        Style="{StaticResource SubtleIconButtonStyle}">
                         <FontIcon FontSize="12" Glyph="&#xE74D;" />
                     </Button>
 
@@ -242,7 +241,7 @@
                         Visibility="Collapsed">
                         <StackPanel Orientation="Horizontal" Spacing="5">
                             <FontIcon FontSize="11" Glyph="&#xE72C;" />
-                            <TextBlock FontSize="11.5" Text="重启" />
+                            <TextBlock FontSize="11.5" controls:Loc.Text="Console.Action.Restart" />
                         </StackPanel>
                     </Button>
 
@@ -254,7 +253,7 @@
                         Visibility="Collapsed">
                         <StackPanel Orientation="Horizontal" Spacing="5">
                             <FontIcon FontSize="11" Glyph="&#xE71A;" />
-                            <TextBlock FontSize="11.5" Text="停止" />
+                            <TextBlock FontSize="11.5" controls:Loc.Text="Console.Action.Stop" />
                         </StackPanel>
                     </Button>
 
@@ -266,7 +265,7 @@
                         Visibility="Collapsed">
                         <StackPanel Orientation="Horizontal" Spacing="5">
                             <FontIcon FontSize="11" Glyph="&#xE71A;" />
-                            <TextBlock FontSize="11.5" Text="强制结束" />
+                            <TextBlock FontSize="11.5" controls:Loc.Text="Console.Action.Kill" />
                         </StackPanel>
                     </Button>
 
@@ -278,7 +277,7 @@
                         Style="{StaticResource AccentActionButtonStyle}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon FontSize="11" Glyph="&#xE768;" />
-                            <TextBlock FontSize="11.5" Text="启动" />
+                            <TextBlock FontSize="11.5" controls:Loc.Text="Console.Action.Start" />
                         </StackPanel>
                     </Button>
                 </StackPanel>
@@ -309,7 +308,7 @@
                         VerticalAlignment="Center"
                         FontSize="12"
                         FontWeight="SemiBold"
-                        Text="实时输出" />
+                        controls:Loc.Text="Console.Log.Title" />
 
                     <Border
                         Grid.Column="1"
@@ -318,8 +317,7 @@
                             x:Name="LogCountText"
                             FontFamily="Consolas"
                             FontSize="10.5"
-                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                            Text="0 行" />
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </Border>
 
                     <TextBlock
@@ -329,7 +327,7 @@
                         VerticalAlignment="Center"
                         FontSize="11"
                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        Text="自动跟随" />
+                        controls:Loc.Text="Console.Log.Following" />
 
                     <TextBlock
                         x:Name="SessionText"
@@ -338,7 +336,7 @@
                         FontFamily="Consolas"
                         FontSize="10.5"
                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        Text="本次会话" />
+                        controls:Loc.Text="Console.Log.Session" />
                 </Grid>
 
                 <Rectangle

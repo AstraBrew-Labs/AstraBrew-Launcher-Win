@@ -1,0 +1,42 @@
+{
+  "Console.Title": ["控制台", "Console"],
+  "Console.Status.Idle": ["未启动", "Not started"],
+  "Console.Status.Starting": ["启动中…", "Starting…"],
+  "Console.Status.Running": ["运行中", "Running"],
+  "Console.Status.Stopping": ["停止中…", "Stopping…"],
+  "Console.Status.Stopped": ["已停止", "Stopped"],
+  "Console.Status.Failed": ["启动失败", "Failed to start"],
+
+  "Console.Network.Tip": ["查看手机 / 平板访问地址", "Show the address for phones and tablets"],
+  "Console.Network.Lan": ["局域网", "LAN"],
+  "Console.Network.Local": ["本机", "This PC"],
+  "Console.Network.Wan": ["互联网", "Internet"],
+  "Console.Network.Open": ["访问酒馆", "Open tavern"],
+  "Console.Network.OpenTip": ["酒馆在独立窗口中打开；窗口被关掉时可以在这里重新打开", "The tavern opens in its own window; reopen it here if that window was closed"],
+  "Console.Network.LocalTip": ["查看本机地址（普通模式不对外提供访问）", "Show the local address (normal mode does not expose the service)"],
+
+  "Console.Action.Follow": ["跟随", "Follow"],
+  "Console.Action.Export": ["导出", "Export"],
+  "Console.Action.Clear.Tip": ["清空本次会话日志", "Clear this session's log"],
+  "Console.Action.Restart": ["重启", "Restart"],
+  "Console.Action.Stop": ["停止", "Stop"],
+  "Console.Action.Kill": ["强制结束", "Force stop"],
+  "Console.Action.Start": ["启动", "Start"],
+
+  "Console.Log.Title": ["实时输出", "Live output"],
+  "Console.Log.Lines": ["{0} 行", "{0} lines"],
+  "Console.Log.Following": ["自动跟随", "Auto-following"],
+  "Console.Log.Paused": ["已暂停跟随", "Follow paused"],
+  "Console.Log.Session": ["本次会话", "This session"],
+
+  "Console.Confirm.Stop.Title": ["停止酒馆服务？", "Stop the tavern service?"],
+  "Console.Confirm.Stop.Body": ["正在进行的对话请求会被中断，端口 {0} 将被释放。", "Ongoing chat requests will be cut off and port {0} will be released."],
+  "Console.Confirm.Stop.Primary": ["停止服务", "Stop service"],
+  "Console.Confirm.Kill.Title": ["强制结束酒馆进程？", "Force-stop the tavern process?"],
+  "Console.Confirm.Kill.Body": ["会直接结束 PID {0} 的整棵进程树，正在写的对话可能丢失。只有在「停止」没有反应时才需要这样做。", "This kills the whole process tree under PID {0} and may lose a chat that is being written. Only do this when Stop does not respond."],
+  "Console.Confirm.Kill.Primary": ["强制结束", "Force stop"],
+
+  "Console.Export.Ok.Title": ["日志已导出", "Log exported"],
+  "Console.Export.Fail.Title": ["导出失败", "Export failed"],
+  "Console.Open.Fail.Title": ["打不开酒馆页面", "Could not open the tavern page"]
+}

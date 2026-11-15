@@ -250,14 +250,18 @@ namespace AstraBrew_Launcher.Views
     {
         public string Speaker { get; set; } = string.Empty;
 
-        public string Role { get; set; } = "角色";
+        /// <summary>显示用的角色名（「用户 / 角色」）。**别拿它做逻辑判断**，它会被本地化。</summary>
+        public string Role { get; set; } = L.Get("Res.Value.RoleCharacter");
+
+        /// <summary>这条是不是用户自己说的。竖条、对齐、头像都看它，不看 <see cref="Role"/> 的文字。</summary>
+        public bool IsUser { get; set; }
 
         public string Time { get; set; } = string.Empty;
 
         public string Body { get; set; } = string.Empty;
 
-        /// <summary>用户消息左侧多一道强调色竖条；角色文案本身就是「用户」。</summary>
-        public Visibility UserVisibility => Role == "用户" ? Visibility.Visible : Visibility.Collapsed;
+        /// <summary>用户消息左侧多一道强调色竖条。</summary>
+        public Visibility UserVisibility => IsUser ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>角色卡详情。</summary>
@@ -283,7 +287,21 @@ namespace AstraBrew_Launcher.Views
 
         public string ImageSize { get; set; } = string.Empty;
 
-        public string WorldLabel { get; set; } = "无内嵌";
+        /// <summary>内嵌世界书的名字；空表示没有具名世界书，只有条目。</summary>
+        public string WorldName { get; set; } = string.Empty;
+
+        /// <summary>内嵌条目数；0 表示没有内嵌世界书。</summary>
+        public int EmbeddedCount { get; set; }
+
+        /// <summary>
+        /// 「世界书名 · 3 条」这类说明。**每次读都现拼**：
+        /// 换语言时页面会重读磁盘，但列表与详情里的这句都从这里取，不会被缓存成旧语言。
+        /// </summary>
+        public string WorldLabel => EmbeddedCount == 0
+            ? L.Get("Res.Value.NoEmbed")
+            : WorldName.Length > 0
+                ? L.F("Res.Value.EmbeddedNamed", WorldName, EmbeddedCount)
+                : L.F("Res.Value.EmbeddedAnon", EmbeddedCount);
 
         public string Description { get; set; } = string.Empty;
 
@@ -317,10 +335,10 @@ namespace AstraBrew_Launcher.Views
         /// <summary>规格块由重复器排版，宽窄窗只影响列数。</summary>
         public List<InfoCell> InfoCells => new()
         {
-            new InfoCell("作者", string.IsNullOrEmpty(Creator) ? "未署名" : Creator),
-            new InfoCell("版本", string.IsNullOrEmpty(Version) ? "—" : Version),
-            new InfoCell("规格", Spec),
-            new InfoCell("内嵌世界书", WorldLabel),
+            new InfoCell(L.Get("Res.Info.Creator"), string.IsNullOrEmpty(Creator) ? L.Get("Res.Info.Unsigned") : Creator),
+            new InfoCell(L.Get("Res.Info.Version"), string.IsNullOrEmpty(Version) ? "—" : Version),
+            new InfoCell(L.Get("Res.Info.Spec"), Spec),
+            new InfoCell(L.Get("Res.Info.EmbeddedWorld"), WorldLabel),
         };
 
         public Visibility TagsVisibility => Tags.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -328,13 +346,13 @@ namespace AstraBrew_Launcher.Views
         public Visibility EntriesVisibility => Entries.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         /// <summary>正文小节为空时显示一句占位，避免整块空白看起来像加载失败。</summary>
-        public string DescriptionText => string.IsNullOrWhiteSpace(Description) ? "（这张卡没有写简介）" : Description;
+        public string DescriptionText => string.IsNullOrWhiteSpace(Description) ? L.Get("Res.Card.NoDescription") : Description;
 
-        public string PersonalityText => string.IsNullOrWhiteSpace(Personality) ? "（没有单独的性格段落）" : Personality;
+        public string PersonalityText => string.IsNullOrWhiteSpace(Personality) ? L.Get("Res.Card.NoPersonality") : Personality;
 
-        public string ScenarioText => string.IsNullOrWhiteSpace(Scenario) ? "（没有设定场景）" : Scenario;
+        public string ScenarioText => string.IsNullOrWhiteSpace(Scenario) ? L.Get("Res.Card.NoScenario") : Scenario;
 
-        public string FirstMessageText => string.IsNullOrWhiteSpace(FirstMessage) ? "（没有开场白）" : FirstMessage;
+        public string FirstMessageText => string.IsNullOrWhiteSpace(FirstMessage) ? L.Get("Res.Card.NoFirstMessage") : FirstMessage;
     }
 
     /// <summary>世界书详情。</summary>
@@ -367,9 +385,9 @@ namespace AstraBrew_Launcher.Views
 
         public List<InfoCell> InfoCells => new()
         {
-            new InfoCell("所在目录", Location),
-            new InfoCell("触发方式", TriggerLabel),
-            new InfoCell("最后修改", ModifiedLabel),
+            new InfoCell(L.Get("Res.Info.Folder"), Location),
+            new InfoCell(L.Get("Res.Info.Trigger"), TriggerLabel),
+            new InfoCell(L.Get("Res.Info.Modified"), ModifiedLabel),
         };
 
         public List<WorldEntryItem> Entries { get; set; } = new();
@@ -417,7 +435,7 @@ namespace AstraBrew_Launcher.Views
 
         public string EnabledCount { get; set; } = "0";
 
-        public string Format { get; set; } = "标准";
+        public string Format { get; set; } = L.Get("Res.Value.FormatStandard");
 
         /// <summary>接口来源，例如 openai / claude / google。</summary>
         public string ApiSource { get; set; } = "—";
@@ -426,7 +444,7 @@ namespace AstraBrew_Launcher.Views
 
         public string Model { get; set; } = string.Empty;
 
-        public string StreamLabel { get; set; } = "开";
+        public string StreamLabel { get; set; } = L.Get("Res.Value.StreamOn");
 
         public string ContextLabel { get; set; } = string.Empty;
 
@@ -435,16 +453,18 @@ namespace AstraBrew_Launcher.Views
         public string HintLabel { get; set; } = string.Empty;
 
         /// <summary>「12 条提示词」或「无提示词结构」——TextGen / NovelAI 的预设本来就没有提示词表。</summary>
-        public string PromptSummary => Prompts.Count > 0 ? $"{Prompts.Count} 条提示词" : "无提示词结构";
+        public string PromptSummary => Prompts.Count > 0
+            ? L.F("Res.Value.PromptsCount", Prompts.Count)
+            : L.Get("Res.Value.NoPromptStructure");
 
         public List<InfoCell> InfoCells => new()
         {
-            new InfoCell("来源目录", Source),
-            new InfoCell("模型", Model),
-            new InfoCell("流式输出", StreamLabel),
-            new InfoCell("上下文上限", ContextLabel),
-            new InfoCell("单次回复上限", MaxTokensLabel),
-            new InfoCell("文件体积", SizeLabel),
+            new InfoCell(L.Get("Res.Info.SourceFolder"), Source),
+            new InfoCell(L.Get("Res.Info.Model"), Model),
+            new InfoCell(L.Get("Res.Info.Stream"), StreamLabel),
+            new InfoCell(L.Get("Res.Info.Context"), ContextLabel),
+            new InfoCell(L.Get("Res.Info.MaxTokens"), MaxTokensLabel),
+            new InfoCell(L.Get("Res.Info.Size"), SizeLabel),
         };
 
         public List<PromptItem> Prompts { get; set; } = new();
@@ -512,6 +532,7 @@ namespace AstraBrew_Launcher.Views
             {
                 TavernInstances.Changed += OnEnvironmentChanged;
                 TavernRuntime.Changed += OnEnvironmentChanged;
+                LanguageSwitch.LanguageChanged += OnLanguageChanged;
                 _hooked = true;
             }
 
@@ -528,7 +549,18 @@ namespace AstraBrew_Launcher.Views
 
             TavernInstances.Changed -= OnEnvironmentChanged;
             TavernRuntime.Changed -= OnEnvironmentChanged;
+            LanguageSwitch.LanguageChanged -= OnLanguageChanged;
             _hooked = false;
+        }
+
+        /// <summary>
+        /// 换语言：页面上的行与详情都是「读磁盘时拼好的字符串」，
+        /// <c>Loc</c> 刷不到，所以整页按当前分类重读一遍（保留选中项）。
+        /// </summary>
+        private void OnLanguageChanged(object? sender, EventArgs e)
+        {
+            UpdateTargetChrome();
+            _ = ReloadAsync(keepSelection: true);
         }
 
         /// <summary>换实例、改数据位置、酒馆启停都可能换掉数据目录，整页跟着重读。</summary>
@@ -594,7 +626,7 @@ namespace AstraBrew_Launcher.Views
 
             if (snapshot.Error is not null)
             {
-                Notify("读取资源目录失败", snapshot.Error, NotifySeverity.Error);
+                Notify(L.Get("Res.Notify.ReadFail"), snapshot.Error, NotifySeverity.Error);
             }
         }
 
@@ -626,11 +658,8 @@ namespace AstraBrew_Launcher.Views
                 Version = card.Version,
                 Spec = card.Spec,
                 ImageSize = card.PixelWidth > 0 ? $"{card.PixelWidth} × {card.PixelHeight}" : "—",
-                WorldLabel = card.EmbeddedWorldName is { Length: > 0 } world
-                    ? $"{world} · {card.EmbeddedEntries.Count} 条"
-                    : card.EmbeddedEntries.Count > 0
-                        ? $"内嵌 · {card.EmbeddedEntries.Count} 条"
-                        : "无内嵌",
+                WorldName = card.EmbeddedWorldName ?? string.Empty,
+                EmbeddedCount = card.EmbeddedEntries.Count,
                 Description = card.Description,
                 Personality = card.Personality,
                 Scenario = card.Scenario,
@@ -658,9 +687,9 @@ namespace AstraBrew_Launcher.Views
                 FileName = book.FileName,
                 Bytes = book.Bytes,
                 Author = "—",
-                TriggerLabel = "按关键词触发",
+                TriggerLabel = L.Get("Res.Value.TriggerKeyword"),
                 ModifiedLabel = book.Modified.ToString("yyyy-MM-dd"),
-                HintLabel = $"共 {book.EntryCount} 条 · {book.EnabledCount} 条启用",
+                HintLabel = L.F("Res.Value.EntryHint", book.EntryCount, book.EnabledCount),
                 EntryCount = book.EntryCount.ToString(),
                 EnabledCount = book.EnabledCount.ToString(),
                 Entries = book.Entries.Select(WorldEntryItem.From).ToList(),
@@ -676,8 +705,9 @@ namespace AstraBrew_Launcher.Views
 
             var messages = chat.Preview.Select(line => new ChatMessageItem
             {
-                Speaker = line.IsUser ? "我" : line.Speaker,
-                Role = line.IsUser ? "用户" : "角色",
+                Speaker = line.IsUser ? L.Get("Res.Value.SpeakerMe") : line.Speaker,
+                Role = L.Get(line.IsUser ? "Res.Value.RoleUser" : "Res.Value.RoleCharacter"),
+                IsUser = line.IsUser,
                 Time = line.Time,
                 Body = line.Body,
             }).ToList();
@@ -689,7 +719,7 @@ namespace AstraBrew_Launcher.Views
                 Name = name,
                 FileName = chat.FileName,
                 Bytes = chat.Bytes,
-                HintLabel = messages.Count > 0 ? $"最近 {messages.Count} 条" : "空存档",
+                HintLabel = messages.Count > 0 ? L.F("Res.Value.Recent", messages.Count) : L.Get("Res.Value.EmptyArchive"),
                 MessageCount = chat.MessageCount.ToString(),
                 UserCount = chat.UserCount.ToString(),
                 Messages = messages,
@@ -721,12 +751,12 @@ namespace AstraBrew_Launcher.Views
                 ApiSource = preset.Api,
                 Source = preset.Folder,
                 Model = preset.Model,
-                StreamLabel = preset.Stream ? "开" : "关",
+                StreamLabel = L.Get(preset.Stream ? "Res.Value.StreamOn" : "Res.Value.StreamOff"),
                 ContextLabel = preset.MaxContext > 0 ? $"{preset.MaxContext:N0} token" : "—",
                 MaxTokensLabel = preset.MaxTokens > 0 ? $"{preset.MaxTokens:N0} token" : "—",
                 HintLabel = preset.Prompts.Count > 0
-                    ? $"{preset.Prompts.Count} 条 · {preset.EnabledCount} 条启用"
-                    : "这份预设只有生成参数",
+                    ? L.F("Res.Value.PresetHint", preset.Prompts.Count, preset.EnabledCount)
+                    : L.Get("Res.Value.OnlyParams"),
                 Prompts = prompts,
             };
         }
@@ -808,48 +838,50 @@ namespace AstraBrew_Launcher.Views
 
             ListTitleText.Text = TitleOf(_tab);
             TabFolderChip.Text = _tab == TabKind.Presets
-                ? $"{TavernLibrary.PresetDirectories().Count} 个目录"
+                ? L.F("Res.Dir.Presets.Folders", TavernLibrary.PresetDirectories().Count)
                 : FolderOf(_tab);
             DataPathText.Text = CurrentDirectory();
             ListFootText.Text = FootOf(_tab);
 
             ImportButton.Visibility = _tab == TabKind.Chats ? Visibility.Collapsed : Visibility.Visible;
-            ImportButtonText.Text = _tab switch
+            ImportButtonText.Text = L.Get(_tab switch
             {
-                TabKind.Characters => "导入角色卡",
-                TabKind.WorldBooks => "导入世界书",
-                _ => "导入预设",
-            };
+                TabKind.Characters => "Res.Action.ImportCharacters",
+                TabKind.WorldBooks => "Res.Action.ImportWorldBooks",
+                _ => "Res.Action.ImportPresets",
+            });
 
-            SearchBox.PlaceholderText = _tab switch
+            SearchBox.PlaceholderText = L.Get(_tab switch
             {
-                TabKind.Characters => "搜索角色名、作者或标签…",
-                TabKind.WorldBooks => "搜索世界书名称…",
-                TabKind.Chats => "搜索角色名或存档文件名…",
-                _ => "搜索预设名称或模型…",
-            };
+                TabKind.Characters => "Res.Search.Characters",
+                TabKind.WorldBooks => "Res.Search.WorldBooks",
+                TabKind.Chats => "Res.Search.Chats",
+                _ => "Res.Search.Presets",
+            });
 
             bool empty = CountOf(_tab) == 0;
-            ListEmptyTitleText.Text = empty ? $"还没有{TitleOf(_tab)}" : "没有匹配的资源";
+            ListEmptyTitleText.Text = empty
+                ? L.F("Res.Empty.Title.None", TitleOf(_tab))
+                : L.Get("Res.Empty.Title.Search");
             ListEmptyHintText.Text = empty
-                ? _tab switch
+                ? L.Get(_tab switch
                 {
-                    TabKind.Characters => "把角色卡（.png / .json）放进 characters 目录，或点右上角导入。",
-                    TabKind.WorldBooks => "把世界书 .json 放进 worlds 目录，或点右上角导入。",
-                    TabKind.Chats => "在酒馆里聊过天后，存档会自动出现在 chats 目录。",
-                    _ => "把预设 .json 放进 OpenAI Settings 目录，或点右上角导入。",
-                }
-                : "换个关键词，或清空搜索框后重试。";
+                    TabKind.Characters => "Res.Empty.Hint.Characters",
+                    TabKind.WorldBooks => "Res.Empty.Hint.WorldBooks",
+                    TabKind.Chats => "Res.Empty.Hint.Chats",
+                    _ => "Res.Empty.Hint.Presets",
+                })
+                : L.Get("Res.Empty.Search");
 
             DetailEmptyGlyph.Glyph = glyph;
-            DetailEmptyTitleText.Text = "还没有选中资源";
-            DetailEmptyHintText.Text = _tab switch
+            DetailEmptyTitleText.Text = L.Get("Res.Detail.Empty.Title");
+            DetailEmptyHintText.Text = L.Get(_tab switch
             {
-                TabKind.Characters => "从左侧挑一张角色卡，这里会展开简介、开场白与内嵌世界书。",
-                TabKind.WorldBooks => "从左侧挑一本世界书，这里会列出它的全部条目。",
-                TabKind.Chats => "从左侧挑一份对话存档，这里会还原最近的对话内容。",
-                _ => "从左侧挑一个预设，这里会展开生成参数与提示词结构。",
-            };
+                TabKind.Characters => "Res.Detail.EmptyHint.Characters",
+                TabKind.WorldBooks => "Res.Detail.EmptyHint.WorldBooks",
+                TabKind.Chats => "Res.Detail.EmptyHint.Chats",
+                _ => "Res.Detail.EmptyHint.Presets",
+            });
         }
 
         // ==================== 列表 ====================
@@ -900,7 +932,7 @@ namespace AstraBrew_Launcher.Views
                     Index = i,
                     FullPath = item.FullPath,
                     Title = item.Name,
-                    Subtitle = string.IsNullOrEmpty(item.Creator) ? "未署名" : item.Creator,
+                    Subtitle = string.IsNullOrEmpty(item.Creator) ? L.Get("Res.Info.Unsigned") : item.Creator,
                     Meta = $"{item.SizeLabel} · {item.ImageSize} · {item.WorldLabel}",
                     Monogram = item.Monogram,
                     CoverSource = ResourcePalette.Thumbnail(item.FullPath, 96),
@@ -926,7 +958,7 @@ namespace AstraBrew_Launcher.Views
                     FullPath = item.FullPath,
                     Title = item.Name,
                     Subtitle = item.FileName,
-                    Meta = $"{item.EntryCount} 条条目 · {item.SizeLabel} · {item.ModifiedLabel}",
+                    Meta = L.F("Res.Row.EntryMeta", item.EntryCount, item.SizeLabel, item.ModifiedLabel),
                     Glyph = "\uE8F1",
                     Selected = _selectedWorldBook == i,
                 });
@@ -953,7 +985,7 @@ namespace AstraBrew_Launcher.Views
                     {
                         IsGroup = true,
                         Title = item.Group,
-                        Meta = $"{groupCount} 个会话",
+                        Meta = L.F("Res.Row.Sessions", groupCount),
                     });
                 }
 
@@ -963,7 +995,7 @@ namespace AstraBrew_Launcher.Views
                     FullPath = item.FullPath,
                     Title = item.Name,
                     Subtitle = item.FileName,
-                    Meta = $"{item.MessageCount} 条消息 · {item.SizeLabel}",
+                    Meta = L.F("Res.Row.ChatMeta", item.MessageCount, item.SizeLabel),
                     Glyph = "\uE8BD",
                     Selected = _selectedChat == i,
                 });
@@ -992,7 +1024,7 @@ namespace AstraBrew_Launcher.Views
                     {
                         IsGroup = true,
                         Title = item.Source,
-                        Meta = $"{groupCount} 个预设",
+                        Meta = L.F("Res.Row.Presets", groupCount),
                     });
                 }
 
@@ -1023,7 +1055,7 @@ namespace AstraBrew_Launcher.Views
         private void UpdateSummary()
         {
             int total = _characters.Count + _worldBooks.Count + _chats.Count + _presets.Count;
-            HeaderSummaryText.Text = $"共 {total} 个资源";
+            HeaderSummaryText.Text = L.F("Res.Header.Summary", total);
 
             CountCharacters.Text = _characters.Count.ToString();
             CountWorldBooks.Text = _worldBooks.Count.ToString();
@@ -1032,12 +1064,15 @@ namespace AstraBrew_Launcher.Views
 
             ListSummaryText.Text = _tab switch
             {
-                TabKind.Characters => $"共 {_characters.Count} 个 · {SizeOf(_characters.Sum(item => item.Bytes))}",
-                TabKind.WorldBooks => $"共 {_worldBooks.Count} 本 · {SizeOf(_worldBooks.Sum(item => item.Bytes))}",
+                TabKind.Characters => L.F("Res.Summary.Characters", _characters.Count, SizeOf(_characters.Sum(item => item.Bytes))),
+                TabKind.WorldBooks => L.F("Res.Summary.WorldBooks", _worldBooks.Count, SizeOf(_worldBooks.Sum(item => item.Bytes))),
                 TabKind.Chats => _chats.Count == 0
-                    ? "共 0 个会话"
-                    : $"共 {_chats.Count} 个会话 · {_chats.Select(item => item.Group).Distinct().Count()} 个角色",
-                _ => $"共 {_presets.Count} 个 · {SizeOf(_presets.Sum(item => item.Bytes))}",
+                    ? L.Get("Res.Summary.ChatsEmpty")
+                    : L.F(
+                        "Res.Summary.Chats",
+                        _chats.Count,
+                        _chats.Select(item => item.Group).Distinct().Count()),
+                _ => L.F("Res.Summary.Presets", _presets.Count, SizeOf(_presets.Sum(item => item.Bytes))),
             };
         }
 
@@ -1106,7 +1141,7 @@ namespace AstraBrew_Launcher.Views
                         model = character;
                         template = DetailTemplate("CharacterDetailTemplate");
                         title = character.Name;
-                        subtitle = $"{character.FileName} · {character.SizeLabel} · 修改于 {character.ModifiedLabel}";
+                        subtitle = $"{character.FileName} · {character.SizeLabel} · {L.F("Res.Detail.Modified", character.ModifiedLabel)}";
                     }
 
                     break;
@@ -1117,7 +1152,7 @@ namespace AstraBrew_Launcher.Views
                         model = worldBook;
                         template = DetailTemplate("WorldBookDetailTemplate");
                         title = worldBook.Name;
-                        subtitle = $"{worldBook.FileName} · {worldBook.SizeLabel} · 修改于 {worldBook.ModifiedLabel}";
+                        subtitle = $"{worldBook.FileName} · {worldBook.SizeLabel} · {L.F("Res.Detail.Modified", worldBook.ModifiedLabel)}";
                     }
 
                     break;
@@ -1174,8 +1209,8 @@ namespace AstraBrew_Launcher.Views
             DetailIconTile.Background = new SolidColorBrush(Color.FromArgb(0x12, 0x80, 0x80, 0x80));
             DetailIconGlyph.Glyph = GlyphOf(_tab);
             DetailIconGlyph.Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0x8A, 0x8A, 0x8A));
-            DetailTitleText.Text = "选择左侧的资源";
-            DetailSubText.Text = "文件名、体积与修改时间会显示在这里";
+            DetailTitleText.Text = L.Get("Res.Detail.Placeholder.Title");
+            DetailSubText.Text = L.Get("Res.Detail.Placeholder.Sub");
 
             DetailBody.Content = null;
             DetailActions.Visibility = Visibility.Collapsed;
@@ -1209,7 +1244,7 @@ namespace AstraBrew_Launcher.Views
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    Notify("目录不可写", $"{folder}\n{ex.Message}", NotifySeverity.Error);
+                    Notify(L.Get("Res.Notify.DirNotWritable"), $"{folder}\n{ex.Message}", NotifySeverity.Error);
                     return;
                 }
             }
@@ -1268,15 +1303,15 @@ namespace AstraBrew_Launcher.Views
 
             if (report.Error is { Length: > 0 } error)
             {
-                Notify("导入失败", error, NotifySeverity.Error);
+                Notify(L.Get("Res.Notify.ImportFail"), error, NotifySeverity.Error);
                 return;
             }
 
             if (report.Failed.Count == 0)
             {
                 Notify(
-                    "导入完成",
-                    $"{report.Imported} 个文件已写入 {FolderOf(_tab)}。",
+                    L.Get("Res.Notify.ImportOk"),
+                    L.F("Res.Notify.ImportOkBody", report.Imported, FolderOf(_tab)),
                     NotifySeverity.Success);
                 return;
             }
@@ -1295,8 +1330,8 @@ namespace AstraBrew_Launcher.Views
             body.Children.Add(new TextBlock
             {
                 Text = report.Imported > 0
-                    ? $"已导入 {report.Imported} 个，{report.Failed.Count} 个格式不对被跳过："
-                    : $"这 {report.Failed.Count} 个文件都不像{FolderOf(_tab)}里的资源，一个也没导入：",
+                    ? L.F("Res.Import.Partial", report.Imported, report.Failed.Count)
+                    : L.F("Res.Import.None", report.Failed.Count, FolderOf(_tab)),
                 FontSize = 12.5,
                 TextWrapping = TextWrapping.Wrap,
             });
@@ -1332,9 +1367,9 @@ namespace AstraBrew_Launcher.Views
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = "导入结果",
+                Title = L.Get("Res.Import.Dialog.Title"),
                 Content = body,
-                CloseButtonText = "知道了",
+                CloseButtonText = L.Get("Res.Import.Dialog.Close"),
                 DefaultButton = ContentDialogButton.Close,
             };
 
@@ -1362,7 +1397,10 @@ namespace AstraBrew_Launcher.Views
                 done.IsEnabled = true;
             }
 
-            Notify("已重新扫描", $"{FolderOf(_tab)} 目录共 {CountOf(_tab)} 个资源。", NotifySeverity.Informational);
+            Notify(
+                L.Get("Res.Notify.RescanOk"),
+                L.F("Res.Notify.RescanBody", FolderOf(_tab), CountOf(_tab)),
+                NotifySeverity.Informational);
         }
 
         private void CopyPath_Click(object sender, RoutedEventArgs e)
@@ -1371,7 +1409,7 @@ namespace AstraBrew_Launcher.Views
             var package = new DataPackage();
             package.SetText(path);
             Clipboard.SetContent(package);
-            Notify("路径已复制", path, NotifySeverity.Success);
+            Notify(L.Get("Res.Notify.CopyOk"), path, NotifySeverity.Success);
         }
 
         private void OpenDirectory_Click(object sender, RoutedEventArgs e)
@@ -1380,7 +1418,7 @@ namespace AstraBrew_Launcher.Views
 
             if (!Directory.Exists(folder))
             {
-                Notify("目录还不存在", folder, NotifySeverity.Warning);
+                Notify(L.Get("Res.Notify.DirAbsent"), folder, NotifySeverity.Warning);
                 return;
             }
 
@@ -1438,14 +1476,14 @@ namespace AstraBrew_Launcher.Views
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = "删除资源",
+                Title = L.Get("Res.Delete.Dialog.Title"),
                 Content = new TextBlock
                 {
                     TextWrapping = TextWrapping.Wrap,
-                    Text = $"将删除文件：\n{path}\n\n文件会先进回收站，需要时可以还原。",
+                    Text = L.F("Res.Delete.Dialog.Body", path),
                 },
-                PrimaryButtonText = "删除",
-                CloseButtonText = "取消",
+                PrimaryButtonText = L.Get("Res.Delete.Confirm"),
+                CloseButtonText = L.Get("Common.Action.Cancel.Content"),
                 DefaultButton = ContentDialogButton.Close,
             };
 
@@ -1466,13 +1504,19 @@ namespace AstraBrew_Launcher.Views
 
             if (!ok)
             {
-                Notify("没能删除", error ?? "文件可能正被酒馆占用，先停掉服务再试。", NotifySeverity.Error);
+                Notify(
+                    L.Get("Res.Delete.Fail.Title"),
+                    error ?? L.Get("Res.Delete.Fail.Body"),
+                    NotifySeverity.Error);
                 return;
             }
 
             await ReloadAsync();
 
-            Notify("已删除", $"{name} 已移入回收站。", NotifySeverity.Success);
+            Notify(
+                L.Get("Res.Delete.Ok.Title"),
+                L.F("Res.Delete.Ok.Body", name),
+                NotifySeverity.Success);
         }
 
         // ==================== 文案与工具 ====================
@@ -1494,13 +1538,13 @@ namespace AstraBrew_Launcher.Views
                 ?? System.IO.Path.Combine(TavernLibrary.UserDirectory(), "OpenAI Settings")
             : CurrentDirectory();
 
-        private static string TitleOf(TabKind tab) => tab switch
+        private static string TitleOf(TabKind tab) => L.Get(tab switch
         {
-            TabKind.Characters => "角色卡",
-            TabKind.WorldBooks => "世界书",
-            TabKind.Chats => "对话",
-            _ => "预设",
-        };
+            TabKind.Characters => "Res.Tab.Characters",
+            TabKind.WorldBooks => "Res.Tab.WorldBooks",
+            TabKind.Chats => "Res.Tab.Chats",
+            _ => "Res.Tab.Presets",
+        });
 
         private static string FolderOf(TabKind tab) => tab switch
         {
@@ -1526,13 +1570,13 @@ namespace AstraBrew_Launcher.Views
             _ => "#C08A00",
         };
 
-        private static string FootOf(TabKind tab) => tab switch
+        private static string FootOf(TabKind tab) => L.Get(tab switch
         {
-            TabKind.Characters => "按最近修改排序 · 直接读 characters 目录",
-            TabKind.WorldBooks => "按最近修改排序 · 直接读 worlds 目录",
-            TabKind.Chats => "按角色分文件夹 · 直接读 chats 目录",
-            _ => "按最近修改排序 · 直接读各家 Settings 目录",
-        };
+            TabKind.Characters => "Res.Foot.Characters",
+            TabKind.WorldBooks => "Res.Foot.WorldBooks",
+            TabKind.Chats => "Res.Foot.Chats",
+            _ => "Res.Foot.Presets",
+        });
 
         private int CountOf(TabKind tab) => tab switch
         {

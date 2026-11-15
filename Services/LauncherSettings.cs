@@ -254,24 +254,24 @@ namespace AstraBrew_Launcher.Services
 
         public static string NpmRegistryName => NpmRegistry switch
         {
-            NpmRegistrySource.HuaweiCloud => "华为云",
-            NpmRegistrySource.Tencent => "腾讯云",
-            NpmRegistrySource.Official => "npm 官方",
-            _ => "npmmirror",
+            NpmRegistrySource.HuaweiCloud => L.Get("Npm.Name.Huawei"),
+            NpmRegistrySource.Tencent => L.Get("Npm.Name.Tencent"),
+            NpmRegistrySource.Official => L.Get("Npm.Name.Official"),
+            _ => L.Get("Npm.Name.Npmmirror"),
         };
 
         public static string ChannelName(DownloadChannel channel) => channel switch
         {
-            DownloadChannel.Gitee => "Gitee 镜像",
-            DownloadChannel.GitCode => "GitCode 镜像",
-            _ => "GitHub 直连",
+            DownloadChannel.Gitee => L.Get("Channel.Name.Gitee"),
+            DownloadChannel.GitCode => L.Get("Channel.Name.GitCode"),
+            _ => L.Get("Channel.Name.Github"),
         };
 
         public static string ChannelHint(DownloadChannel channel) => channel switch
         {
-            DownloadChannel.Gitee => "AstraBrew 自建镜像，国内直连，含完整提交历史",
-            DownloadChannel.GitCode => "GitCode 同步镜像，国内直连；默认通道",
-            _ => "官方仓库，国内建议同时打开「GitHub 加速服务」",
+            DownloadChannel.Gitee => L.Get("Settings.Channel.Gitee"),
+            DownloadChannel.GitCode => L.Get("Settings.Channel.GitCode"),
+            _ => L.Get("Settings.Channel.Official"),
         };
 
         public static void SetTheme(AppTheme value) => Set(ref _theme, value);

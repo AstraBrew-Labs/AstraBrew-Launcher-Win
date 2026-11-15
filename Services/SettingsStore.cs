@@ -453,29 +453,29 @@ namespace AstraBrew_Launcher.Services
             var writer = new TomlWriter();
 
             writer.Raw("# ============================================================");
-            writer.Raw("#  AstraBrew Launcher · 用户设置");
+            writer.Raw("#  " + L.Get("Store.Header"));
             writer.Raw($"#  {FilePath}");
             writer.Raw("#");
-            writer.Raw("#  由启动器维护：在「设置」页改动后自动写回本文件。");
-            writer.Raw("#  可以手工编辑，下次启动时读取；删掉的键会回落到默认值。");
-            writer.Raw("#  无法识别的行会被忽略，不会导致启动失败。");
+            writer.Raw("#  " + L.Get("Store.Managed"));
+            writer.Raw("#  " + L.Get("Store.Editable"));
+            writer.Raw("#  " + L.Get("Store.UnknownIgnored"));
             writer.Raw("# ============================================================");
             writer.Blank();
-            writer.Int("schema_version", SchemaVersion, "配置结构版本");
+            writer.Int("schema_version", SchemaVersion, L.Get("Store.SchemaVersion"));
 
             writer.Section("ui");
             writer.String("theme", IdOf(Themes, LauncherSettings.Theme), "system | light | dark");
             writer.Double("scale", LauncherSettings.UiScale, "0.90 - 1.40");
-            writer.String("font", FontCatalog.ToStorage(LauncherSettings.FontFamily), "embedded（软件默认）| system | 字体族名");
+            writer.String("font", FontCatalog.ToStorage(LauncherSettings.FontFamily), L.Get("Store.FontHint"));
             writer.String("language", IdOf(Languages, LauncherSettings.Language), "system | zh-CN | en-US");
-            writer.String("level", IdOf(Levels, LauncherSettings.Level), "simple（小白版）| advanced（高手版）");
+            writer.String("level", IdOf(Levels, LauncherSettings.Level), L.Get("Store.LevelHint"));
             writer.Bool("remember_window", LauncherSettings.RememberWindow);
 
             writer.Blank();
             if (LauncherSettings.WindowRect is { } bounds)
             {
-                writer.Raw("# 上次退出时的窗口几何（物理像素，dpi = 96 即 100%）；");
-                writer.Raw("# remember_window = false 时不读取这段。");
+                writer.Raw(L.Get("Store.WindowHint1"));
+                writer.Raw(L.Get("Store.WindowHint2"));
                 writer.Section("window");
                 writer.Int("x", bounds.X);
                 writer.Int("y", bounds.Y);
@@ -485,14 +485,14 @@ namespace AstraBrew_Launcher.Services
             }
             else
             {
-                writer.Raw("# [window] 尚未记录：勾选「记住窗口位置」后正常退出一次即写入");
+                writer.Raw(L.Get("Store.WindowAbsent"));
             }
 
             writer.Blank();
             if (LauncherSettings.TavernWindowRect is { } tavernWindow)
             {
-                writer.Raw("# 酒馆桌面窗口上次关闭时的位置与大小（物理像素）；");
-                writer.Raw("# startup.remember_tavern_window = false 时不读取这段。");
+                writer.Raw(L.Get("Store.TavernWindowHint1"));
+                writer.Raw(L.Get("Store.TavernWindowHint2"));
                 writer.Section("tavern_window");
                 writer.Int("x", tavernWindow.X);
                 writer.Int("y", tavernWindow.Y);
@@ -501,33 +501,32 @@ namespace AstraBrew_Launcher.Services
             }
             else
             {
-                writer.Raw("# [tavern_window] 尚未记录：桌面模式开关一次窗口即写入");
+                writer.Raw(L.Get("Store.TavernWindowAbsent"));
             }
 
             writer.Section("startup");
-            writer.Bool("auto_launch", LauncherSettings.AutoLaunch, "登录 Windows 后自动启动");
+            writer.Bool("auto_launch", LauncherSettings.AutoLaunch, L.Get("Store.AutoLaunch"));
             writer.String("mode", IdOf(StartModes, LauncherSettings.StartMode), "browser | desktop | server");
             writer.Bool("stop_tavern_on_close", LauncherSettings.StopTavernOnWindowClose);
             writer.Bool(
                 "remember_tavern_window",
                 LauncherSettings.RememberTavernWindow,
-                "桌面模式：下次打开回到上次关闭前的位置");
+                L.Get("Store.RememberTavernWindow"));
             writer.String("cpu_cores", IdOf(CpuCores, LauncherSettings.CpuCores), "auto | half | all");
 
             writer.Section("desktop");
             writer.Int(
                 "webview_memory_mb",
                 LauncherSettings.WebViewMemoryMb,
-                $"WebView 内存上限（MB），最小 {LauncherSettings.MinWebViewMemoryMb}，"
-                    + $"本机最大 {LauncherSettings.MaxWebViewMemoryMb}");
+                L.F("Store.WebViewMemory", LauncherSettings.MinWebViewMemoryMb, LauncherSettings.MaxWebViewMemoryMb));
 
             writer.Section("tavern");
-            writer.Bool("server_mode", LauncherSettings.ServerMode, "由 startup.mode 推导，仅供阅读");
+            writer.Bool("server_mode", LauncherSettings.ServerMode, L.Get("Store.ServerModeDerived"));
             writer.String("scope", IdOf(ServiceScopes, LauncherSettings.ServiceScope), "lan | internet");
             writer.String(
                 "user_whitelist",
                 LauncherSettings.UserWhitelist,
-                "普通 / 桌面模式的 IP 白名单，逗号分隔；服务器模式的白名单由服务范围推导，不写在这里");
+                L.Get("Store.UserWhitelist"));
             writer.Bool("allow_background", LauncherSettings.AllowBackground);
             writer.String(
                 "data_location",
@@ -546,18 +545,18 @@ namespace AstraBrew_Launcher.Services
 
             writer.Section("network");
             writer.String("download_channel", IdOf(Channels, LauncherSettings.Channel), "gitee | gitcode | github");
-            writer.Bool("github_acceleration", LauncherSettings.GithubAcceleration, "所有 GitHub 链接是否走 gh-proxy.org 加速（同时写入全局 git insteadOf 规则）");
+            writer.Bool("github_acceleration", LauncherSettings.GithubAcceleration, L.Get("Store.GithubAcceleration"));
 
             if (LauncherSettings.GithubBestLatency is { } latency)
             {
-                writer.Int("github_best_latency", latency, "毫秒");
+                writer.Int("github_best_latency", latency, L.Get("Store.Milliseconds"));
             }
 
             writer.String("proxy", IdOf(Proxies, LauncherSettings.Proxy), "none | system | custom");
             writer.String("custom_proxy", LauncherSettings.CustomProxy);
 
             writer.Section("paths");
-            writer.String("export", LauncherSettings.ExportPath, "资源导出目录（可用环境变量）");
+            writer.String("export", LauncherSettings.ExportPath, L.Get("Store.ExportPath"));
 
             return writer.ToString();
         }

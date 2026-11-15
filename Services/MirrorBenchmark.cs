@@ -16,7 +16,8 @@ namespace AstraBrew_Launcher.Services
         string Url,
         bool Ok,
         int? ElapsedMs,
-        string? Error);
+        string? Error,
+        bool Cancelled = false);
 
     /// <summary>一条要测的线路：下载源 + 是否加速 + 是否经代理，三者组合才算一条线路。</summary>
     public sealed record MirrorChannel(
@@ -76,23 +77,23 @@ namespace AstraBrew_Launcher.Services
             var channels = new List<MirrorChannel>
             {
                 // 镜像永远直连：中转方不认镜像站；代理只管 GitHub
-                new(DownloadChannel.Gitee, false, false, "Gitee 镜像"),
-                new(DownloadChannel.GitCode, false, false, "GitCode 镜像"),
+                new(DownloadChannel.Gitee, false, false, L.Get("Bm.Gitee")),
+                new(DownloadChannel.GitCode, false, false, L.Get("Bm.GitCode")),
 
                 // 代理不可用时名字保持原样，免得每次都要读一遍「不走代理」
-                new(DownloadChannel.Github, false, false, proxy ? "GitHub 直连 · 不走代理" : "GitHub 直连"),
+                new(DownloadChannel.Github, false, false, L.Get(proxy ? "Bm.GithubDirectNoProxy" : "Bm.GithubDirect")),
             };
 
             if (proxy)
             {
-                channels.Add(new(DownloadChannel.Github, false, true, "GitHub 直连 · 走代理"));
+                channels.Add(new(DownloadChannel.Github, false, true, L.Get("Bm.GithubDirectProxy")));
             }
 
-            channels.Add(new(DownloadChannel.Github, true, false, proxy ? "GitHub 加速 · 不走代理" : "GitHub 加速"));
+            channels.Add(new(DownloadChannel.Github, true, false, L.Get(proxy ? "Bm.GithubAccelNoProxy" : "Bm.GithubAccel")));
 
             if (proxy)
             {
-                channels.Add(new(DownloadChannel.Github, true, true, "GitHub 加速 · 走代理"));
+                channels.Add(new(DownloadChannel.Github, true, true, L.Get("Bm.GithubAccelProxy")));
             }
 
             return channels;
@@ -110,7 +111,7 @@ namespace AstraBrew_Launcher.Services
         /// 写「15.2 秒」一眼就懂——这也是这个数字唯一的用途。
         /// </summary>
         public static string DescribeElapsed(int? milliseconds) =>
-            milliseconds is { } value ? $"{value / 1000.0:0.0} 秒" : "—";
+            milliseconds is { } value ? L.F("Bm.Seconds", (value / 1000.0).ToString("0.0")) : "—";
 
         /// <summary>
         /// 并发测速。<paramref name="progress"/> 每回一条就报一次（界面逐行点亮），
@@ -138,10 +139,10 @@ namespace AstraBrew_Launcher.Services
                         UrlOf(item.Channel, item.Accelerated),
                         false,
                         null,
-                        "未安装 Git，跳过"))
+                        L.Get("Gh.Skipped.NoGit")))
                     .ToList();
 
-                return new MirrorBenchmarkResult(skipped, null, "未安装 Git，无法测速");
+                return new MirrorBenchmarkResult(skipped, null, L.Get("Bm.NoGit"));
             }
 
             using var runCts = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -180,7 +181,8 @@ namespace AstraBrew_Launcher.Services
                         UrlOf(channel.Channel, channel.Accelerated),
                         false,
                         null,
-                        "已取消");
+                        L.Get("Miss.Mirror.Cancelled"),
+                        Cancelled: true);
                 }
 
                 trials.Add(trial);
@@ -217,7 +219,7 @@ namespace AstraBrew_Launcher.Services
             return new MirrorBenchmarkResult(
                 trials,
                 best,
-                best is null ? "所有线路都没测通" : null);
+                best is null ? L.Get("Bm.AllFailed") : null);
         }
 
         /// <summary>
@@ -327,7 +329,7 @@ namespace AstraBrew_Launcher.Services
 
                 if (!process.Start())
                 {
-                    return Trial(channel, url, false, null, "无法启动 git");
+                    return Trial(channel, url, false, null, L.Get("Gh.Err.GitCannotStart"));
                 }
 
                 process.BeginErrorReadLine();
@@ -338,13 +340,13 @@ namespace AstraBrew_Launcher.Services
                     if (token.IsCancellationRequested)
                     {
                         GitCommand.Kill(process);
-                        return Trial(channel, url, false, null, "已取消");
+                        return Trial(channel, url, false, null, L.Get("Miss.Mirror.Cancelled"), cancelled: true);
                     }
 
                     if (clock.Elapsed > Timeout)
                     {
                         GitCommand.Kill(process);
-                        return Trial(channel, url, false, null, $"超时（{Timeout.TotalSeconds:0} 秒没拉完）");
+                        return Trial(channel, url, false, null, L.F("Bm.Timeout", Timeout.TotalSeconds.ToString("0")));
                     }
 
                     Thread.Sleep(50);
@@ -367,7 +369,7 @@ namespace AstraBrew_Launcher.Services
                     url,
                     false,
                     elapsed,
-                    detail.Length > 0 ? detail : $"git 退出代码 {process.ExitCode}");
+                    detail.Length > 0 ? detail : L.F("Gh.Err.GitExit", process.ExitCode));
             }
             catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException or InvalidOperationException)
             {
@@ -384,8 +386,18 @@ namespace AstraBrew_Launcher.Services
             string url,
             bool ok,
             int? elapsed,
-            string? error) =>
-            new(channel.Channel, channel.Accelerated, channel.UseProxy, channel.Name, url, ok, elapsed, error);
+            string? error,
+            bool cancelled = false) =>
+            new(
+                channel.Channel,
+                channel.Accelerated,
+                channel.UseProxy,
+                channel.Name,
+                url,
+                ok,
+                elapsed,
+                error,
+                cancelled);
 
         /// <summary>把 git 的一行进度翻成「阶段 + 总体百分比」。不是进度行就返回 false。</summary>
         private static bool TryParseProgress(

@@ -1,0 +1,15 @@
+{
+  "Set.Scope.Wan": ["互联网", "Internet"],
+  "Set.Scope.Lan": ["局域网", "LAN"],
+  "Set.Mode.Desktop": ["桌面模式", "Desktop mode"],
+  "Set.Mode.Server": ["服务器模式", "Server mode"],
+  "Set.Mode.Normal": ["普通模式", "Normal mode"],
+  "Set.Browser.Firefox": ["火狐浏览器", "Firefox"],
+  "Set.Browser.System": ["系统默认浏览器", "System default browser"],
+  "Set.Browser.Chrome": ["谷歌浏览器", "Google Chrome"],
+  "Set.Whitelist.Locked": ["服务器模式下白名单由「服务范围」自动生成，不能手动修改。", "In server mode the whitelist follows the service scope and cannot be edited here."],
+  "Set.Whitelist.Invalid": ["「{0}」不是有效的 IP 或网段（例如 192.168.1.20、192.168.1.0/24）。", "\"{0}\" is not a valid IP or subnet (for example 192.168.1.20 or 192.168.1.0/24)."],
+  "Set.Whitelist.Exists": ["「{0}」已在白名单中，无需重复添加。", "\"{0}\" is already in the whitelist."],
+  "Set.Whitelist.Covered": ["「{0}」已被 {1} 覆盖，无需重复添加。", "\"{0}\" is already covered by {1}."],
+  "Set.Whitelist.LockedValue": ["{0}（已锁定）", "{0} (locked)"]
+}

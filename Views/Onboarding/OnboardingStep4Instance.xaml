@@ -3,6 +3,7 @@
     x:Class="AstraBrew_Launcher.Views.Onboarding.OnboardingStep4Instance"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
@@ -31,11 +32,11 @@
                         <TextBlock
                             FontSize="13.5"
                             FontWeight="SemiBold"
-                            Text="我已经有酒馆了" />
+                            controls:Loc.Text="Setup.S4.Side.Existing.Label" />
                         <TextBlock
                             FontSize="11"
                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                            Text="自动找一找，或自己选文件夹" />
+                            controls:Loc.Text="Setup.S4.Side.Existing.Hint" />
                     </StackPanel>
                 </StackPanel>
             </RadioButton>
@@ -57,11 +58,11 @@
                         <TextBlock
                             FontSize="13.5"
                             FontWeight="SemiBold"
-                            Text="我还没有" />
+                            controls:Loc.Text="Setup.S4.Side.Builtin.Label" />
                         <TextBlock
                             FontSize="11"
                             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                            Text="让启动器下载一份" />
+                            controls:Loc.Text="Setup.S4.Side.Builtin.Hint" />
                     </StackPanel>
                 </StackPanel>
             </RadioButton>
@@ -73,14 +74,13 @@
             Spacing="10"
             Visibility="Collapsed">
             <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button x:Name="ScanButton" Click="Scan_Click" Content="自动找一找" />
-                <Button x:Name="AddButton" Click="Add_Click" Content="自己选…" />
+                <Button x:Name="ScanButton" Click="Scan_Click" />
+                <Button x:Name="AddButton" Click="Add_Click" controls:Loc.Content="Setup.S4.Pick.Button" />
                 <TextBlock
                     x:Name="ScanStatusText"
                     VerticalAlignment="Center"
                     FontSize="11.5"
-                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                    Text="会翻遍所有硬盘，慢的话要等几分钟。" />
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
             </StackPanel>
 
             <Border
@@ -112,14 +112,12 @@
                     <TextBlock
                         x:Name="BuiltinTitleText"
                         FontSize="13"
-                        FontWeight="SemiBold"
-                        Text="启动器自带的酒馆" />
+                        FontWeight="SemiBold" />
                     <TextBlock
                         x:Name="BuiltinInfoText"
                         FontSize="11.5"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        TextWrapping="Wrap"
-                        Text="正在查版本…" />
+                        TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 
@@ -139,20 +137,20 @@
                     Style="{StaticResource AccentActionButtonStyle}">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon FontSize="12" Glyph="&#xE896;" />
-                        <TextBlock Text="下载并启用" />
+                        <TextBlock controls:Loc.Text="Setup.S4.Builtin.Download" />
                     </StackPanel>
                 </Button>
 
                 <Button
                     x:Name="InstallDepsButton"
                     Click="InstallDeps_Click"
-                    Content="补装零件"
+                    controls:Loc.Content="Setup.S4.Builtin.InstallDeps"
                     Visibility="Collapsed" />
 
                 <Button
                     x:Name="BackToRuntimeButton"
                     Click="BackToRuntime_Click"
-                    Content="回去装工具"
+                    controls:Loc.Content="Setup.S4.Builtin.BackToRuntime"
                     Visibility="Collapsed" />
             </StackPanel>
         </StackPanel>
@@ -161,7 +159,6 @@
             x:Name="StateText"
             FontSize="11.5"
             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-            TextWrapping="Wrap"
-            Text="先选一种：用你有的，还是让启动器装。" />
+            TextWrapping="Wrap" />
     </StackPanel>
 </UserControl>

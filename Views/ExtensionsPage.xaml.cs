@@ -92,7 +92,7 @@ namespace AstraBrew_Launcher.Views
 
         public string VersionLabel => string.IsNullOrEmpty(Version) ? "—" : "v" + Version;
 
-        public string AuthorLabel => string.IsNullOrEmpty(Author) ? "未署名" : Author;
+        public string AuthorLabel => string.IsNullOrEmpty(Author) ? L.Get("Ext.Row.Unsigned") : Author;
 
         public Visibility TitleOnVisibility => Show(Enabled);
 
@@ -169,6 +169,7 @@ namespace AstraBrew_Launcher.Views
             {
                 TavernInstances.Changed += OnInstancesChanged;
                 TavernRuntime.Changed += OnRuntimeChanged;
+                LanguageSwitch.LanguageChanged += OnLanguageChanged;
                 _hooked = true;
             }
 
@@ -185,7 +186,18 @@ namespace AstraBrew_Launcher.Views
 
             TavernInstances.Changed -= OnInstancesChanged;
             TavernRuntime.Changed -= OnRuntimeChanged;
+            LanguageSwitch.LanguageChanged -= OnLanguageChanged;
             _hooked = false;
+        }
+
+        /// <summary>
+        /// 换语言：静态文字由 <c>Loc</c> 重刷，这里重画由状态拼出来的部分——
+        /// 目标实例胶囊、已启用计数、空态说明、批量开关的方向词。
+        /// </summary>
+        private void OnLanguageChanged(object? sender, EventArgs e)
+        {
+            UpdateTargetChrome();
+            RefreshRows();
         }
 
         private void OnInstancesChanged(object? sender, EventArgs e)
@@ -252,7 +264,7 @@ namespace AstraBrew_Launcher.Views
                 Enabled = item.Enabled,
                 RequiresLabel = item.Requires.Count == 0
                     ? string.Empty
-                    : "依赖 " + string.Join("、", item.Requires),
+                    : L.F("Ext.Row.Requires", string.Join("、", item.Requires)),
             };
 
             return row;
@@ -282,17 +294,17 @@ namespace AstraBrew_Launcher.Views
                 bool nothingAtAll = _all.Count == 0;
                 bool onlySystem = !nothingAtAll && _all.All(row => row.IsSystem);
 
-                EmptyTitleText.Text = nothingAtAll
-                    ? "这个实例还没有扩展"
+                EmptyTitleText.Text = L.Get(nothingAtAll
+                    ? "Ext.Empty.Title.None"
                     : onlySystem
-                        ? "这里只有酒馆自带的扩展"
-                        : "没有匹配的扩展";
+                        ? "Ext.Empty.Title.SystemOnly"
+                        : "Ext.Empty.Title.Search");
 
                 EmptyHintText.Text = nothingAtAll
-                    ? "点右上角「安装扩展」，从 Git 仓库或离线包装一个。"
+                    ? L.Get("Ext.Empty.Hint.None")
                     : onlySystem
-                        ? $"自带的 {_all.Count} 个扩展不在 third-party 里，打开右上角「显示系统扩展」就能看到。"
-                        : "换个关键词，或清空搜索框后重试。";
+                        ? L.F("Ext.Empty.Hint.SystemOnly", _all.Count)
+                        : L.Get("Ext.Empty.Hint.Search");
             }
 
             UpdateSummary();
@@ -319,24 +331,24 @@ namespace AstraBrew_Launcher.Views
             int enabled = controllable.Count(row => row.Enabled);
             int pending = _all.Count(row => row.HasUpdate && !row.IsSystem);
 
-            HeaderSummaryText.Text = $"已启用 {enabled} / {controllable.Count}";
+            HeaderSummaryText.Text = L.F("Ext.Header.Summary", enabled, controllable.Count);
 
-            string summary = $"共 {total} 个 · 第三方 {controllable.Count} 个 · {enabled} 个已启用";
+            string summary = L.F("Ext.Summary.Base", total, controllable.Count, enabled);
             if (pending > 0)
             {
-                summary += $" · {pending} 个待更新";
+                summary += L.F("Ext.Summary.Pending", pending);
             }
 
             ListSummaryText.Text = summary;
             // 右侧按钮已经写着「全部停用 / 全部启用」，这里只说停用数量，免得两个词并排重复
             int disabled = controllable.Count - enabled;
-            FilterHintText.Text = disabled > 0 ? $"{disabled} 个已停用" : string.Empty;
+            FilterHintText.Text = disabled > 0 ? L.F("Ext.Summary.Disabled", disabled) : string.Empty;
 
             // 批量开关的方向由「现在有没有开着的」决定：有开着的就给「全部停用」
             // 数据没到之前不要先把按钮亮出来：XAML 里的默认文字会是一个错误的方向
             if (ToggleAllText is not null)
             {
-                ToggleAllText.Text = enabled > 0 ? "全部停用" : "全部启用";
+                ToggleAllText.Text = L.Get(enabled > 0 ? "Ext.List.ToggleAll.Disable" : "Ext.List.ToggleAll.Enable");
                 ToggleAllButton.IsEnabled = controllable.Count > 0;
                 ToggleAllButton.Visibility = controllable.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             }
@@ -391,21 +403,24 @@ namespace AstraBrew_Launcher.Views
                 toggle.IsOn = row.Enabled;
                 _busy = false;
 
-                Notify("没能保存扩展开关", error ?? "settings.json 写入失败。", NotifySeverity.Error);
+                Notify(
+                    L.Get("Ext.Save.Fail.Title"),
+                    error ?? L.Get("Ext.Save.Fail.Body"),
+                    NotifySeverity.Error);
                 return;
             }
 
             row.Enabled = target;
             UpdateSummary();
 
-            string title = target ? "已启用扩展" : "已停用扩展";
+            string title = L.Get(target ? "Ext.Notify.Enabled.Title" : "Ext.Notify.Disabled.Title");
             string message = target
-                ? $"{row.Name} 会在下次酒馆启动时加载。"
-                : $"{row.Name} 的目录保留，下次启动不再加载。";
+                ? L.F("Ext.Notify.Enabled.Body", row.Name)
+                : L.F("Ext.Notify.Disabled.Body", row.Name);
 
             if (TavernRuntime.IsRunning)
             {
-                message += " 酒馆正在运行，它保存设置时会覆盖这次改动，建议重启后确认。";
+                message += L.Get("Ext.Notify.Running");
             }
 
             Notify(title, message, NotifySeverity.Informational);
@@ -421,14 +436,14 @@ namespace AstraBrew_Launcher.Views
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = "删除扩展",
+                Title = L.Get("Ext.Delete.Dialog.Title"),
                 Content = new TextBlock
                 {
                     TextWrapping = TextWrapping.Wrap,
-                    Text = $"将删除整个目录：\n{row.FolderTip}\n\n目录会先进回收站，但扩展自己的配置不保留。",
+                    Text = L.F("Ext.Delete.Dialog.Body", row.FolderTip),
                 },
-                PrimaryButtonText = "删除",
-                CloseButtonText = "取消",
+                PrimaryButtonText = L.Get("Ext.Delete.Dialog.Confirm"),
+                CloseButtonText = L.Get("Common.Action.Cancel.Content"),
                 DefaultButton = ContentDialogButton.Close,
             };
 
@@ -453,13 +468,19 @@ namespace AstraBrew_Launcher.Views
 
             if (!ok)
             {
-                Notify("没能删除扩展", error ?? "目录可能正被酒馆占用，先停掉服务再试。", NotifySeverity.Error);
+                Notify(
+                    L.Get("Ext.Delete.Fail.Title"),
+                    error ?? L.Get("Ext.Delete.Fail.Body"),
+                    NotifySeverity.Error);
                 return;
             }
 
             _all.Remove(row);
             RefreshRows();
-            Notify("已删除扩展", $"{row.Name} 已移入回收站。", NotifySeverity.Success);
+            Notify(
+                L.Get("Ext.Delete.Ok.Title"),
+                L.F("Ext.Delete.Ok.Body", row.Name),
+                NotifySeverity.Success);
         }
 
         private void RowHomepage_Click(object sender, RoutedEventArgs e)
@@ -471,11 +492,11 @@ namespace AstraBrew_Launcher.Views
 
             if (BrowserLauncher.Open(row.HomePage, TavernSettings.Browser, out string detail))
             {
-                Notify("已在浏览器中打开", $"{row.Name} · {detail}", NotifySeverity.Informational);
+                Notify(L.Get("Ext.Open.Ok.Title"), $"{row.Name} · {detail}", NotifySeverity.Informational);
             }
             else
             {
-                Notify("打不开主页", detail, NotifySeverity.Warning);
+                Notify(L.Get("Ext.Open.Fail.Title"), detail, NotifySeverity.Warning);
             }
         }
 
@@ -488,7 +509,7 @@ namespace AstraBrew_Launcher.Views
 
             if (!Directory.Exists(row.FolderTip))
             {
-                Notify("目录已不存在", row.FolderTip, NotifySeverity.Warning);
+                Notify(L.Get("Ext.Dir.Missing.Title"), row.FolderTip, NotifySeverity.Warning);
                 _ = ReloadAsync();
                 return;
             }
@@ -531,7 +552,10 @@ namespace AstraBrew_Launcher.Views
 
             if (controllable.Count == 0)
             {
-                Notify("没有可切换的扩展", "自带扩展不受启动器控制，只能开关第三方扩展。", NotifySeverity.Informational);
+                Notify(
+                    L.Get("Ext.ToggleAll.None.Title"),
+                    L.Get("Ext.ToggleAll.None.Body"),
+                    NotifySeverity.Informational);
                 return;
             }
 
@@ -543,7 +567,10 @@ namespace AstraBrew_Launcher.Views
 
             if (!TavernExtensions.SetEnabledMany(changes, out string? error))
             {
-                Notify("没能保存扩展开关", error ?? "settings.json 写入失败。", NotifySeverity.Error);
+                Notify(
+                    L.Get("Ext.Save.Fail.Title"),
+                    error ?? L.Get("Ext.Save.Fail.Body"),
+                    NotifySeverity.Error);
                 return;
             }
 
@@ -558,15 +585,18 @@ namespace AstraBrew_Launcher.Views
             UpdateSummary();
 
             string message = disable
-                ? $"{controllable.Count} 个第三方扩展已全部停用：目录保留，下次启动不再加载。"
-                : $"{controllable.Count} 个第三方扩展已全部启用，下次启动生效。";
+                ? L.F("Ext.ToggleAll.Done.Disable.Body", controllable.Count)
+                : L.F("Ext.ToggleAll.Done.Enable.Body", controllable.Count);
 
             if (TavernRuntime.IsRunning)
             {
-                message += " 酒馆正在运行，它保存设置时会覆盖这次改动，建议重启后确认。";
+                message += L.Get("Ext.Notify.Running");
             }
 
-            Notify(disable ? "已全部停用" : "已全部启用", message, NotifySeverity.Informational);
+            Notify(
+                L.Get(disable ? "Ext.ToggleAll.Done.Disable.Title" : "Ext.ToggleAll.Done.Enable.Title"),
+                message,
+                NotifySeverity.Informational);
         }
 
         private async void Refresh_Click(object sender, RoutedEventArgs e)
@@ -591,7 +621,10 @@ namespace AstraBrew_Launcher.Views
             }
 
             int thirdParty = _all.Count(row => !row.IsSystem);
-            Notify("已重新扫描", $"{TargetRoot} 下共 {thirdParty} 个第三方扩展。", NotifySeverity.Informational);
+            Notify(
+                L.Get("Ext.Rescan.Ok.Title"),
+                L.F("Ext.Rescan.Ok.Body", TargetRoot, thirdParty),
+                NotifySeverity.Informational);
         }
 
         private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
@@ -618,15 +651,15 @@ namespace AstraBrew_Launcher.Views
 
             if (error is not null)
             {
-                Notify("检查更新失败", error, NotifySeverity.Error);
+                Notify(L.Get("Ext.Check.Fail.Title"), error, NotifySeverity.Error);
                 return;
             }
 
             if (checkedCount == 0)
             {
                 Notify(
-                    "没有可检查的扩展",
-                    "只有用 Git 克隆的扩展才能比对远端版本；离线包装的需要重新下载新版本。",
+                    L.Get("Ext.Check.None.Title"),
+                    L.Get("Ext.Check.None.Body"),
                     NotifySeverity.Informational);
                 return;
             }
@@ -634,10 +667,10 @@ namespace AstraBrew_Launcher.Views
             await ReloadAsync();
 
             Notify(
-                pending > 0 ? "发现新版本" : "已是最新",
+                L.Get(pending > 0 ? "Ext.Check.New.Title" : "Ext.Check.UpToDate.Title"),
                 pending > 0
-                    ? $"{checkedCount} 个 Git 扩展里 {pending} 个的远端有新提交。"
-                    : $"{checkedCount} 个 Git 扩展都与远端一致。",
+                    ? L.F("Ext.Check.New.Body", checkedCount, pending)
+                    : L.F("Ext.Check.UpToDate.Body", checkedCount),
                 pending > 0 ? NotifySeverity.Warning : NotifySeverity.Informational);
         }
 
@@ -646,7 +679,7 @@ namespace AstraBrew_Launcher.Views
             var package = new DataPackage();
             package.SetText(TargetRoot);
             Clipboard.SetContent(package);
-            Notify("路径已复制", TargetRoot, NotifySeverity.Success);
+            Notify(L.Get("Ext.CopyOk.Title"), TargetRoot, NotifySeverity.Success);
         }
 
         private void OpenRoot_Click(object sender, RoutedEventArgs e)
@@ -655,7 +688,10 @@ namespace AstraBrew_Launcher.Views
 
             if (!Directory.Exists(root))
             {
-                Notify("目录还不存在", $"{root} 会在安装第一个扩展时创建。", NotifySeverity.Warning);
+                Notify(
+                    L.Get("Ext.Dir.Absent.Title"),
+                    L.F("Ext.Dir.Absent.Body", root),
+                    NotifySeverity.Warning);
                 return;
             }
 

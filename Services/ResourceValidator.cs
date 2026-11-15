@@ -66,12 +66,12 @@ namespace AstraBrew_Launcher.Services
             {
                 if (!File.Exists(path))
                 {
-                    return ResourceCheck.Fail("文件不存在");
+                    return ResourceCheck.Fail(L.Get("Miss.Wb.NoFile"));
                 }
 
                 if (new FileInfo(path).Length > MaxBytes)
                 {
-                    return ResourceCheck.Fail("文件超过 64 MB，不像一份资源");
+                    return ResourceCheck.Fail(L.Get("Rv.TooBig"));
                 }
 
                 return kind switch
@@ -95,7 +95,7 @@ namespace AstraBrew_Launcher.Services
 
             if (!png && !path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
             {
-                return ResourceCheck.Fail("角色卡只能是 .png 或 .json");
+                return ResourceCheck.Fail(L.Get("Rv.CardExt"));
             }
 
             JsonObject root;
@@ -112,7 +112,7 @@ namespace AstraBrew_Launcher.Services
                 }
                 catch (InvalidDataException)
                 {
-                    return ResourceCheck.Fail("不是有效的 PNG 文件");
+                    return ResourceCheck.Fail(L.Get("Miss.Wb.NotPng"));
                 }
 
                 root = document.Root;
@@ -120,7 +120,7 @@ namespace AstraBrew_Launcher.Services
 
                 if (root.Count == 0)
                 {
-                    return ResourceCheck.Fail("PNG 里没有 chara / ccv3 数据块，不是酒馆角色卡（可能只是张图片）");
+                    return ResourceCheck.Fail(L.Get("Rv.NoChara"));
                 }
             }
             else if (ParseObject(File.ReadAllText(path)) is { } parsed)
@@ -129,7 +129,7 @@ namespace AstraBrew_Launcher.Services
             }
             else
             {
-                return ResourceCheck.Fail("不是合法的 JSON 对象");
+                return ResourceCheck.Fail(L.Get("Rv.NotJson"));
             }
 
             // v2/v3 把正文包在 data 里；v1 是平铺的
@@ -154,12 +154,12 @@ namespace AstraBrew_Launcher.Services
             }
             else
             {
-                return ResourceCheck.Fail($"spec 认不出（{spec} {specVersion}），只支持 v1 / v2 / v3");
+                return ResourceCheck.Fail(L.F("Rv.SpecUnknown", spec, specVersion));
             }
 
             if (Text(data, "name").Trim().Length == 0)
             {
-                return ResourceCheck.Fail("角色卡缺少 name 字段");
+                return ResourceCheck.Fail(L.Get("Rv.NoName"));
             }
 
             return ResourceCheck.Pass(format);
@@ -171,19 +171,19 @@ namespace AstraBrew_Launcher.Services
         {
             if (!path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
             {
-                return ResourceCheck.Fail("世界书必须是 .json");
+                return ResourceCheck.Fail(L.Get("Rv.WorldExt"));
             }
 
             if (ParseObject(File.ReadAllText(path)) is not { } root)
             {
-                return ResourceCheck.Fail("不是合法的 JSON 对象");
+                return ResourceCheck.Fail(L.Get("Rv.NotJson"));
             }
 
             JsonNode? container = root["entries"];
 
             if (container is null)
             {
-                return ResourceCheck.Fail("没有 entries 字段，不是世界书");
+                return ResourceCheck.Fail(L.Get("Rv.NoEntries"));
             }
 
             List<JsonObject> entries = container switch
@@ -195,15 +195,15 @@ namespace AstraBrew_Launcher.Services
 
             if (entries.Count == 0)
             {
-                return ResourceCheck.Fail("entries 是空的或格式不对（应为对象或数组）");
+                return ResourceCheck.Fail(L.Get("Rv.EntriesShape"));
             }
 
             if (!entries.Any(entry => Text(entry, "content").Trim().Length > 0))
             {
-                return ResourceCheck.Fail("所有条目都没有正文（content 为空）");
+                return ResourceCheck.Fail(L.Get("Rv.EmptyContent"));
             }
 
-            return ResourceCheck.Pass("世界书");
+            return ResourceCheck.Pass(L.Get("Rv.Pass.World"));
         }
 
         // ==================== 预设 ====================
@@ -212,12 +212,12 @@ namespace AstraBrew_Launcher.Services
         {
             if (!path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
             {
-                return ResourceCheck.Fail("预设必须是 .json");
+                return ResourceCheck.Fail(L.Get("Rv.PresetExt"));
             }
 
             if (ParseObject(File.ReadAllText(path)) is not { } root)
             {
-                return ResourceCheck.Fail("不是合法的 JSON 对象");
+                return ResourceCheck.Fail(L.Get("Rv.NotJson"));
             }
 
             int prompts = 0;
@@ -227,17 +227,17 @@ namespace AstraBrew_Launcher.Services
             }
             else if (root["prompts"] is not null)
             {
-                return ResourceCheck.Fail("prompts 不是数组，不像酒馆预设");
+                return ResourceCheck.Fail(L.Get("Rv.PromptsNotArray"));
             }
 
             bool hasSignature = PresetSignatures.Any(key => root.ContainsKey(key));
 
             if (prompts == 0 && !hasSignature)
             {
-                return ResourceCheck.Fail("既没有 prompts，也没有常见生成参数（temperature / openai_model 等），不像预设");
+                return ResourceCheck.Fail(L.Get("Rv.NotPreset"));
             }
 
-            return ResourceCheck.Pass(prompts > 0 ? $"{prompts} 条提示词" : "生成参数");
+            return ResourceCheck.Pass(prompts > 0 ? L.F("Res.Value.PromptsCount", prompts) : L.Get("Rv.Params"));
         }
 
         // ==================== 小工具 ====================

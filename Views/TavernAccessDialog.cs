@@ -63,7 +63,7 @@ namespace AstraBrew_Launcher.Views
 
             if (!state.IsRunning || state.Port <= 0)
             {
-                AppNotify.Info("酒馆还没启动", "启动服务之后这里才会列出可访问的地址。");
+                AppNotify.Info(L.Get("Tad.NotRunning.Title"), L.Get("Tad.NotRunning.Body"));
                 return;
             }
 
@@ -85,7 +85,7 @@ namespace AstraBrew_Launcher.Views
                 case AccessScope.Local:
                     // 普通模式只列回环地址：酒馆就绑在 127.0.0.1，把网卡地址摆出来等于承诺一个打不开的链接。
                     // 手机连不上 127.0.0.1，二维码在这里没有意义，不画。
-                    body.Children.Add(BuildCard(palette, "本机", $"http://127.0.0.1:{port}/", withQr: false));
+                    body.Children.Add(BuildCard(palette, L.Get("Tad.Card.Local"), $"http://127.0.0.1:{port}/", withQr: false));
                     break;
 
                 case AccessScope.Lan:
@@ -96,18 +96,18 @@ namespace AstraBrew_Launcher.Views
                     {
                         body.Children.Add(BuildNotice(
                             palette,
-                            "没有检测到可用的局域网地址。请确认这台机器已连上网络（或已开启 Wi-Fi / 网线）。"));
+                            L.Get("Tad.NoLan")));
                         break;
                     }
 
                     if (v4 is not null)
                     {
-                        body.Children.Add(BuildCard(palette, "局域网 · IPv4", $"http://{v4}:{port}/", withQr: true));
+                        body.Children.Add(BuildCard(palette, L.Get("Tad.Card.LanV4"), $"http://{v4}:{port}/", withQr: true));
                     }
 
                     if (v6 is not null)
                     {
-                        body.Children.Add(BuildCard(palette, "局域网 · IPv6", $"http://[{v6}]:{port}/", withQr: true));
+                        body.Children.Add(BuildCard(palette, L.Get("Tad.Card.LanV6"), $"http://[{v6}]:{port}/", withQr: true));
                     }
 
                     break;
@@ -171,26 +171,25 @@ namespace AstraBrew_Launcher.Views
 
                     if (v4 is not null)
                     {
-                        host.Children.Add(BuildCard(palette, "公网 · IPv4", $"http://{v4}:{port}/", withQr: true));
+                        host.Children.Add(BuildCard(palette, L.Get("Tad.Card.WanV4"), $"http://{v4}:{port}/", withQr: true));
                     }
 
                     if (v6 is not null)
                     {
-                        host.Children.Add(BuildCard(palette, "公网 · IPv6", $"http://[{v6}]:{port}/", withQr: true));
+                        host.Children.Add(BuildCard(palette, L.Get("Tad.Card.WanV6"), $"http://[{v6}]:{port}/", withQr: true));
                     }
 
                     if (v4 is null && v6 is null)
                     {
                         host.Children.Add(BuildNotice(
                             palette,
-                            "没取到公网 IP：可能这台机器没有公网出口，或者请求被网络 / 代理拦截了。"
-                            + "下面这个内网地址只能在同一个 Wi-Fi 下访问。"));
+                            L.Get("Tad.NoPublic")));
 
                         (string? lanV4, _) = NetworkInfo.LocalAddresses();
 
                         if (lanV4 is not null)
                         {
-                            host.Children.Add(BuildCard(palette, "内网 · IPv4", $"http://{lanV4}:{port}/", withQr: true));
+                            host.Children.Add(BuildCard(palette, L.Get("Tad.Card.IntranetV4"), $"http://{lanV4}:{port}/", withQr: true));
                         }
                     }
                 }
@@ -221,7 +220,7 @@ namespace AstraBrew_Launcher.Views
 
             row.Children.Add(new TextBlock
             {
-                Text = "正在获取公网 IP…",
+                Text = L.Get("Tad.FetchingIp"),
                 FontSize = 12.5,
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground = new SolidColorBrush(palette.Muted),
@@ -311,7 +310,7 @@ namespace AstraBrew_Launcher.Views
             {
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = HorizontalAlignment.Center,
-                Content = BuildCopyLabel("复制"),
+                Content = BuildCopyLabel(L.Get("Tad.Copy")),
             };
 
             copy.Click += (_, _) =>
@@ -319,7 +318,7 @@ namespace AstraBrew_Launcher.Views
                 var package = new DataPackage();
                 package.SetText(url);
                 Clipboard.SetContent(package);
-                copy.Content = BuildCopyLabel("已复制");
+                copy.Content = BuildCopyLabel(L.Get("Tad.Copied"));
             };
 
             var open = new Button
@@ -342,7 +341,7 @@ namespace AstraBrew_Launcher.Views
                         return;
                     }
 
-                    AppNotify.Warning("桌面窗口没能打开，改用浏览器", desktopDetail);
+                    AppNotify.Warning(L.Get("Dw.FallbackWarning"), desktopDetail);
                 }
 
                 try
@@ -351,7 +350,7 @@ namespace AstraBrew_Launcher.Views
                 }
                 catch (Exception ex)
                 {
-                    AppNotify.Error("打不开浏览器", ex.Message);
+                    AppNotify.Error(L.Get("Tad.BrowserFail.Title"), ex.Message);
                 }
             };
 
@@ -466,7 +465,7 @@ namespace AstraBrew_Launcher.Views
 
             var close = new Button
             {
-                Content = "关闭",
+                Content = L.Get("Common.Action.Close.Content"),
                 MinWidth = 84,
                 HorizontalAlignment = HorizontalAlignment.Right,
                 Style = (Style)Application.Current.Resources["AccentActionButtonStyle"],
@@ -493,7 +492,7 @@ namespace AstraBrew_Launcher.Views
             var title = new StackPanel { Spacing = 2 };
             title.Children.Add(new TextBlock
             {
-                Text = local ? "本机访问" : "设备访问",
+                Text = L.Get(local ? "Tad.Scope.Local" : "Tad.Scope.Device"),
                 FontSize = 17,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = new SolidColorBrush(palette.PrimaryText),
@@ -501,10 +500,10 @@ namespace AstraBrew_Launcher.Views
             title.Children.Add(new TextBlock
             {
                 Text = local
-                    ? $"普通模式 · 端口 {port} · 只有这台电脑能打开"
+                    ? L.F("Tad.Subtitle.Normal", port)
                     : scope == AccessScope.Lan
-                        ? $"局域网 · 端口 {port} · 手机连同一个 Wi-Fi 后扫码"
-                        : $"互联网 · 端口 {port} · 手机扫码（任何网络）",
+                        ? L.F("Tad.Subtitle.Lan", port)
+                        : L.F("Tad.Subtitle.Wan", port),
                 FontSize = 11.5,
                 Foreground = new SolidColorBrush(palette.Muted),
             });
@@ -542,11 +541,8 @@ namespace AstraBrew_Launcher.Views
             string text = scope switch
             {
                 AccessScope.Local => LocalScopeHint(),
-                AccessScope.Lan =>
-                    "手机、平板与这台电脑连同一个 Wi-Fi 就能扫码打开；扫不开时先确认防火墙放行了这个端口。",
-                _ =>
-                    $"公网访问要先在路由器上把 {port} 端口映射到这台机器（或走反向代理）；"
-                    + "这里显示的是本机出口地址，映射没做好的话外网仍然连不上。",
+                AccessScope.Lan => L.Get("Tad.Note.Lan"),
+                _ => L.F("Tad.Note.Wan", port),
             };
 
             return new TextBlock
@@ -565,11 +561,10 @@ namespace AstraBrew_Launcher.Views
         /// <summary>本机模式下的说明。配置里的「局域网访问」开着时如实点出来，别让人以为手机一定连不上。</summary>
         private static string LocalScopeHint()
         {
-            const string basic =
-                "普通模式用这台电脑的浏览器打开酒馆。要让手机、平板也能打开，把启动模式切成「服务器模式」并选「局域网」。";
+            string basic = L.Get("Tad.Note.Normal");
 
             return TavernSettings.Scope == ServiceScope.Lan
-                ? basic + "当前配置里开着「局域网访问」，同一 Wi-Fi 的设备其实也能连上这个端口。"
+                ? basic + L.Get("Tad.Note.NormalWithLan")
                 : basic;
         }
 
@@ -614,7 +609,7 @@ namespace AstraBrew_Launcher.Views
                 HorizontalAlignment = HorizontalAlignment.Center,
             };
             row.Children.Add(new FontIcon { Glyph = "\uE8A7", FontSize = 12, Foreground = foreground });
-            row.Children.Add(new TextBlock { Text = "打开", FontSize = 12, Foreground = foreground });
+            row.Children.Add(new TextBlock { Text = L.Get("Tad.Open"), FontSize = 12, Foreground = foreground });
             return row;
         }
 

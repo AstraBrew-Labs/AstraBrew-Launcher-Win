@@ -47,10 +47,10 @@ namespace AstraBrew_Launcher.Services
                 var writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
 
                 var log = new InstallLog(file, writer);
-                log.Info($"AstraBrew Launcher · {task} 安装日志");
-                log.Info($"时间 {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-                log.Info($"系统 {Environment.OSVersion.VersionString} · {(Environment.Is64BitProcess ? "64" : "32")} 位进程");
-                log.Info($"日志文件 {file}");
+                log.Info(L.F("Miss.Log.Title", task));
+                log.Info(L.F("Miss.Log.Time", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")));
+                log.Info(L.F("Miss.Log.Os", Environment.OSVersion.VersionString, Environment.Is64BitProcess ? 64 : 32));
+                log.Info(L.F("Miss.Log.File", file));
                 log.Info(new string('-', 64));
                 return log;
             }
@@ -80,7 +80,7 @@ namespace AstraBrew_Launcher.Services
 
             for (Exception? inner = error.InnerException; inner is not null; inner = inner.InnerException)
             {
-                Write("FAIL", $"  由 {inner.GetType().Name} 引发: {inner.Message}");
+                Write("FAIL", L.F("Miss.Log.CausedBy", inner.GetType().Name, inner.Message));
             }
 
             if (error.StackTrace is { Length: > 0 } stack)

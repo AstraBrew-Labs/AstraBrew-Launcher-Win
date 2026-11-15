@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -72,7 +72,8 @@ namespace AstraBrew_Launcher.Services
         private const string EmbeddedFamilyTraditional = "有愛魔獸圓體 CN";
 
         /// <summary>界面上的名字（用户可读）。</summary>
-        public const string EmbeddedLabel = "软件默认";
+        /// <summary>界面上对这个内置字体的称呼。随界面语言变，所以是属性而不是常量。</summary>
+        public static string EmbeddedLabel => L.Get("Settings.Row.Font.EmbeddedLabel");
 
         /// <summary>内置字体文件相对输出目录的位置。</summary>
         private const string EmbeddedRelativePath = @"Assets\Fonts\Nowar-Warcraft-Rounded-CN-Regular.ttf";

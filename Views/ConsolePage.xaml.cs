@@ -49,6 +49,11 @@ namespace AstraBrew_Launcher.Views
             TavernSettings.Changed -= Settings_Changed;
             TavernSettings.Changed += Settings_Changed;
 
+            // 状态胶囊、网络胶囊、行数这些都是代码拼出来的，Loc 刷不到，
+            // 换语言时按当前状态重画一遍
+            LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+            LanguageSwitch.LanguageChanged += OnLanguageChanged;
+
             RenderLogs();
             ApplyState();
         }
@@ -59,6 +64,18 @@ namespace AstraBrew_Launcher.Views
             TavernRuntime.Logged -= Runtime_Logged;
             TavernRuntime.Cleared -= Runtime_Cleared;
             TavernSettings.Changed -= Settings_Changed;
+            LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+        }
+
+        private void OnLanguageChanged(object? sender, EventArgs e)
+        {
+            ApplyState();
+
+            // 启动器写的日志只存了资源键，换语言要整屏重排；进程自己的输出原样保留
+            RenderLogs();
+
+            SetFollow(_autoFollow);
+            UpdateLogCount();
         }
 
         private void Settings_Changed(object? sender, EventArgs e) => ApplyState();
@@ -80,12 +97,12 @@ namespace AstraBrew_Launcher.Views
 
             (string label, Color color, string glyph) = state.State switch
             {
-                TavernRunState.Starting => ("启动中…", InfoColor, "\uE895"),
-                TavernRunState.Running => ("运行中", SuccessColor, "\uE930"),
-                TavernRunState.Stopping => ("停止中…", WarningColor, "\uE895"),
-                TavernRunState.Stopped => ("已停止", WarningColor, "\uE71A"),
-                TavernRunState.Failed => ("启动失败", ErrorColor, "\uEA39"),
-                _ => ("未启动", MutedColor, "\uE71A"),
+                TavernRunState.Starting => (L.Get("Console.Status.Starting"), InfoColor, "\uE895"),
+                TavernRunState.Running => (L.Get("Console.Status.Running"), SuccessColor, "\uE930"),
+                TavernRunState.Stopping => (L.Get("Console.Status.Stopping"), WarningColor, "\uE895"),
+                TavernRunState.Stopped => (L.Get("Console.Status.Stopped"), WarningColor, "\uE71A"),
+                TavernRunState.Failed => (L.Get("Console.Status.Failed"), ErrorColor, "\uEA39"),
+                _ => (L.Get("Console.Status.Idle"), MutedColor, "\uE71A"),
             };
 
             var brush = new SolidColorBrush(color);
@@ -105,7 +122,10 @@ namespace AstraBrew_Launcher.Views
             KillButton.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
 
             PidText.Text = state.Pid is { } pid ? $"PID {pid}" : "PID —";
-            ModeText.Text = running || busy ? state.Mode : "—";
+            // 模式与环境都存的是资源键：这里按当前语言拼，换语言后这一格会跟着变
+            ModeText.Text = (running || busy) && state.ModeKey.Length > 0
+                ? L.F("Console.Meta.Mode", L.Get(state.ModeKey), L.Get(state.EnvKey))
+                : "—";
 
             NetworkButton.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
 
@@ -114,12 +134,12 @@ namespace AstraBrew_Launcher.Views
             if (TavernSettings.Mode == LaunchMode.Desktop)
             {
                 NetworkGlyph.Glyph = "\uE7F4";
-                NetworkText.Text = "访问酒馆";
+                NetworkText.Text = L.Get("Console.Network.Open");
 
                 var openBrush = new SolidColorBrush(InfoColor);
                 NetworkGlyph.Foreground = openBrush;
                 NetworkText.Foreground = openBrush;
-                ToolTipService.SetToolTip(NetworkButton, "酒馆在独立窗口中打开；窗口被关掉时可以在这里重新打开");
+                ToolTipService.SetToolTip(NetworkButton, L.Get("Console.Network.OpenTip"));
             }
             else
             {
@@ -130,14 +150,14 @@ namespace AstraBrew_Launcher.Views
                 bool local = scope == AccessScope.Local;
 
                 NetworkGlyph.Glyph = local ? "\uE72E" : lan ? "\uE701" : "\uE774";
-                NetworkText.Text = local ? "本机" : lan ? "局域网" : "互联网";
+                NetworkText.Text = L.Get(local ? "Console.Network.Local" : lan ? "Console.Network.Lan" : "Console.Network.Wan");
 
                 var networkBrush = new SolidColorBrush(local ? MutedColor : lan ? SuccessColor : ErrorColor);
                 NetworkGlyph.Foreground = networkBrush;
                 NetworkText.Foreground = networkBrush;
-                ToolTipService.SetToolTip(NetworkButton, local
-                    ? "查看本机地址（普通模式不对外提供访问）"
-                    : "查看手机 / 平板访问地址");
+                ToolTipService.SetToolTip(NetworkButton, L.Get(local
+                    ? "Console.Network.LocalTip"
+                    : "Console.Network.Tip"));
             }
 
             // 没启动过也要显示当前实例的版本：标题写着「未安装」而侧边栏显示内置 v1.19.2
@@ -178,9 +198,9 @@ namespace AstraBrew_Launcher.Views
             TavernProcessState state = TavernRuntime.State;
 
             if (!await ConfirmAsync(
-                "停止酒馆服务？",
-                $"正在进行的对话请求会被中断，端口 {state.Port} 将被释放。",
-                "停止服务"))
+                L.Get("Console.Confirm.Stop.Title"),
+                L.F("Console.Confirm.Stop.Body", state.Port),
+                L.Get("Console.Confirm.Stop.Primary")))
             {
                 return;
             }
@@ -198,10 +218,9 @@ namespace AstraBrew_Launcher.Views
             TavernProcessState state = TavernRuntime.State;
 
             if (!await ConfirmAsync(
-                "强制结束酒馆进程？",
-                $"会直接结束 PID {state.Pid} 的整棵进程树，正在写的对话可能丢失。"
-                    + "只有在「停止」没有反应时才需要这样做。",
-                "强制结束",
+                L.Get("Console.Confirm.Kill.Title"),
+                L.F("Console.Confirm.Kill.Body", state.Pid),
+                L.Get("Console.Confirm.Kill.Primary"),
                 danger: true))
             {
                 return;
@@ -229,7 +248,7 @@ namespace AstraBrew_Launcher.Views
                 Title = title,
                 Content = body,
                 PrimaryButtonText = primary,
-                CloseButtonText = "取消",
+                CloseButtonText = L.Get("Common.Action.Cancel.Content"),
                 DefaultButton = ContentDialogButton.Close,
             };
 
@@ -248,6 +267,18 @@ namespace AstraBrew_Launcher.Views
 
         // ==================== 日志 ====================
 
+        /// <summary>行数胶囊单独抽出来：换语言、追加行、清空日志三处都要重写它。</summary>
+        private void UpdateLogCount()
+        {
+            if (LogCountText is not null)
+            {
+                int count = TavernRuntime.Logs.Count;
+
+                // 单数另给一条：英文里「1 lines」这种一眼就是 bug
+                LogCountText.Text = L.F(count == 1 ? "Console.Log.Line" : "Console.Log.Lines", count);
+            }
+        }
+
         private void RenderLogs()
         {
             LogStack.Children.Clear();
@@ -257,14 +288,14 @@ namespace AstraBrew_Launcher.Views
                 LogStack.Children.Add(BuildLogLine(entry));
             }
 
-            LogCountText.Text = $"{TavernRuntime.Logs.Count} 行";
+            UpdateLogCount();
             ScrollToEnd();
         }
 
         private void AppendLine(TavernLogEntry entry)
         {
             LogStack.Children.Add(BuildLogLine(entry));
-            LogCountText.Text = $"{TavernRuntime.Logs.Count} 行";
+            UpdateLogCount();
 
             // 超过上限时最老的行已经被服务层丢掉，界面上也得跟着去掉一行
             while (LogStack.Children.Count > TavernRuntime.Logs.Count)
@@ -312,7 +343,7 @@ namespace AstraBrew_Launcher.Views
 
             line.Inlines.Add(new Run
             {
-                Text = entry.Text,
+                Text = entry.Display,
                 Foreground = new SolidColorBrush(
                     entry.Kind == TavernLogKind.Output ? PrimaryTextColor : color),
             });
@@ -358,7 +389,7 @@ namespace AstraBrew_Launcher.Views
         {
             _autoFollow = follow;
             FollowButton.Visibility = follow ? Visibility.Collapsed : Visibility.Visible;
-            FollowStateText.Text = follow ? "自动跟随" : "已暂停跟随";
+            FollowStateText.Text = L.Get(follow ? "Console.Log.Following" : "Console.Log.Paused");
         }
 
         private void Follow_Click(object sender, RoutedEventArgs e)
@@ -388,15 +419,15 @@ namespace AstraBrew_Launcher.Views
                 foreach (TavernLogEntry entry in TavernRuntime.Logs)
                 {
                     builder.AppendLine(
-                        $"{entry.Time:HH:mm:ss}  {entry.Kind.ToString().ToUpperInvariant(),-7}{entry.Text}");
+                        $"{entry.Time:HH:mm:ss}  {entry.Kind.ToString().ToUpperInvariant(),-7}{entry.Display}");
                 }
 
                 await File.WriteAllTextAsync(path, builder.ToString());
-                AppNotify.Success("日志已导出", path);
+                AppNotify.Success(L.Get("Console.Export.Ok.Title"), path);
             }
             catch (Exception ex)
             {
-                AppNotify.Error("导出失败", ex.Message);
+                AppNotify.Error(L.Get("Console.Export.Fail.Title"), ex.Message);
             }
         }
 
@@ -425,7 +456,7 @@ namespace AstraBrew_Launcher.Views
                     return;
                 }
 
-                AppNotify.Error("打不开酒馆页面", $"{url} · {detail}");
+                AppNotify.Error(L.Get("Console.Open.Fail.Title"), $"{url} · {detail}");
                 return;
             }
 

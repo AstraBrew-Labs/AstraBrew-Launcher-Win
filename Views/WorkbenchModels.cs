@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
@@ -278,15 +279,19 @@ namespace AstraBrew_Launcher.Views
 
         public Visibility CoverEmptyVisibility => _coverSource is null ? Visibility.Visible : Visibility.Collapsed;
 
-        public string TagSummary => Tags.Count == 0 ? "未添加标签" : $"{Tags.Count} 个";
+        // 下面这几个都是「跟着内容长度变」的说明文字，**每次读都现拼**：
+        // 换语言会重建整个工作台页面，但模型里这些值仍要按当前语言取，不能缓存成字段。
+        public string TagSummary => Tags.Count == 0
+            ? L.Get("Wb.Card.Tags.Empty")
+            : L.F("Wb.Count.Items", Tags.Count);
 
-        public string DescriptionCount => $"{_description.Length} 字";
+        public string DescriptionCount => L.F("Wb.Count.Chars", _description.Length);
 
-        public string PersonalityCount => $"{_personality.Length} 字";
+        public string PersonalityCount => L.F("Wb.Count.Chars", _personality.Length);
 
-        public string ScenarioCount => $"{_scenario.Length} 字";
+        public string ScenarioCount => L.F("Wb.Count.Chars", _scenario.Length);
 
-        public string FirstMessageCount => $"{_firstMessage.Length} 字";
+        public string FirstMessageCount => L.F("Wb.Count.Chars", _firstMessage.Length);
 
         public void AddTag(string raw)
         {
@@ -389,21 +394,6 @@ namespace AstraBrew_Launcher.Views
     /// <summary>世界书条目的可编辑版本。</summary>
     public sealed class EntryForm : EditModel
     {
-        /// <summary>
-        /// 酒馆世界书的 <c>position</c> 取值，顺序不能改：0–6 与文件里的数字一一对应，
-        /// 换顺序会把所有条目的插入位置整体搬错。
-        /// </summary>
-        private static readonly string[] Positions =
-        {
-            "角色定义之前",
-            "角色定义之后",
-            "作者注释之前",
-            "作者注释之后",
-            "深度 · 系统",
-            "深度 · 用户",
-            "深度 · 助手",
-        };
-
         private string _comment = string.Empty;
         private string _content = string.Empty;
         private string _order = "100";
@@ -438,7 +428,7 @@ namespace AstraBrew_Launcher.Views
             }
         }
 
-        public string IndexLabel => $"条目 {_number}";
+        public string IndexLabel => L.F("Wb.Entry.Index", _number);
 
         public string ShortIndex => _number.ToString("00");
 
@@ -496,7 +486,7 @@ namespace AstraBrew_Launcher.Views
 
                 if (text.Length == 0)
                 {
-                    return "没有正文";
+                    return L.Get("Wb.Entry.NoBody");
                 }
 
                 return text.Length <= 70 ? text : text[..70] + "…";
@@ -550,15 +540,30 @@ namespace AstraBrew_Launcher.Views
             set => Set(ref _position, value, v => Position = v);
         }
 
-        public string[] PositionOptions => Positions;
+        /// <summary>
+        /// 酒馆世界书的 <c>position</c> 取值，顺序不能改：0–6 与文件里的数字一一对应，
+        /// 换顺序会把所有条目的插入位置整体搬错。文案按语言现取，顺序不变。
+        /// </summary>
+        public string[] PositionOptions => new[]
+        {
+            L.Get("Wb.Position.BeforeChar"),
+            L.Get("Wb.Position.AfterChar"),
+            L.Get("Wb.Position.BeforeAuthor"),
+            L.Get("Wb.Position.AfterAuthor"),
+            L.Get("Wb.Position.DepthSystem"),
+            L.Get("Wb.Position.DepthUser"),
+            L.Get("Wb.Position.DepthAssistant"),
+        };
 
         public ObservableCollection<EditTag> Keys { get; } = new();
 
         public ObservableCollection<EditTag> SecondaryKeys { get; } = new();
 
-        public string KeysLabel => Keys.Count == 0 ? "无关键词" : string.Join(" · ", Keys.Select(tag => tag.Text));
+        public string KeysLabel => Keys.Count == 0
+            ? L.Get("Wb.Entry.NoKeys")
+            : string.Join(" · ", Keys.Select(tag => tag.Text));
 
-        public string KeyHint => $"{Keys.Count} 关键词";
+        public string KeyHint => L.F("Wb.Entry.KeyCount", Keys.Count);
 
         public Visibility KeyHintVisibility => Keys.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
 
@@ -645,8 +650,6 @@ namespace AstraBrew_Launcher.Views
     /// <summary>预设里的一条提示词。</summary>
     public sealed class PromptForm : EditModel
     {
-        private static readonly string[] Roles = { "系统", "用户", "助手" };
-
         private string _name = string.Empty;
         private string _content = string.Empty;
         private bool _enabled = true;
@@ -665,7 +668,7 @@ namespace AstraBrew_Launcher.Views
         /// </summary>
         public bool InOrder { get; set; }
 
-        public string KindLabel => IsMarker ? "标记" : "提示词";
+        public string KindLabel => L.Get(IsMarker ? "Wb.Prompt.Kind.Marker" : "Wb.Prompt.Kind.Prompt");
 
         public string Name
         {
@@ -696,7 +699,12 @@ namespace AstraBrew_Launcher.Views
             set => Set(ref _role, value, v => Role = v);
         }
 
-        public string[] RoleOptions => Roles;
+        public string[] RoleOptions => new[]
+        {
+            L.Get("Wb.Role.System"),
+            L.Get("Wb.Role.User"),
+            L.Get("Wb.Role.Assistant"),
+        };
 
         public Visibility EditorVisibility => IsMarker ? Visibility.Collapsed : Visibility.Visible;
 

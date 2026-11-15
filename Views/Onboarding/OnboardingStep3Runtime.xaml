@@ -3,6 +3,7 @@
     x:Class="AstraBrew_Launcher.Views.Onboarding.OnboardingStep3Runtime"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
@@ -36,11 +37,11 @@
                             <TextBlock
                                 FontSize="13.5"
                                 FontWeight="SemiBold"
-                                Text="启动器自带" />
+                                controls:Loc.Text="Setup.S3.Builtin.Title" />
                             <TextBlock
                                 FontSize="11"
                                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                Text="跟着启动器走，删了就没了"
+                                controls:Loc.Text="Setup.S3.Builtin.Hint"
                                 TextWrapping="Wrap" />
                         </StackPanel>
                         <Border
@@ -52,7 +53,7 @@
                             <TextBlock
                                 x:Name="BuiltinPillText"
                                 FontSize="10.5"
-                                Text="正在看" />
+                                controls:Loc.Text="Setup.S3.Pill.Checking" />
                         </Border>
                     </Grid>
 
@@ -79,11 +80,11 @@
                             <TextBlock
                                 FontSize="13.5"
                                 FontWeight="SemiBold"
-                                Text="用电脑里现有的" />
+                                controls:Loc.Text="Setup.S3.System.Title" />
                             <TextBlock
                                 FontSize="11"
                                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                Text="用你自己装好的"
+                                controls:Loc.Text="Setup.S3.System.Hint"
                                 TextWrapping="Wrap" />
                         </StackPanel>
                         <Border
@@ -95,7 +96,7 @@
                             <TextBlock
                                 x:Name="SystemPillText"
                                 FontSize="10.5"
-                                Text="正在看" />
+                                controls:Loc.Text="Setup.S3.Pill.Checking" />
                         </Border>
                     </Grid>
 
@@ -110,13 +111,13 @@
                 x:Name="PackageBasic"
                 GroupName="RuntimePackage"
                 Checked="Package_Checked"
-                Content="只装必需"
+                controls:Loc.Content="Setup.S3.Package.Basic.Name"
                 Style="{StaticResource ChoiceChipRadioStyle}" />
             <RadioButton
                 x:Name="PackageFull"
                 GroupName="RuntimePackage"
                 Checked="Package_Checked"
-                Content="一次装齐"
+                controls:Loc.Content="Setup.S3.Package.Full.Name"
                 Style="{StaticResource ChoiceChipRadioStyle}" />
             <TextBlock
                 x:Name="PackageHint"
@@ -124,7 +125,7 @@
                 VerticalAlignment="Center"
                 FontSize="11"
                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                Text="只装跑酒馆最少的两样"
+                controls:Loc.Text="Setup.S3.Package.Basic.Label"
                 TextTrimming="CharacterEllipsis" />
         </StackPanel>
 
@@ -139,19 +140,19 @@
                 Style="{StaticResource AccentActionButtonStyle}">
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <FontIcon FontSize="12" Glyph="&#xE896;" />
-                    <TextBlock x:Name="InstallButtonText" Text="开始安装" />
+                    <TextBlock x:Name="InstallButtonText" controls:Loc.Text="Setup.S3.Action.Install" />
                 </StackPanel>
             </Button>
 
             <Button
                 x:Name="RecheckButton"
                 Click="Recheck_Click"
-                Content="再查一次" />
+                controls:Loc.Content="Setup.S3.Recheck" />
 
             <Button
                 x:Name="SystemHelpButton"
                 Click="SystemHelp_Click"
-                Content="缺什么？"
+                controls:Loc.Content="Setup.S3.Help"
                 Style="{StaticResource GhostButtonStyle}"
                 Visibility="Collapsed" />
         </StackPanel>

@@ -3,13 +3,14 @@
     x:Class="AstraBrew_Launcher.Views.Controls.ExtensionInstallDialog"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    Title="安装扩展"
-    CloseButtonText="取消"
+    Title=""
+    CloseButtonText=""
     DefaultButton="Primary"
     PrimaryButtonClick="Dialog_PrimaryButtonClick"
-    PrimaryButtonText="开始安装"
+    PrimaryButtonText=""
     mc:Ignorable="d">
 
     <Grid Width="470">
@@ -33,7 +34,7 @@
                         Style="{StaticResource TabStripRadioStyle}">
                         <StackPanel Orientation="Horizontal" Spacing="7">
                             <FontIcon FontSize="13" Glyph="&#xE774;" />
-                            <TextBlock Text="Git 仓库" />
+                            <TextBlock controls:Loc.Text="Eid.Tab.Git" />
                         </StackPanel>
                     </RadioButton>
                     <RadioButton
@@ -46,7 +47,7 @@
                         Style="{StaticResource TabStripRadioStyle}">
                         <StackPanel Orientation="Horizontal" Spacing="7">
                             <FontIcon FontSize="13" Glyph="&#xE8B7;" />
-                            <TextBlock Text="离线包" />
+                            <TextBlock controls:Loc.Text="Eid.Tab.Offline" />
                         </StackPanel>
                     </RadioButton>
                 </Grid>
@@ -54,7 +55,7 @@
 
             <!--  Git 面板  -->
             <StackPanel x:Name="GitPanel" Spacing="8">
-                <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="仓库地址" />
+                <TextBlock Style="{StaticResource FieldTitleTextStyle}" controls:Loc.Text="Eid.Field.UrlLabel" />
                 <Grid ColumnSpacing="8">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
@@ -62,25 +63,25 @@
                     </Grid.ColumnDefinitions>
                     <TextBox
                         x:Name="UrlBox"
-                        PlaceholderText="https://github.com/用户/扩展.git"
+                        controls:Loc.Placeholder="Eid.Field.Url.Placeholder"
                         TextChanged="UrlBox_TextChanged" />
                     <Button
                         x:Name="DetectButton"
                         Grid.Column="1"
                         Click="Detect_Click"
-                        Content="检测分支" />
+                        controls:Loc.Content="Eid.Action.Detect" />
                 </Grid>
 
-                <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="分支" />
+                <TextBlock Style="{StaticResource FieldTitleTextStyle}" controls:Loc.Text="Eid.Field.Branch" />
                 <ComboBox
                     x:Name="BranchBox"
                     HorizontalAlignment="Stretch"
-                    PlaceholderText="先检测分支，再选择要安装的分支" />
+                    controls:Loc.Placeholder="Eid.Branch.Placeholder" />
 
                 <TextBlock
                     Style="{StaticResource FieldHintTextStyle}"
                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                    Text="支持 GitHub、Gitee 的 HTTPS 地址；只有 GitHub 域名会按「GitHub 加速」开关经中转访问，其余直连。同名目录已存在时会加后缀另装一份，不会覆盖已有扩展。" />
+                    controls:Loc.Text="Eid.Note.Git" />
             </StackPanel>
 
             <!--  离线面板  -->
@@ -91,7 +92,7 @@
                 <Button Click="PickOffline_Click">
                     <StackPanel Orientation="Horizontal" Spacing="7">
                         <FontIcon FontSize="12" Glyph="&#xE8E5;" />
-                        <TextBlock Text="选择 .zip 离线包（可多选）" />
+                        <TextBlock controls:Loc.Text="Eid.Label.PickOffline" />
                     </StackPanel>
                 </Button>
 
@@ -110,12 +111,12 @@
                     x:Name="OfflineText"
                     Style="{StaticResource FieldHintTextStyle}"
                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                    Text="尚未选择离线包" />
+                    controls:Loc.Text="Eid.Package.None" />
 
                 <TextBlock
                     Style="{StaticResource FieldHintTextStyle}"
                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                    Text="离线包需包含 manifest.json；压缩包里套了一层目录也能认出来。同一批里有两个同名的包会整组标为无效——装出来会是 x 和 x-2，分不清哪个才是要的。装完会自动启用，可在列表中关闭。" />
+                    controls:Loc.Text="Eid.Note.Offline" />
             </StackPanel>
 
             <!--  校验提示放在两条路径之外，切 Tab 后仍然可见  -->
@@ -159,11 +160,11 @@
                         FontSize="14"
                         FontWeight="SemiBold"
                         Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                        Text="正在克隆仓库…" />
+                        controls:Loc.Text="ExtS.Step.Cloning" />
                     <TextBlock
                         x:Name="PhaseHintText"
                         Style="{StaticResource MetaChipTextStyle}"
-                        Text="第 1/2 步 · 下载扩展代码" />
+                        controls:Loc.Text="Eid.Phase.Step1" />
                 </StackPanel>
 
                 <TextBlock
@@ -197,7 +198,7 @@
             <TextBlock
                 Style="{StaticResource FieldHintTextStyle}"
                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                Text="安装期间请勿关闭窗口；完成后扩展会自动启用并出现在列表中。" />
+                controls:Loc.Text="Eid.Hint.HoldFull" />
         </StackPanel>
     </Grid>
 </ContentDialog>

@@ -68,7 +68,9 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 FontSize = 12,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Res("TextFillColorSecondaryBrush"),
-                Text = autoStart ? $"{CountdownSeconds} 秒后自动开始" : "准备好了",
+                Text = autoStart
+                    ? L.F("Setup.Dialog.Countdown", CountdownSeconds)
+                    : L.Get("Setup.Dialog.Ready"),
             };
 
             var overall = new ProgressBar { Height = 4, Maximum = 100, Value = 0 };
@@ -88,13 +90,13 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             var start = new Button
             {
-                Content = "现在开始",
+                Content = L.Get("Setup.Dialog.Start"),
                 Style = (Style)Application.Current.Resources["AccentActionButtonStyle"],
             };
 
             var cancel = new Button
             {
-                Content = "取消",
+                Content = L.Get("Setup.Dialog.Cancel"),
                 Style = (Style)Application.Current.Resources["GhostButtonStyle"],
             };
 
@@ -115,7 +117,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             var dialog = new ContentDialog
             {
                 XamlRoot = root,
-                Title = "装一下要用的工具",
+                Title = L.Get("Setup.Dialog.Title"),
                 Content = host,
                 DefaultButton = ContentDialogButton.None,
             };
@@ -167,17 +169,17 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 // 装完再探一次，让调用方拿到的卡片是新的；这里只负责把结论写清楚
                 bool ok = result.Success;
                 summary.Text = ok
-                    ? "装好了，状态已更新。"
+                    ? L.Get("Setup.Dialog.Done.Body")
                     : result.Cancelled
-                        ? "已取消。"
+                        ? L.Get("Setup.Dialog.Cancelled.Body")
                         : result.Error is { Length: > 0 } error
                             ? error
-                            : "有的没装上，可以到设置里重试。";
+                            : L.Get("Setup.Dialog.Failed.Body");
                 summary.Foreground = ok ? Res("SystemFillColorSuccessBrush") : Res("TextFillColorSecondaryBrush");
                 overall.Value = ok ? 100 : overall.Value;
 
                 allowClose = true;
-                start.Content = "关闭";
+                start.Content = L.Get("Setup.Dialog.Close");
                 start.IsEnabled = true;
                 start.Visibility = Visibility.Visible;
                 cancel.Visibility = Visibility.Collapsed;
@@ -197,7 +199,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
                 if (remaining > 0)
                 {
-                    summary.Text = $"{remaining} 秒后自动开始";
+                    summary.Text = L.F("Setup.Dialog.Countdown", remaining);
                     return;
                 }
 
@@ -227,7 +229,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 }
 
                 cancel.IsEnabled = false;
-                cancel.Content = "正在停…";
+                cancel.Content = L.Get("Setup.Dialog.Stopping");
                 cts.Cancel();
             };
 
@@ -298,7 +300,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             var log = new TextBlock
             {
-                Text = "等着",
+                Text = L.Get("Setup.Dialog.Pill.Waiting"),
                 FontSize = 11,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 Foreground = Res("TextFillColorTertiaryBrush"),
@@ -308,7 +310,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             Grid.SetColumn(info, 1);
             grid.Children.Add(info);
 
-            var pillText = new TextBlock { Text = "等着", FontSize = 10.5 };
+            var pillText = new TextBlock { Text = L.Get("Setup.Dialog.Pill.Waiting"), FontSize = 10.5 };
             var pill = new Border
             {
                 Padding = new Thickness(8, 2, 8, 3),
@@ -336,28 +338,30 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 row.Bar.Value = Math.Clamp(update.Percent, 0, 100);
                 row.Log.Text = update.LogLine is { Length: > 0 } line ? line : update.Message;
 
-                if (update.Failed)
+                // 看状态，不看文字：这三个分支原来分别比较 "没装上 / 完成 / 准备中…"，
+                // 一翻译就全落进 else，进度条会卡在「等着」
+                switch (update.State)
                 {
-                    row.PillText.Text = "没装上";
-                    row.Pill.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1F, 0xC4, 0x2B, 0x1C));
-                }
-                else if (update.Message == "完成")
-                {
-                    row.PillText.Text = "好了";
-                    row.Pill.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1F, 0x0F, 0x7B, 0x0F));
-                }
-                else if (update.Message == "准备中…")
-                {
-                    row.PillText.Text = "装着呢";
-                    row.Pill.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1F, 0x2B, 0x88, 0xD8));
-                }
-                else if (update.Percent <= 0 && !update.Indeterminate)
-                {
-                    row.PillText.Text = "等着";
-                }
-                else
-                {
-                    row.PillText.Text = $"{update.Percent:0}%";
+                    case RuntimeTaskState.Failed:
+                        row.PillText.Text = L.Get("Setup.Dialog.Pill.Failed");
+                        row.Pill.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1F, 0xC4, 0x2B, 0x1C));
+                        break;
+
+                    case RuntimeTaskState.Completed:
+                        row.PillText.Text = L.Get("Setup.Dialog.Pill.Done");
+                        row.Pill.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1F, 0x0F, 0x7B, 0x0F));
+                        break;
+
+                    case RuntimeTaskState.Preparing:
+                        row.PillText.Text = L.Get("Setup.Dialog.Pill.Running");
+                        row.Pill.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1F, 0x2B, 0x88, 0xD8));
+                        break;
+
+                    default:
+                        row.PillText.Text = update.Percent <= 0 && !update.Indeterminate
+                            ? L.Get("Setup.Dialog.Pill.Waiting")
+                            : $"{update.Percent:0}%";
+                        break;
                 }
             }
 

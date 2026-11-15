@@ -40,13 +40,13 @@ namespace AstraBrew_Launcher.Views
         /// <summary>这一行的依赖正在装（同一时刻只允许一处，见 <see cref="VersionPage"/>）。</summary>
         public bool IsFixing { get; set; }
 
-        public string VersionLabel => Version.Length == 0 ? "版本未知" : "v" + Version;
+        public string VersionLabel => Version.Length == 0 ? L.Get("Version.Row.VersionUnknown") : "v" + Version;
 
-        public string FixText => IsFixing ? "正在安装…" : "安装依赖";
+        public string FixText => IsFixing ? L.Get("Version.Row.Fixing") : L.Get("Version.Row.Fix");
 
         public bool FixEnabled => !IsFixing;
 
-        public string UseText => IsCurrent ? "使用中" : "使用";
+        public string UseText => IsCurrent ? L.Get("Version.Row.InUseLabel") : L.Get("Version.Row.Use");
 
         public bool UseEnabled => !IsCurrent && DepsReady;
 
@@ -90,6 +90,19 @@ namespace AstraBrew_Launcher.Views
         private bool _loadingReleases;
         private bool _checkingMirror;
 
+        /// <summary>版本列表处在哪一步：换语言时按钮上的「刷新 / 正在刷新…」按它重写。</summary>
+        private ReleasesStage _releasesStage = ReleasesStage.Idle;
+
+        /// <summary>最近一次取回的版本列表，换语言时用它重写「缓存于 …」那一行。</summary>
+        private ReleaseResult? _releaseCache;
+
+        private enum ReleasesStage
+        {
+            Idle,
+            Loading,
+            Refreshing,
+        }
+
         public VersionPage()
         {
             InitializeComponent();
@@ -116,6 +129,12 @@ namespace AstraBrew_Launcher.Views
             InstanceScan.Changed -= Scan_Changed;
             InstanceScan.Changed += Scan_Changed;
 
+            // 页面里有一半文字是「按状态拼出来的」（版本胶囊、按钮文案、来源说明），
+            // Loc 刷不到，换语言时由这里按当前状态重画一遍
+            LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+            LanguageSwitch.LanguageChanged += OnLanguageChanged;
+
+            ApplyLocalizedChrome();
             ApplyTab();
             SyncFromCatalog();
             RefreshScanEntry();
@@ -137,6 +156,47 @@ namespace AstraBrew_Launcher.Views
         {
             TavernInstances.Changed -= Catalog_Changed;
             InstanceScan.Changed -= Scan_Changed;
+            LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+        }
+
+        /// <summary>
+        /// 换语言：静态文字由 <c>Loc</c> 重刷，这里只重画由状态拼出来的那几处。
+        /// 一律「按当前状态重新渲染」，不改任何设置、不重置用户选中的版本。
+        /// </summary>
+        private void OnLanguageChanged(object? sender, EventArgs e)
+        {
+            ApplyLocalizedChrome();
+            SyncFromCatalog();
+        }
+
+        /// <summary>「整块控件一句话」的地方：这些属性是 <c>object</c> 型，Loc 的反射写法够不着。</summary>
+        private void ApplyLocalizedChrome()
+        {
+            if (SwitchLogExpander is not null)
+            {
+                SwitchLogExpander.Header = L.Get("Version.Builtin.Progress.Log.Header");
+            }
+
+            if (StagingNote is not null)
+            {
+                StagingNote.Title = L.Get("Version.Builtin.Note.Staging.Title");
+                StagingNote.Message = L.Get("Version.Builtin.Note.Staging.Body");
+            }
+
+            if (RefreshReleasesText is not null)
+            {
+                RefreshReleasesText.Text = L.Get(_releasesStage switch
+                {
+                    ReleasesStage.Refreshing => "Version.Builtin.Action.Refreshing",
+                    ReleasesStage.Loading => "Version.Builtin.Action.Loading",
+                    _ => "Version.Builtin.Action.RefreshLabel",
+                });
+            }
+
+            if (_releaseCache is { } cache)
+            {
+                ShowReleaseCache(cache);
+            }
         }
 
         private void Scan_Changed(object? sender, EventArgs e) => RefreshScanEntry();
@@ -243,8 +303,8 @@ namespace AstraBrew_Launcher.Views
             var current = TavernInstances.Current;
 
             HeaderCurrentText.Text = current.IsBuiltin
-                ? $"当前 · 内置 {current.KernelLabel}"
-                : $"当前 · 本地 {current.KernelLabel}";
+                ? L.F("Version.Header.Current.Builtin", current.KernelLabel)
+                : L.F("Version.Header.Current.Local", current.KernelLabel);
 
             UpdateBuiltinActiveState();
         }
@@ -290,8 +350,8 @@ namespace AstraBrew_Launcher.Views
             TavernInstances.Use(TavernInstances.Builtin);
 
             Notify(
-                "已切换实例",
-                $"后续启动将使用内置实例 {TavernInstances.Builtin.KernelLabel}。本地实例仍保留在列表中，随时可以切回。",
+                L.Get("Version.Local.Notify.Switched.Title"),
+                L.F("Version.Local.Notify.Switched.Builtin", TavernInstances.Builtin.KernelLabel),
                 NotifySeverity.Success);
         }
 
@@ -322,10 +382,10 @@ namespace AstraBrew_Launcher.Views
 
             LocalTabCount.Text = locals.Count.ToString();
             LocalSummaryText.Text = locals.Count == 0
-                ? "尚未扫描到实例，点「扫描」全盘查找，或用「导入」指定 package.json"
+                ? L.Get("Version.Local.Summary.Empty")
                 : missing == 0
-                    ? $"已发现 {locals.Count} 个实例 · 依赖全部就绪"
-                    : $"已发现 {locals.Count} 个实例 · {missing} 个缺少依赖";
+                    ? L.F("Version.Local.Summary.DepsOk", locals.Count)
+                    : L.F("Version.Local.Summary.DepsMissing", locals.Count, missing);
 
             LocalList.Visibility = locals.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
             LocalEmpty.Visibility = locals.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -348,8 +408,8 @@ namespace AstraBrew_Launcher.Views
             TavernInstances.Use(target);
 
             Notify(
-                "已切换实例",
-                $"后续启动将使用本地 {target.KernelLabel}，目录：{target.Path}",
+                L.Get("Version.Local.Notify.Switched.Title"),
+                L.F("Version.Local.Notify.Switched.Local", target.KernelLabel, target.Path),
                 NotifySeverity.Success);
         }
 
@@ -367,8 +427,8 @@ namespace AstraBrew_Launcher.Views
             if (_fixingDeps is not null)
             {
                 Notify(
-                    "正在安装依赖",
-                    $"先等 {_fixingDeps.KernelLabel} 装完，一次只跑一份 npm，同时跑两份会互相抢网络与磁盘。",
+                    L.Get("Version.Local.Notify.Fixing.Title"),
+                    L.F("Version.Local.Notify.Fixing.Busy", _fixingDeps.KernelLabel),
                     NotifySeverity.Warning);
                 return;
             }
@@ -383,9 +443,8 @@ namespace AstraBrew_Launcher.Views
             RefreshLocalRows();
 
             Notify(
-                "正在安装依赖",
-                $"{target.KernelLabel} 的依赖装在它自己的目录里，源为{LauncherSettings.NpmRegistryName}；"
-                    + "大约需要下载 300 MB，期间可以继续用启动器做别的事。",
+                L.Get("Version.Local.Notify.Fixing.Title"),
+                L.F("Version.Local.Notify.Fixing.Body", target.KernelLabel, LauncherSettings.NpmRegistryName),
                 NotifySeverity.Informational);
 
             TavernInstallResult result;
@@ -395,7 +454,7 @@ namespace AstraBrew_Launcher.Views
             }
             catch (Exception ex)
             {
-                result = new TavernInstallResult(false, "安装依赖时出错，请重试。", ex.Message, null, null, null);
+                result = new TavernInstallResult(false, L.Get("Version.Progress.ErrorDeps"), ex.Message, null, null, null);
             }
             finally
             {
@@ -408,8 +467,8 @@ namespace AstraBrew_Launcher.Views
             if (result.Success && target.DepsReady)
             {
                 Notify(
-                    "依赖已安装",
-                    $"{target.KernelLabel} 的 Node 依赖已就位，现在可以切换使用。",
+                    L.Get("Version.Local.Notify.DepsOk.Title"),
+                    L.F("Version.Local.Notify.DepsOk.Body", target.KernelLabel),
                     NotifySeverity.Success);
                 return;
             }
@@ -419,9 +478,9 @@ namespace AstraBrew_Launcher.Views
 
             AppNotify.Post(
                 NotifySeverity.Error,
-                "依赖没有装好",
+                L.Get("Version.Local.Notify.DepsFail.Title"),
                 detail,
-                result.LogPath is { Length: > 0 } path ? "查看日志" : null,
+                result.LogPath is { Length: > 0 } ? L.Get("Version.Done.ViewLog") : null,
                 result.LogPath is { Length: > 0 } logPath ? () => OpenPath(logPath) : null);
         }
 
@@ -434,21 +493,24 @@ namespace AstraBrew_Launcher.Views
             var body = new StackPanel { Spacing = 8 };
             body.Children.Add(new TextBlock
             {
-                Text = "这份代码在，只是缺 Node 依赖。依赖装完才能启动，代码不会被改动。",
+                Text = L.Get("Version.Local.Dialog.Deps.Body"),
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = 22,
             });
-            body.Children.Add(HintText($"安装位置　{target.Path}"));
-            body.Children.Add(HintText($"包　源　{LauncherSettings.NpmRegistryName}（{LauncherSettings.NpmRegistryUrl}）"));
-            body.Children.Add(HintText("源以参数形式传给这一次 npm，不改动全局 .npmrc；大约需要下载 300 MB、一到三分钟。"));
+            body.Children.Add(HintText(L.F("Version.Local.Dialog.Deps.Location", target.Path)));
+            body.Children.Add(HintText(L.F(
+                "Version.Local.Dialog.Deps.Registry",
+                LauncherSettings.NpmRegistryName,
+                LauncherSettings.NpmRegistryUrl)));
+            body.Children.Add(HintText(L.Get("Version.Local.Dialog.Deps.Note")));
 
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = $"为 {target.KernelLabel} 安装依赖",
+                Title = L.F("Version.Local.Dialog.Deps.Title", target.KernelLabel),
                 Content = body,
-                PrimaryButtonText = "开始安装",
-                CloseButtonText = "取消",
+                PrimaryButtonText = L.Get("Version.Local.Dialog.Deps.Start"),
+                CloseButtonText = L.Get("Common.Action.Cancel.Content"),
                 DefaultButton = ContentDialogButton.Primary,
             };
 
@@ -479,10 +541,10 @@ namespace AstraBrew_Launcher.Views
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = $"从列表移除 {target.KernelLabel}？",
-                Content = "只从启动器列表中移除，不会删除磁盘上的目录。",
-                PrimaryButtonText = "移除",
-                CloseButtonText = "取消",
+                Title = L.F("Version.Local.Dialog.Remove.Title", target.KernelLabel),
+                Content = L.Get("Version.Local.Dialog.Remove.Body"),
+                PrimaryButtonText = L.Get("Version.Local.Dialog.Remove.Confirm"),
+                CloseButtonText = L.Get("Common.Action.Cancel.Content"),
                 DefaultButton = ContentDialogButton.Close,
             };
 
@@ -498,10 +560,10 @@ namespace AstraBrew_Launcher.Views
             TavernInstances.RemoveLocal(target);
 
             Notify(
-                "已移除实例",
+                L.Get("Version.Local.Notify.Removed.Title"),
                 wasCurrent
-                    ? $"{target.KernelLabel} 不再出现在列表中，目录 {target.Path} 仍然保留；当前已回落到内置实例 {TavernInstances.Builtin.KernelLabel}。"
-                    : $"{target.KernelLabel} 不再出现在列表中，目录 {target.Path} 仍然保留。",
+                    ? L.F("Version.Local.Notify.Removed.Current", target.KernelLabel, target.Path, TavernInstances.Builtin.KernelLabel)
+                    : L.F("Version.Local.Notify.Removed.Body", target.KernelLabel, target.Path),
                 NotifySeverity.Informational);
         }
 
@@ -594,8 +656,8 @@ namespace AstraBrew_Launcher.Views
             if (!string.Equals(Path.GetFileName(picked), "package.json", StringComparison.OrdinalIgnoreCase))
             {
                 Notify(
-                    "请选择 package.json",
-                    "启动器靠 package.json 里的 name 字段判断这是不是酒馆目录，选别的文件没法验证。",
+                    L.Get("Version.Import.WrongFile.Title"),
+                    L.Get("Version.Import.WrongFile.Body"),
                     NotifySeverity.Warning);
                 return;
             }
@@ -607,40 +669,38 @@ namespace AstraBrew_Launcher.Views
             {
                 case LocalAddStatus.Added:
                     Notify(
-                        "已添加本地实例",
-                        $"{added!.KernelLabel} · {added.Path}"
-                            + (added.DepsReady
-                                ? "；依赖已就绪，可以直接切换使用。"
-                                : "；还缺 Node 依赖，点行里的「安装依赖」补齐后才能启动。"),
+                        L.Get("Version.Import.Added.Title"),
+                        added!.DepsReady
+                            ? L.F("Version.Import.Added.Ready", added.KernelLabel, added.Path)
+                            : L.F("Version.Import.Added.Missing", added.KernelLabel, added.Path),
                         NotifySeverity.Success);
                     break;
 
                 case LocalAddStatus.Duplicate:
                     Notify(
-                        "这个实例已经在列表里",
-                        $"{root} 无需重复添加；要启用它，直接点行里的「使用」。",
+                        L.Get("Version.Import.Duplicate.Title"),
+                        L.F("Version.Import.Duplicate.Body", root),
                         NotifySeverity.Informational);
                     break;
 
                 case LocalAddStatus.Builtin:
                     Notify(
-                        "这是内置实例，不能重复添加",
-                        "内置实例已经由「内置实例」页签托管，再加一份会出现两个入口指向同一份代码。"
-                            + "请选择其他目录下的 package.json。",
+                        L.Get("Version.Import.Builtin.Title"),
+                        L.Get("Version.Import.Builtin.Body"),
                         NotifySeverity.Warning);
                     break;
 
                 case LocalAddStatus.NotTavern:
                     Notify(
-                        "这不是酒馆目录",
-                        $"package.json 里的 name 不是 \"{InstanceScanner.PackageName}\"，启动器不会把它当成酒馆代码。",
+                        L.Get("Version.Import.NotTavern.Title"),
+                        L.F("Version.Import.NotTavern.Body", InstanceScanner.PackageName),
                         NotifySeverity.Error);
                     break;
 
                 default:
                     Notify(
-                        "路径读不到",
-                        $"没有找到 {root}，或者当前账户没有读取它的权限。",
+                        L.Get("Version.Import.Unreadable.Title"),
+                        L.F("Version.Import.Unreadable.Body", root),
                         NotifySeverity.Error);
                     break;
             }
@@ -676,6 +736,9 @@ namespace AstraBrew_Launcher.Views
             string builtinVersion = TavernInstances.Builtin.Version;
             bool installed = TavernInstances.BuiltinInstalled;
 
+            // 换语言会走一遍重建：先记住用户手上选的是哪一版，重建后还能选回去
+            string? keepTag = (VersionPicker.SelectedItem as ComboBoxItem)?.Tag as string;
+
             _syncingPicker = true;
             VersionPicker.Items.Clear();
 
@@ -683,7 +746,7 @@ namespace AstraBrew_Launcher.Views
             {
                 VersionPicker.Items.Add(new ComboBoxItem
                 {
-                    Content = "staging · 开发分支最新",
+                    Content = L.Get("Version.Builtin.Picker.Staging"),
                     Tag = TavernInstances.StagingTag,
                 });
             }
@@ -701,11 +764,11 @@ namespace AstraBrew_Launcher.Views
                     if (installed && release.Version == builtinVersion)
                     {
                         // 当前版本不再重复标「最新」，避免「最新 · 当前」两个标签挤在一起。
-                        label += " · 当前";
+                        label += L.Get("Version.Builtin.Picker.Current");
                     }
                     else if (release.Version == TavernInstances.LatestStable)
                     {
-                        label += " · 最新";
+                        label += L.Get("Version.Builtin.Picker.Latest");
                     }
 
                     VersionPicker.Items.Add(new ComboBoxItem
@@ -720,7 +783,7 @@ namespace AstraBrew_Launcher.Views
                     // 没缓存又没网时的兜底：不假装有版本可选，也不留一个空下拉框
                     VersionPicker.Items.Add(new ComboBoxItem
                     {
-                        Content = "版本列表尚未获取",
+                        Content = L.Get("Version.Builtin.Picker.Empty"),
                         Tag = null,
                         IsEnabled = false,
                     });
@@ -735,6 +798,18 @@ namespace AstraBrew_Launcher.Views
                 for (int i = 0; i < VersionPicker.Items.Count; i++)
                 {
                     if ((VersionPicker.Items[i] as ComboBoxItem)?.Tag as string == builtinVersion)
+                    {
+                        selectIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            if (keepTag is { Length: > 0 })
+            {
+                for (int i = 0; i < VersionPicker.Items.Count; i++)
+                {
+                    if ((VersionPicker.Items[i] as ComboBoxItem)?.Tag as string == keepTag)
                     {
                         selectIndex = i;
                         break;
@@ -794,24 +869,32 @@ namespace AstraBrew_Launcher.Views
 
             SwitchVersionBtn.IsEnabled = !_switching && target.Length > 0 && (!same || depsOnly);
             SwitchVersionBtn.Content = _switching
-                ? depsOnly ? "正在安装依赖…" : installed ? "正在切换…" : "正在安装…"
+                ? depsOnly
+                    ? L.Get("Version.Builtin.SwitchBtn.InstallingDeps")
+                    : installed
+                        ? L.Get("Version.Builtin.SwitchBtn.Switching")
+                        : L.Get("Version.Builtin.SwitchBtn.Installing")
                 : depsOnly
-                    ? "安装依赖"
+                    ? L.Get("Version.Builtin.SwitchBtn.Deps")
                     : same
-                        ? "已是当前版本"
+                        ? L.Get("Version.Builtin.SwitchBtn.Same")
                         : target.Length > 0
-                            ? $"{(installed ? "切换到" : "安装")} {DisplayVersion(target)}"
-                            : installed ? "选择要切换的版本" : "选择要安装的版本";
+                            ? L.F(
+                                installed ? "Version.Builtin.SwitchBtn.Switch" : "Version.Builtin.SwitchBtn.Install",
+                                DisplayVersion(target))
+                            : installed
+                                ? L.Get("Version.Builtin.SwitchBtn.PickSwitch")
+                                : L.Get("Version.Builtin.SwitchBtn.PickInstall");
 
             SwitchHintText.Text = depsOnly
-                ? $"代码已就位，还差 Node 依赖；安装会临时使用「设置 → 下载」里的 {LauncherSettings.NpmRegistryName} 源，不改动全局 npm 配置。"
+                ? L.F("Version.Builtin.Hint.DepsOnly", LauncherSettings.NpmRegistryName)
                 : !installed
-                    ? "将从「设置 → 下载」里选的通道拉取源码，并接着安装 Node 依赖；需要 Git 与 Node.js 已就绪。"
+                    ? L.Get("Version.Builtin.Hint.Fresh")
                     : !TavernInstances.IsBuiltinActive
-                        ? "换版会覆盖代码并重装依赖，不改变当前使用的实例；换版后点右上角「使用内置实例」即可启用。"
+                        ? L.Get("Version.Builtin.Hint.NotActive")
                         : IsStaging
-                            ? "开发版跟随 staging 分支，切换同样覆盖当前代码。"
-                            : "切换会覆盖当前版本并重装依赖，旧版本不会保留。";
+                            ? L.Get("Version.Builtin.Hint.Staging")
+                            : L.Get("Version.Builtin.Hint.Switch");
         }
 
         // ==================== 安装来源：镜像可用 / 直连 ====================
@@ -837,15 +920,15 @@ namespace AstraBrew_Launcher.Views
             {
                 ShowRoute(
                     mirror: false,
-                    LauncherSettings.GithubAcceleration
-                        ? "从 github.com 拉取，已开启加速服务（失败自动直连）。"
-                        : "从 github.com 直接拉取，未经加速。");
+                    L.Get(LauncherSettings.GithubAcceleration
+                        ? "Version.Builtin.Route.GithubAccel"
+                        : "Version.Builtin.Route.GithubPlain"));
                 return;
             }
 
             if (revision.Length == 0)
             {
-                ShowRoute(mirror: false, "先在版本列表里选一个版本，再比对镜像。");
+                ShowRoute(mirror: false, L.Get("Version.Builtin.Route.NoRevision"));
                 return;
             }
 
@@ -862,7 +945,7 @@ namespace AstraBrew_Launcher.Views
             }
 
             _checkingMirror = true;
-            SourceRouteText.Text = $"正在比对 {LauncherSettings.ChannelName(channel)} 的版本…";
+            SourceRouteText.Text = L.F("Version.Builtin.Route.Checking", LauncherSettings.ChannelName(channel));
 
             try
             {
@@ -887,20 +970,17 @@ namespace AstraBrew_Launcher.Views
 
             if (refs.Error is { Length: > 0 } error)
             {
-                ShowRoute(
-                    mirror: false,
-                    $"没能比对镜像（{error}），这次直接从 GitHub 拉取。");
+                ShowRoute(mirror: false, L.F("Version.Builtin.Route.MirrorError", error));
                 return;
             }
 
             ShowRoute(
                 usable,
                 usable
-                    ? $"{LauncherSettings.ChannelName(channel)} 已同步 {DisplayVersion(revision)}，从镜像下载。"
+                    ? L.F("Version.Builtin.Route.MirrorOk", LauncherSettings.ChannelName(channel), DisplayVersion(revision))
                     : LauncherSettings.GithubAcceleration
-                        ? $"{LauncherSettings.ChannelName(channel)} 没有 {DisplayVersion(revision)}，改用 GitHub；"
-                            + "加速服务已开启，git 拉取会自动经中转（全局配置生效）。"
-                        : $"{LauncherSettings.ChannelName(channel)} 没有 {DisplayVersion(revision)}，改用 GitHub 直连拉取。");
+                        ? L.F("Version.Builtin.Route.MirrorMissAccel", LauncherSettings.ChannelName(channel), DisplayVersion(revision))
+                        : L.F("Version.Builtin.Route.MirrorMiss", LauncherSettings.ChannelName(channel), DisplayVersion(revision)));
         }
 
         private void ShowRoute(bool mirror, string detail)
@@ -932,7 +1012,7 @@ namespace AstraBrew_Launcher.Views
             // 没装：不显示版本号，也不留三枚空胶囊——版本号是「当前装的这一份」的属性
             if (!TavernInstances.BuiltinInstalled)
             {
-                BuiltinVersionText.Text = "未安装";
+                BuiltinVersionText.Text = L.Get("Version.Builtin.Current.NotInstalled");
                 MetaRow.Visibility = Visibility.Collapsed;
                 LatestPill.Visibility = Visibility.Collapsed;
                 return;
@@ -943,9 +1023,9 @@ namespace AstraBrew_Launcher.Views
             if (version == TavernInstances.StagingTag)
             {
                 BuiltinVersionText.Text = TavernInstances.StagingTag;
-                MetaChannelText.Text = "开发版";
-                MetaDateText.Text = "跟随 staging 分支";
-                MetaTagText.Text = "分支 staging";
+                MetaChannelText.Text = L.Get("Version.Builtin.Channel.StagingLabel");
+                MetaDateText.Text = L.Get("Version.Builtin.Current.StagingDate");
+                MetaTagText.Text = L.Get("Version.Builtin.Current.StagingTag");
                 LatestPill.Visibility = Visibility.Collapsed;
                 return;
             }
@@ -954,13 +1034,13 @@ namespace AstraBrew_Launcher.Views
 
             // 元信息只写发布列表里真有的事实：不编体积、不编文件数
             TavernRelease? release = TavernInstances.FindRelease(version);
-            MetaChannelText.Text = release?.ChannelLabel ?? "稳定版";
-            MetaDateText.Text = release is null
-                ? "发布日期未知"
-                : release.PublishedAt is null
-                    ? "发布日期未知"
-                    : "发布于 " + release.DateLabel;
-            MetaTagText.Text = release is null ? "未在发布列表中" : "标签 " + release.Tag;
+            MetaChannelText.Text = release?.ChannelLabel ?? L.Get("Version.Builtin.Channel.StableLabel");
+            MetaDateText.Text = release?.PublishedAt is null
+                ? L.Get("Version.Builtin.Current.NoDate")
+                : L.F("Version.Builtin.Current.Published", release.DateLabel);
+            MetaTagText.Text = release is null
+                ? L.Get("Version.Builtin.Current.NoTag")
+                : L.F("Version.Builtin.Current.Tag", release.Tag);
 
             LatestPill.Visibility = version == TavernInstances.LatestStable
                 ? Visibility.Visible
@@ -1053,20 +1133,19 @@ namespace AstraBrew_Launcher.Views
 
             UpdateSwitchButton();
 
-            string what = string.Join(" 与 ", missing);
+            string what = string.Join(L.Get("Common.List.And"), missing);
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = $"需要先安装 {what}",
+                Title = L.F("Version.Runtime.Missing.Title", what),
                 Content = new TextBlock
                 {
-                    Text = $"{what} 还没装好，酒馆装完也启动不了。\n\n"
-                        + "在「设置 → 运行环境」里点对应的「安装」，装完回到这里再点一次即可。",
+                    Text = L.F("Version.Runtime.Missing.Body", what),
                     TextWrapping = TextWrapping.Wrap,
                     LineHeight = 22,
                 },
-                PrimaryButtonText = "前往设置",
-                CloseButtonText = "稍后再说",
+                PrimaryButtonText = L.Get("Version.Runtime.Missing.Go"),
+                CloseButtonText = L.Get("Version.Runtime.Missing.Later"),
                 DefaultButton = ContentDialogButton.Primary,
             };
 
@@ -1093,39 +1172,24 @@ namespace AstraBrew_Launcher.Views
             var body = new StackPanel { Spacing = 8 };
             body.Children.Add(new TextBlock
             {
-                Text = "代码已经在本地了，只缺 Node 依赖。依赖装完才算安装完成。",
+                Text = L.Get("Version.Local.Dialog.Deps.BodyBuiltin"),
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = 22,
             });
-            body.Children.Add(new TextBlock
-            {
-                Text = $"安装位置　{root}",
-                FontSize = 12,
-                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorTertiaryBrush"],
-                TextWrapping = TextWrapping.Wrap,
-            });
-            body.Children.Add(new TextBlock
-            {
-                Text = $"包　源　{LauncherSettings.NpmRegistryName}（{LauncherSettings.NpmRegistryUrl}）",
-                FontSize = 12,
-                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorTertiaryBrush"],
-                TextWrapping = TextWrapping.Wrap,
-            });
-            body.Children.Add(new TextBlock
-            {
-                Text = "源以参数形式传给这一次 npm，不改动全局 .npmrc；大约需要下载 300 MB、一到三分钟。",
-                FontSize = 12,
-                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorTertiaryBrush"],
-                TextWrapping = TextWrapping.Wrap,
-            });
+            body.Children.Add(HintText(L.F("Version.Local.Dialog.Deps.Location", root)));
+            body.Children.Add(HintText(L.F(
+                "Version.Local.Dialog.Deps.Registry",
+                LauncherSettings.NpmRegistryName,
+                LauncherSettings.NpmRegistryUrl)));
+            body.Children.Add(HintText(L.Get("Version.Local.Dialog.Deps.Note")));
 
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = "安装 Node 依赖",
+                Title = L.Get("Version.Local.Dialog.Deps.TitlePlain"),
                 Content = body,
-                PrimaryButtonText = "开始安装",
-                CloseButtonText = "取消",
+                PrimaryButtonText = L.Get("Version.Local.Dialog.Deps.Start"),
+                CloseButtonText = L.Get("Common.Action.Cancel.Content"),
                 DefaultButton = ContentDialogButton.Primary,
             };
 
@@ -1149,7 +1213,7 @@ namespace AstraBrew_Launcher.Views
 
                 if (waiting)
                 {
-                    SwitchPercentText.Text = "安装中";
+                    SwitchPercentText.Text = L.Get("Version.Progress.InstallingDeps");
                 }
                 else
                 {
@@ -1185,7 +1249,10 @@ namespace AstraBrew_Launcher.Views
             SwitchBar.IsIndeterminate = false;
             SwitchBar.Value = 0;
             SwitchPercentText.Text = "0%";
-            SwitchPhaseText.Text = $"第 1/3 步 · 正在从{targets[0].Name}拉取 {DisplayVersion(revision)}";
+            SwitchPhaseText.Text = L.F(
+                "Version.Progress.Cloning",
+                targets[0].Name,
+                DisplayVersion(revision));
             SwitchProgressPanel.Visibility = Visibility.Visible;
 
             // 安装过程有十来分钟，日志默认摊开：让人看得见在下载什么、卡在哪
@@ -1199,7 +1266,7 @@ namespace AstraBrew_Launcher.Views
             }
             catch (Exception ex)
             {
-                result = new TavernInstallResult(false, "安装时出错，请重试。", ex.Message, null, null, null);
+                result = new TavernInstallResult(false, L.Get("Version.Progress.Error"), ex.Message, null, null, null);
             }
 
             FinishInstall(result, installed, depsOnly: false);
@@ -1215,7 +1282,7 @@ namespace AstraBrew_Launcher.Views
             SwitchBar.IsIndeterminate = false;
             SwitchBar.Value = 0;
             SwitchPercentText.Text = "0%";
-            SwitchPhaseText.Text = $"正在用{LauncherSettings.NpmRegistryName}源安装依赖…";
+            SwitchPhaseText.Text = L.F("Version.Progress.NpmPhase", LauncherSettings.NpmRegistryName);
             SwitchProgressPanel.Visibility = Visibility.Visible;
             SwitchLogExpander.IsExpanded = true;
             UpdateSwitchButton();
@@ -1227,7 +1294,7 @@ namespace AstraBrew_Launcher.Views
             }
             catch (Exception ex)
             {
-                result = new TavernInstallResult(false, "安装依赖时出错，请重试。", ex.Message, null, null, null);
+                result = new TavernInstallResult(false, L.Get("Version.Progress.ErrorDeps"), ex.Message, null, null, null);
             }
 
             FinishInstall(result, installed: true, depsOnly: true);
@@ -1248,7 +1315,9 @@ namespace AstraBrew_Launcher.Views
                 // 失败也可能动过磁盘（回滚过、清过暂存、装了一半依赖），界面一律按磁盘现状重画
                 TavernInstances.ReloadBuiltin();
 
-                SwitchPhaseText.Text = TavernInstances.BuiltinInstalled ? "安装未完成" : "安装失败";
+                SwitchPhaseText.Text = TavernInstances.BuiltinInstalled
+                    ? L.Get("Version.Progress.Incomplete")
+                    : L.Get("Version.Progress.Failed");
                 AppendSwitchLog(result.Message);
                 if (result.Hint is { Length: > 0 } hint)
                 {
@@ -1257,7 +1326,7 @@ namespace AstraBrew_Launcher.Views
 
                 if (result.LogPath is { Length: > 0 } path)
                 {
-                    AppendSwitchLog("日志 " + path);
+                    AppendSwitchLog(L.F("Version.Progress.LogPath", path));
                 }
 
                 UpdateSwitchButton();
@@ -1265,7 +1334,11 @@ namespace AstraBrew_Launcher.Views
                 // 代码在、只缺依赖：这不是「装不上」，换个说法与颜色，别让人以为得从头再来
                 bool needsDeps = TavernInstances.BuiltinInstalled && !TavernInstances.BuiltinDepsReady;
 
-                string failTitle = needsDeps ? "依赖没有装好" : installed ? "换版失败" : "安装失败";
+                string failTitle = needsDeps
+                    ? L.Get("Version.Done.Fail.Deps")
+                    : installed
+                        ? L.Get("Version.Done.Fail.Switch")
+                        : L.Get("Version.Done.Fail.Install");
                 string failBody = result.Message
                     + (result.Hint is { Length: > 0 } failHint ? " " + failHint : string.Empty);
 
@@ -1275,7 +1348,7 @@ namespace AstraBrew_Launcher.Views
                 Action? failAction = null;
                 if (result.LogPath is { Length: > 0 } logPath)
                 {
-                    failActionText = "查看日志";
+                    failActionText = L.Get("Version.Done.ViewLog");
                     failAction = () => OpenPath(logPath);
                 }
 
@@ -1293,12 +1366,20 @@ namespace AstraBrew_Launcher.Views
 
             SwitchBar.Value = 100;
             SwitchPercentText.Text = "100%";
-            SwitchPhaseText.Text = depsOnly ? "依赖已装好" : installed ? "版本已切换" : "安装完成";
+            SwitchPhaseText.Text = depsOnly
+                ? L.Get("Version.Progress.DepsOk")
+                : installed
+                    ? L.Get("Version.Progress.Switched")
+                    : L.Get("Version.Progress.Done");
             AppendSwitchLog(result.Message);
 
             bool builtinActive = TavernInstances.IsBuiltinActive;
 
-            string title = depsOnly ? "依赖已安装" : installed ? "版本已切换" : "内置实例已安装";
+            string title = depsOnly
+                ? L.Get("Version.Done.Deps.Title")
+                : installed
+                    ? L.Get("Version.Done.Switch.Title")
+                    : L.Get("Version.Done.Install.Title");
 
             // 正文按「一眼读完」写：耗时、路径这类细节留在页面日志里，
             // 全局消息只负责告诉用户「成了、下一步点哪儿」。
@@ -1306,20 +1387,20 @@ namespace AstraBrew_Launcher.Views
             if (depsOnly)
             {
                 body = builtinActive
-                    ? $"内置实例 {TavernInstances.Builtin.KernelLabel} 的 Node 依赖已就位，可以在仪表盘启动。"
-                    : $"内置实例 {TavernInstances.Builtin.KernelLabel} 的依赖已就位；切到内置实例即可启用。";
+                    ? L.F("Version.Done.Deps.Active", TavernInstances.Builtin.KernelLabel)
+                    : L.F("Version.Done.Deps.Inactive", TavernInstances.Builtin.KernelLabel);
             }
             else if (installed)
             {
                 body = builtinActive
-                    ? $"内置实例现在使用 {TavernInstances.Builtin.KernelLabel}，代码与依赖都已更新。"
-                    : $"内置实例的代码已更新为 {TavernInstances.Builtin.KernelLabel}；切到内置实例即可启用。";
+                    ? L.F("Version.Done.Switch.Active", TavernInstances.Builtin.KernelLabel)
+                    : L.F("Version.Done.Switch.Inactive", TavernInstances.Builtin.KernelLabel);
             }
             else
             {
                 body = builtinActive
-                    ? $"{result.Message}；依赖也已就位，可以在仪表盘启动。"
-                    : $"{result.Message}；切到内置实例即可启用。";
+                    ? L.F("Version.Done.Install.Active", result.Message)
+                    : L.F("Version.Done.Install.Inactive", result.Message);
             }
 
             AppNotify.Success(title, body);
@@ -1360,7 +1441,7 @@ namespace AstraBrew_Launcher.Views
         }
 
         private static string DisplayVersion(string version)
-            => version == TavernInstances.StagingTag ? "开发版" : "v" + version;
+            => version == TavernInstances.StagingTag ? L.Get("Version.Builtin.Channel.StagingLabel") : "v" + version;
 
         // ==================== 内置实例：版本列表缓存 ====================
 
@@ -1377,11 +1458,14 @@ namespace AstraBrew_Launcher.Views
 
             _loadingReleases = true;
             RefreshReleasesBtn.IsEnabled = false;
-            RefreshReleasesText.Text = force ? "正在刷新…" : "正在获取…";
+            _releasesStage = force ? ReleasesStage.Refreshing : ReleasesStage.Loading;
+            RefreshReleasesText.Text = L.Get(force
+                ? "Version.Builtin.Action.Refreshing"
+                : "Version.Builtin.Action.Loading");
 
             if (force)
             {
-                ReleaseCacheText.Text = "正在向 GitHub 请求最新列表…";
+                ReleaseCacheText.Text = L.Get("Version.Builtin.Cache.Refreshing");
             }
 
             try
@@ -1396,44 +1480,50 @@ namespace AstraBrew_Launcher.Views
                 {
                     // 手里还有列表时只是「没刷新成功」，别写成「不可用」吓人
                     Notify(
-                        result.Releases.Count > 0 ? "刷新失败" : "版本列表不可用",
+                        L.Get(result.Releases.Count > 0 ? "Version.Releases.RefreshFailed" : "Version.Releases.Unavailable"),
                         result.Error,
                         NotifySeverity.Warning);
                 }
                 else if (force)
                 {
                     Notify(
-                        "版本列表已刷新",
-                        $"共 {result.StableCount} 个稳定版，来源 {result.Source}，已写入缓存。",
+                        L.Get("Version.Releases.Refreshed.Title"),
+                        L.F("Version.Releases.Refreshed.Body", result.StableCount, result.Source),
                         NotifySeverity.Success);
                 }
             }
             catch (Exception)
             {
-                ReleaseCacheText.Text = "读取版本列表失败";
-                Notify("版本列表不可用", "读取版本列表时出错，请稍后重试。", NotifySeverity.Error);
+                ReleaseCacheText.Text = L.Get("Version.Builtin.Cache.Failed");
+                Notify(
+                    L.Get("Version.Releases.Unavailable"),
+                    L.Get("Version.Releases.ReadFailed"),
+                    NotifySeverity.Error);
             }
             finally
             {
                 _loadingReleases = false;
                 RefreshReleasesBtn.IsEnabled = true;
-                RefreshReleasesText.Text = "刷新";
+                _releasesStage = ReleasesStage.Idle;
+                RefreshReleasesText.Text = L.Get("Version.Builtin.Action.RefreshLabel");
             }
         }
 
         private void ShowReleaseCache(ReleaseResult result)
         {
+            _releaseCache = result;
+
             if (result.Releases.Count == 0 || result.FetchedAt == DateTimeOffset.MinValue)
             {
-                ReleaseCacheText.Text = "尚未获取版本列表";
+                ReleaseCacheText.Text = L.Get("Version.Builtin.Cache.Empty");
                 return;
             }
 
             string when = result.FromCache
-                ? $"缓存于 {result.FetchedAt.ToLocalTime():MM-dd HH:mm}"
-                : $"已更新于 {result.FetchedAt.ToLocalTime():HH:mm}";
+                ? L.F("Version.Builtin.Cache.Cached", result.FetchedAt.ToLocalTime().ToString("MM-dd HH:mm"))
+                : L.F("Version.Builtin.Cache.Updated", result.FetchedAt.ToLocalTime().ToString("HH:mm"));
 
-            ReleaseCacheText.Text = $"{when} · {result.Source} · {result.StableCount} 个稳定版";
+            ReleaseCacheText.Text = L.F("Version.Builtin.Cache.Summary", when, result.Source, result.StableCount);
         }
 
         private async void RefreshReleases_Click(object sender, RoutedEventArgs e) =>
@@ -1447,7 +1537,7 @@ namespace AstraBrew_Launcher.Views
         {
             if (string.IsNullOrWhiteSpace(notes))
             {
-                return "这条发布没有填写说明。";
+                return L.Get("Version.Notes.Empty");
             }
 
             var lines = new System.Collections.Generic.List<string>();
@@ -1483,8 +1573,8 @@ namespace AstraBrew_Launcher.Views
             if (TavernInstances.Releases.Count == 0)
             {
                 Notify(
-                    "还没有版本列表",
-                    "先点底部的「刷新」从 GitHub 获取发布记录，再检查更新。",
+                    L.Get("Version.Check.NoList.Title"),
+                    L.Get("Version.Check.NoList.Body"),
                     NotifySeverity.Informational);
                 return;
             }
@@ -1492,15 +1582,18 @@ namespace AstraBrew_Launcher.Views
             TavernRelease? latest = TavernInstances.LatestRelease;
             if (latest is null)
             {
-                Notify("没有稳定版", "发布列表里暂时没有标记为稳定版的版本。", NotifySeverity.Warning);
+                Notify(
+                    L.Get("Version.Check.NoStable.Title"),
+                    L.Get("Version.Check.NoStable.Body"),
+                    NotifySeverity.Warning);
                 return;
             }
 
             if (TavernInstances.Builtin.Version == TavernInstances.StagingTag)
             {
                 Notify(
-                    $"最新稳定版 v{latest.Version}",
-                    $"内置实例当前跟随 staging 开发分支；要切回稳定版，在上方「切换版本」里选 v{latest.Version}。",
+                    L.F("Version.Check.Staging.Title", latest.Version),
+                    L.F("Version.Check.Staging.Body", latest.Version),
                     NotifySeverity.Informational);
                 return;
             }
@@ -1510,8 +1603,8 @@ namespace AstraBrew_Launcher.Views
             if (delta == 0)
             {
                 Notify(
-                    "已是最新版本",
-                    $"内置实例 v{TavernInstances.Builtin.Version} 是发布列表里最新的稳定版。",
+                    L.Get("Version.Check.UpToDate.Title"),
+                    L.F("Version.Check.UpToDate.Body", TavernInstances.Builtin.Version),
                     NotifySeverity.Success);
                 return;
             }
@@ -1519,22 +1612,24 @@ namespace AstraBrew_Launcher.Views
             if (delta > 0)
             {
                 Notify(
-                    $"发现新版本 v{latest.Version}",
-                    $"在右侧「切换版本」中选择 v{latest.Version} 即可更新，旧版本会被覆盖。",
+                    L.F("Version.Check.New.Title", latest.Version),
+                    L.F("Version.Check.New.Body", latest.Version),
                     NotifySeverity.Informational);
                 return;
             }
 
             // 内置版本比列表还新：可能是本地改过 package.json 或用了未发布的构建，如实说明
             Notify(
-                "当前版本比发布列表更新",
-                $"内置实例是 v{TavernInstances.Builtin.Version}，发布列表里最新的稳定版是 v{latest.Version}；"
-                    + "可能来自本地修改或未发布的构建。",
+                L.Get("Version.Check.Ahead.Title"),
+                L.F("Version.Check.Ahead.Body", TavernInstances.Builtin.Version, latest.Version),
                 NotifySeverity.Informational);
         }
 
         private void OpenBuiltinDir_Click(object sender, RoutedEventArgs e)
-            => Notify("安装目录", TavernInstances.Builtin.Path, NotifySeverity.Informational);
+            => Notify(
+                L.Get("Version.Dir.Title"),
+                TavernInstances.Builtin.Path,
+                NotifySeverity.Informational);
 
         private void CopyBuiltinPath_Click(object sender, RoutedEventArgs e)
         {
@@ -1542,7 +1637,10 @@ namespace AstraBrew_Launcher.Views
             package.SetText(TavernInstances.Builtin.Path);
             Clipboard.SetContent(package);
 
-            Notify("路径已复制", TavernInstances.Builtin.Path, NotifySeverity.Success);
+            Notify(
+                L.Get("Version.CopyOk.Title"),
+                TavernInstances.Builtin.Path,
+                NotifySeverity.Success);
         }
 
         private async void ViewChangelog_Click(object sender, RoutedEventArgs e)
@@ -1553,8 +1651,8 @@ namespace AstraBrew_Launcher.Views
             if (target == TavernInstances.StagingTag)
             {
                 Notify(
-                    "开发版没有单独的更新日志",
-                    "开发版直接跟随 staging 分支，改动都记在提交历史里；稳定版的说明见各个版本的发布记录。",
+                    L.Get("Version.Changelog.Staging.Title"),
+                    L.Get("Version.Changelog.Staging.Body"),
                     NotifySeverity.Informational);
                 return;
             }
@@ -1563,8 +1661,8 @@ namespace AstraBrew_Launcher.Views
             if (release is null)
             {
                 Notify(
-                    "还没有更新日志",
-                    "先点底部的「刷新」从 GitHub 获取发布记录。",
+                    L.Get("Version.Changelog.None.Title"),
+                    L.Get("Version.Changelog.None.Body"),
                     NotifySeverity.Informational);
                 return;
             }
@@ -1586,9 +1684,9 @@ namespace AstraBrew_Launcher.Views
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = $"v{release.Version} 更新日志",
+                Title = L.F("Version.Changelog.Title", release.Version),
                 Content = body,
-                CloseButtonText = "关闭",
+                CloseButtonText = L.Get("Common.Action.Close.Content"),
             };
 
             // 与页面按钮同一个圆角；发布说明较长，弹窗放宽一点
@@ -1612,8 +1710,12 @@ namespace AstraBrew_Launcher.Views
             var current = TavernInstances.Current;
 
             Notify(
-                "实例状态已刷新",
-                $"本地 {TavernInstances.Locals.Count} 个实例 · 内置 1 个实例 · 当前使用 {(current.IsBuiltin ? "内置" : "本地")} {current.KernelLabel}。",
+                L.Get("Version.Refresh.Done.Title"),
+                L.F(
+                    "Version.Refresh.Done.Body",
+                    TavernInstances.Locals.Count,
+                    L.Get(current.IsBuiltin ? "Version.Scope.Builtin" : "Version.Scope.Local"),
+                    current.KernelLabel),
                 NotifySeverity.Informational);
         }
 

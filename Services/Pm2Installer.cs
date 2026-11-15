@@ -87,8 +87,8 @@ namespace AstraBrew_Launcher.Services
                 return new InstallResult(
                     false,
                     InstallError.Verify,
-                    "PM2 需要先装好 Node.js",
-                    "PM2 是 Node.js 的包，请先安装 Node.js 再回来装它。",
+                    L.Get("Pm2.NoNode.Title"),
+                    L.Get("Pm2.NoNode.Hint"),
                     log.FilePath);
             }
 
@@ -133,7 +133,7 @@ namespace AstraBrew_Launcher.Services
 
                 progress?.Report(new InstallProgress(
                     InstallStage.Downloading,
-                    "正在全局安装 PM2…",
+                    L.Get("Pm2.Installing"),
                     0,
                     0,
                     0,
@@ -143,7 +143,7 @@ namespace AstraBrew_Launcher.Services
 
                 if (!process.Start())
                 {
-                    return new InstallResult(false, InstallError.Unknown, "无法启动 npm", null, log.FilePath);
+                    return new InstallResult(false, InstallError.Unknown, L.Get("Pm2.NpmCannotStart"), null, log.FilePath);
                 }
 
                 var tail = new Queue<string>(8);
@@ -183,7 +183,7 @@ namespace AstraBrew_Launcher.Services
                     if (token.IsCancellationRequested)
                     {
                         GitCommand.Kill(process);
-                        return new InstallResult(false, InstallError.Cancelled, "已取消安装 PM2", null, log.FilePath);
+                        return new InstallResult(false, InstallError.Cancelled, L.Get("Pm2.Cancelled"), null, log.FilePath);
                     }
 
                     // npm 偶尔会长时间没有输出：给一个上限，别让引导永远转圈
@@ -193,8 +193,8 @@ namespace AstraBrew_Launcher.Services
                         return new InstallResult(
                             false,
                             InstallError.Network,
-                            "PM2 安装超时",
-                            "多半是 npm 源太慢，换一个 registry 再试。",
+                            L.Get("Pm2.Timeout.Title"),
+                            L.Get("Pm2.Timeout.Hint"),
                             log.FilePath);
                     }
 
@@ -208,7 +208,7 @@ namespace AstraBrew_Launcher.Services
                     return new InstallResult(
                         true,
                         InstallError.None,
-                        $"PM2 {Version} 已就位",
+                        L.F("Pm2.Done", Version),
                         null,
                         log.FilePath);
                 }
@@ -219,28 +219,28 @@ namespace AstraBrew_Launcher.Services
                     return new InstallResult(
                         false,
                         InstallError.Verify,
-                        "PM2 装上了，但命令没生成",
-                        $"没找到 {CommandPath}，可能是 npm 忽略了 --prefix。看日志后再试一次。",
+                        L.Get("Pm2.NoCommand.Title"),
+                        L.F("Pm2.NoCommand.Hint", CommandPath),
                         log.FilePath);
                 }
 
-                string detail = tail.Count > 0 ? tail.Dequeue() : $"npm 退出代码 {process.ExitCode}";
+                string detail = tail.Count > 0 ? tail.Dequeue() : L.F("Pm2.NpmExit", process.ExitCode);
 
                 return new InstallResult(
                     false,
                     InstallError.Download,
-                    "PM2 安装失败",
+                    L.Get("Pm2.Fail.Title"),
                     detail,
                     log.FilePath);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
-                log.Fail("PM2 安装异常", ex);
+                log.Fail(L.Get("Pm2.Fail.Log"), ex);
 
                 return new InstallResult(
                     false,
                     InstallError.Unknown,
-                    "PM2 安装失败",
+                    L.Get("Pm2.Fail.Title"),
                     GitCommand.FirstLine(ex.Message),
                     log.FilePath);
             }

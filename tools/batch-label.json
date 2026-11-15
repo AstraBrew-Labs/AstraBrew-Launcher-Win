@@ -1,0 +1,5 @@
+{
+  "Instance.Label.Versioned": ["{0} · v{1}", "{0} · v{1}"],
+  "Instance.Label.Unknown": ["{0} · 版本未知", "{0} · version unknown"],
+  "Instance.Label.Missing": ["{0} · 未安装", "{0} · not installed"]
+}

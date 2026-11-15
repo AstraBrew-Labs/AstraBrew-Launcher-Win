@@ -1,0 +1,21 @@
+{
+  "Dashboard.A11y.Refresh": ["刷新指标", "Refresh metrics"],
+  "Dashboard.A11y.CopyEndpoint": ["复制服务地址", "Copy service address"],
+  "Dashboard.A11y.OpenTavern": ["访问酒馆", "Open tavern"],
+  "Dashboard.A11y.ManageVersions": ["管理版本", "Manage versions"],
+  "Dashboard.A11y.TavernVersion": ["酒馆版本", "Tavern version"],
+  "Dashboard.A11y.RescanVersions": ["重新扫描本地版本", "Rescan local versions"],
+  "Dashboard.A11y.ModeNormal": ["普通模式", "Normal mode"],
+  "Dashboard.A11y.ModeDesktop": ["桌面模式", "Desktop mode"],
+  "Dashboard.A11y.ModeServer": ["服务器模式", "Server mode"],
+  "Dashboard.A11y.BrowserChrome": ["谷歌浏览器", "Google Chrome"],
+  "Dashboard.A11y.BrowserFirefox": ["火狐浏览器", "Firefox"],
+  "Dashboard.A11y.ScopeLan": ["局域网", "LAN"],
+  "Dashboard.A11y.ScopeWan": ["互联网", "Internet"],
+  "Dashboard.A11y.OpenConsole": ["打开控制台", "Open console"],
+  "Dashboard.A11y.OpenDataDir": ["打开数据目录", "Open data folder"],
+  "Dashboard.A11y.ImportCard": ["导入角色卡", "Import character card"],
+  "Dashboard.A11y.OpenConfig": ["打开酒馆配置", "Open tavern config"],
+  "Notify.Toast.Close": ["关闭提示", "Close notification"],
+  "Console.Log.Line": ["{0} 行", "{0} line"]
+}

@@ -1,4 +1,6 @@
-﻿using Microsoft.UI.Text;
+﻿using System;
+using AstraBrew_Launcher.Services;
+using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -24,9 +26,60 @@ namespace AstraBrew_Launcher.Views.Onboarding
     /// </summary>
     public sealed partial class OnboardingRailItem : UserControl
     {
+        private string _titleKey = string.Empty;
+        private string _subtitleKey = string.Empty;
+
         public OnboardingRailItem()
         {
             InitializeComponent();
+
+            // Loaded 里补一次 ApplyKeys：控件被移出可视树时 Unloaded 会退订，
+            // 这期间的语言切换收不到，再显示出来就会停在上一种语言。
+            Loaded += (_, _) =>
+            {
+                LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+                LanguageSwitch.LanguageChanged += OnLanguageChanged;
+                ApplyKeys();
+            };
+
+            Unloaded += (_, _) => LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+        }
+
+        private void OnLanguageChanged(object? sender, EventArgs e) => ApplyKeys();
+
+        /// <summary>标题的资源键。设了它就以它为准（XAML 里只写这个）。</summary>
+        public string TitleKey
+        {
+            get => _titleKey;
+            set
+            {
+                _titleKey = value;
+                ApplyKeys();
+            }
+        }
+
+        /// <summary>副标题的资源键。</summary>
+        public string SubtitleKey
+        {
+            get => _subtitleKey;
+            set
+            {
+                _subtitleKey = value;
+                ApplyKeys();
+            }
+        }
+
+        private void ApplyKeys()
+        {
+            if (_titleKey.Length > 0)
+            {
+                Title = L.Get(_titleKey);
+            }
+
+            if (_subtitleKey.Length > 0)
+            {
+                Subtitle = L.Get(_subtitleKey);
+            }
         }
 
         /// <summary>序号，从 1 开始。</summary>
@@ -116,13 +169,13 @@ namespace AstraBrew_Launcher.Views.Onboarding
         {
             string state = _state switch
             {
-                RailState.Active => "正在进行",
-                RailState.Done => "已完成",
-                RailState.Skipped => "已跳过",
-                _ => "未开始",
+                RailState.Active => L.Get("Setup.Rail.State.Active"),
+                RailState.Done => L.Get("Setup.Rail.State.Done"),
+                RailState.Skipped => L.Get("Setup.Rail.State.Skipped"),
+                _ => L.Get("Setup.Rail.State.Pending"),
             };
 
-            AutomationProperties.SetName(this, $"第 {_number} 步 {TitleText.Text}，{state}");
+            AutomationProperties.SetName(this, L.F("Setup.Rail.Aria", _number, TitleText.Text, state));
         }
 
         private static Brush Res(string key) =>

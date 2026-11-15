@@ -9,12 +9,18 @@ using System.Threading.Tasks;
 namespace AstraBrew_Launcher.Services
 {
     /// <summary>一次「获取默认配置」的结果。</summary>
-    public sealed record GlobalConfigFetchResult(bool Success, string Path, string? Source, string? Error)
-    {
-        /// <summary>这份配置是联网取来的（镜像 / 加速 / 直连），还是本地底稿直接恢复的。</summary>
-        public bool Downloaded =>
-            Source is GlobalTavernConfig.MirrorName or GithubAccel.AccelName or GithubAccel.DirectName;
-    }
+    /// <summary>
+    /// 取默认配置的结果。
+    ///
+    /// <paramref name="Downloaded"/> 是**显式字段**，不由 <paramref name="Source"/> 反推：
+    /// Source 是给人看的文案，会跟着语言变；拿它做判断等于把翻译当逻辑（换语言后判定就会翻脸）。
+    /// </summary>
+    public sealed record GlobalConfigFetchResult(
+        bool Success,
+        string Path,
+        string? Source,
+        string? Error,
+        bool Downloaded = true);
 
     /// <summary>
     /// 全局酒馆配置的落点与首次获取。
@@ -44,7 +50,7 @@ namespace AstraBrew_Launcher.Services
             "https://raw.gitcode.com/GitHub_Trending/si/SillyTavern/raw/release/default/config.yaml";
 
         /// <summary>镜像渠道在界面上显示的名字。</summary>
-        public const string MirrorName = "GitCode 镜像";
+        public static string MirrorName => L.Get("Miss.MirrorName");
 
         /// <summary>全局配置：唯一生效、唯一被修改 / 覆盖 / 删除的那份。</summary>
         public static string GlobalPath { get; } =
@@ -119,7 +125,7 @@ namespace AstraBrew_Launcher.Services
                     Directory.CreateDirectory(Path.GetDirectoryName(GlobalPath)!);
                     File.Copy(DefaultPath, GlobalPath, overwrite: true);
 
-                    return new GlobalConfigFetchResult(true, GlobalPath, target.Name, null);
+                    return new GlobalConfigFetchResult(true, GlobalPath, target.Name, null, Downloaded: true);
                 }
                 catch (Exception ex) when (ex is HttpRequestException
                     or InvalidDataException
@@ -132,7 +138,7 @@ namespace AstraBrew_Launcher.Services
                 }
             }
 
-            return new GlobalConfigFetchResult(false, GlobalPath, null, string.Join("；", errors));
+            return new GlobalConfigFetchResult(false, GlobalPath, null, string.Join("; ", errors), Downloaded: false);
         }
 
         /// <summary>
@@ -163,7 +169,7 @@ namespace AstraBrew_Launcher.Services
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(GlobalPath)!);
                     File.Copy(DefaultPath, GlobalPath, overwrite: true);
-                    return new GlobalConfigFetchResult(true, GlobalPath, "默认配置", null);
+                    return new GlobalConfigFetchResult(true, GlobalPath, L.Get("Miss.Cfg.DefaultName"), null, Downloaded: false);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
@@ -231,7 +237,7 @@ namespace AstraBrew_Launcher.Services
         {
             if (!HasGlobalConfig)
             {
-                throw new InvalidOperationException("还没有全局配置，请先点「获取默认配置」。");
+                throw new InvalidOperationException(L.Get("Miss.Cfg.NoGlobal"));
             }
 
             string current = File.ReadAllText(GlobalPath, System.Text.Encoding.UTF8);
@@ -257,7 +263,7 @@ namespace AstraBrew_Launcher.Services
                 || !text.Contains("whitelistMode", StringComparison.Ordinal)
                 || !text.Contains("port:", StringComparison.Ordinal))
             {
-                throw new InvalidDataException("下载到的内容不是 SillyTavern 的配置文件。");
+                throw new InvalidDataException(L.Get("Miss.Cfg.NotConfig"));
             }
 
             return text;
@@ -335,7 +341,7 @@ namespace AstraBrew_Launcher.Services
 
             if (!portDone)
             {
-                throw new InvalidDataException("默认配置里找不到 port 字段，官方配置结构可能变了。");
+                throw new InvalidDataException(L.Get("Miss.Cfg.NoPort"));
             }
 
             return string.Join(crlf ? "\r\n" : "\n", output);

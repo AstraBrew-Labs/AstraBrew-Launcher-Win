@@ -106,6 +106,12 @@ namespace AstraBrew_Launcher.Views
 
             SetupAccelerators();
 
+            // 工作台上的文字有一半在模型里（标签数、条目序号、插入位置下拉项），
+            // x:Bind 是 OneTime，改语言只能连同页面一起重建
+            LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+            LanguageSwitch.LanguageChanged += OnLanguageChanged;
+            Unloaded += (_, _) => LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+
             ApplyKind(_kind);
             ApplyWorldState();
 
@@ -114,8 +120,8 @@ namespace AstraBrew_Launcher.Views
             // 等首帧画完再铺内容。
             if (_kind == WorkbenchKind.Preset)
             {
-                PresetFootText.Text = "正在准备提示词…";
-                PromptCountChip.Text = $"{Prompts.Count} 条";
+                PresetFootText.Text = L.Get("Wb.Preset.Preparing");
+                PromptCountChip.Text = L.F("Wb.Count.Prompts", Prompts.Count);
             }
 
             UpdateCounts();
@@ -123,7 +129,7 @@ namespace AstraBrew_Launcher.Views
 
             if (_loadError is { Length: > 0 } error)
             {
-                Notify("打不开这份资源", error, NotifySeverity.Error);
+                Notify(L.Get("Wb.Notify.OpenFail"), error, NotifySeverity.Error);
             }
 
             Loaded += (_, _) =>
@@ -144,19 +150,36 @@ namespace AstraBrew_Launcher.Views
             SizeChanged += (_, _) => UpdateGridColumns();
         }
 
+        /// <summary>
+        /// 换语言：先把手上的改动落盘，再让主窗口用同一份文件重建这个页面。
+        /// 页面里的 <c>x:Bind</c> 全是 OneTime，原位重刷够不着模型里的派生文字
+        /// （「3 个字」「条目 07」「角色定义之前」），重建是最干净的一条路。
+        /// </summary>
+        private void OnLanguageChanged(object? sender, EventArgs e)
+        {
+            _saveTimer?.Stop();
+            CommitSave();
+
+            PendingKind = _kind;
+            PendingPath = _path;
+            PendingFile = System.IO.Path.GetFileName(_path);
+
+            App.MainWindow?.NavigateTo("workbench", force: true);
+        }
+
         // ==================== 加载 ====================
 
         private void LoadResource()
         {
             if (_path.Length == 0)
             {
-                _loadError = "没有指定要编辑的文件。请从「资源管理」右侧点「打开工作台」进入。";
+                _loadError = L.Get("Wb.Error.NoTarget");
                 return;
             }
 
             if (!File.Exists(_path))
             {
-                _loadError = $"文件不存在：{_path}";
+                _loadError = L.F("Wb.Error.Missing", _path);
                 return;
             }
 
@@ -328,9 +351,9 @@ namespace AstraBrew_Launcher.Views
 
             (string title, string glyph, string accent) = kind switch
             {
-                WorkbenchKind.WorldBook => ("世界书工作台", "\uE8F1", "#8E44DC"),
-                WorkbenchKind.Preset => ("预设工作台", "\uE9E9", "#C08A00"),
-                _ => ("角色卡工作台", "\uE77B", "#2B88D8"),
+                WorkbenchKind.WorldBook => (L.Get("Wb.Title.WorldBook"), "\uE8F1", "#8E44DC"),
+                WorkbenchKind.Preset => (L.Get("Wb.Title.Preset"), "\uE9E9", "#C08A00"),
+                _ => (L.Get("Wb.Title.Character"), "\uE77B", "#2B88D8"),
             };
 
             Color color = ResourcePalette.Parse(accent);
@@ -430,7 +453,7 @@ namespace AstraBrew_Launcher.Views
             if (error is not null)
             {
                 SetSaveState(SaveState.Failed);
-                Notify("保存失败", error, NotifySeverity.Error);
+                Notify(L.Get("Wb.Notify.SaveFail"), error, NotifySeverity.Error);
                 return;
             }
 
@@ -449,16 +472,19 @@ namespace AstraBrew_Launcher.Views
                 or JsonException)
             {
                 SetSaveState(SaveState.Failed);
-                Notify("保存失败", $"{System.IO.Path.GetFileName(_path)}：{ex.Message}", NotifySeverity.Error);
+                Notify(
+                    L.Get("Wb.Notify.SaveFail"),
+                    $"{System.IO.Path.GetFileName(_path)}: {ex.Message}",
+                    NotifySeverity.Error);
             }
         }
 
         private string? Validate() => _kind switch
         {
             WorkbenchKind.Character when string.IsNullOrWhiteSpace(Character.Name)
-                => "角色卡缺少 name 字段，补上名称后会自动重新保存。",
+                => L.Get("Wb.Error.CardNoName"),
             WorkbenchKind.Preset when Prompts.Any(prompt => !prompt.IsMarker && string.IsNullOrWhiteSpace(prompt.Name))
-                => "有提示词没有 name 字段，补上名称后会自动重新保存。",
+                => L.Get("Wb.Error.PromptNoName"),
             _ => null,
         };
 
@@ -478,19 +504,19 @@ namespace AstraBrew_Launcher.Views
             switch (state)
             {
                 case SaveState.Saving:
-                    SaveStateText.Text = "保存中…";
+                    SaveStateText.Text = L.Get("Wb.State.Saving");
                     SaveStateText.Foreground = Res("TextFillColorTertiaryBrush", Color.FromArgb(0xFF, 0x8A, 0x8A, 0x8A));
                     break;
 
                 case SaveState.Failed:
                     SaveDot.Fill = Res("SystemFillColorCriticalBrush", Color.FromArgb(0xFF, 0xC4, 0x2B, 0x1C));
-                    SaveStateText.Text = "保存失败";
+                    SaveStateText.Text = L.Get("Wb.State.Failed");
                     SaveStateText.Foreground = Res("SystemFillColorCriticalBrush", Color.FromArgb(0xFF, 0xC4, 0x2B, 0x1C));
                     break;
 
                 default:
                     SaveDot.Fill = Res("SystemFillColorSuccessBrush", Color.FromArgb(0xFF, 0x6C, 0xCB, 0x5F));
-                    SaveStateText.Text = "已保存";
+                    SaveStateText.Text = L.Get("Wb.State.Saved");
                     SaveStateText.Foreground = Res("TextFillColorSecondaryBrush", Color.FromArgb(0xFF, 0x5A, 0x5A, 0x5A));
                     break;
             }
@@ -862,7 +888,7 @@ namespace AstraBrew_Launcher.Views
             EmbeddedFoot.Visibility = bound ? Visibility.Visible : Visibility.Collapsed;
             EmbeddedEmpty.Visibility = bound ? Visibility.Collapsed : Visibility.Visible;
             EmbeddedStatePill.Visibility = bound ? Visibility.Visible : Visibility.Collapsed;
-            ChangeWorldText.Text = bound ? "更换" : "绑定";
+            ChangeWorldText.Text = L.Get(bound ? "Wb.Action.Change" : "Wb.Action.Bind");
             UnbindWorldButton.IsEnabled = bound;
         }
 
@@ -878,8 +904,8 @@ namespace AstraBrew_Launcher.Views
             if (worlds.Count == 0)
             {
                 Notify(
-                    "没有可绑定的世界书",
-                    $"worlds 目录里还没有世界书文件：{TavernLibrary.WorldsDirectory()}",
+                    L.Get("Wb.Notify.NoWorlds.Title"),
+                    L.F("Wb.Notify.NoWorlds.Body", TavernLibrary.WorldsDirectory()),
                     NotifySeverity.Warning);
                 return;
             }
@@ -909,7 +935,7 @@ namespace AstraBrew_Launcher.Views
                             },
                             new TextBlock
                             {
-                                Text = $"{world.EntryCount} 个条目 · {world.EnabledCount} 个启用 · {ResourcePalette.Size(world.Bytes)}",
+                                Text = L.F("Wb.WorldPicker.Meta", world.EntryCount, world.EnabledCount, ResourcePalette.Size(world.Bytes)),
                                 FontSize = 11,
                                 Foreground = Res("TextFillColorTertiaryBrush", Color.FromArgb(0xFF, 0x8A, 0x8A, 0x8A)),
                             },
@@ -921,10 +947,10 @@ namespace AstraBrew_Launcher.Views
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = Character.HasWorld ? "更换内嵌世界书" : "绑定世界书",
+                Title = L.Get(Character.HasWorld ? "Wb.WorldPicker.Title.Change" : "Wb.WorldPicker.Title.Bind"),
                 Content = list,
-                PrimaryButtonText = Character.HasWorld ? "更换" : "绑定",
-                CloseButtonText = "取消",
+                PrimaryButtonText = L.Get(Character.HasWorld ? "Wb.Action.Change" : "Wb.Action.Bind"),
+                CloseButtonText = L.Get("Common.Action.Cancel.Content"),
                 DefaultButton = ContentDialogButton.Close,
                 IsPrimaryButtonEnabled = false,
             };
@@ -953,11 +979,14 @@ namespace AstraBrew_Launcher.Views
                 UpdateCounts();
                 MarkDirty();
 
-                Notify("已绑定世界书", $"{name} 的 {entries.Count} 个条目已写入角色卡的内嵌世界书。", NotifySeverity.Success);
+                Notify(
+                    L.Get("Wb.Notify.Bound.Title"),
+                    L.F("Wb.Notify.Bound.Body", name, entries.Count),
+                    NotifySeverity.Success);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
             {
-                Notify("读取世界书失败", ex.Message, NotifySeverity.Error);
+                Notify(L.Get("Wb.Notify.ReadWorldFail"), ex.Message, NotifySeverity.Error);
             }
         }
 
@@ -971,14 +1000,14 @@ namespace AstraBrew_Launcher.Views
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = "解绑内嵌世界书",
+                Title = L.Get("Wb.Unbind.Title"),
                 Content = new TextBlock
                 {
                     TextWrapping = TextWrapping.Wrap,
-                    Text = "角色卡里不会再携带这份世界书，worlds 目录里的文件本身不会被删除。",
+                    Text = L.Get("Wb.Unbind.Body"),
                 },
-                PrimaryButtonText = "解绑",
-                CloseButtonText = "取消",
+                PrimaryButtonText = L.Get("Wb.Action.Unbind"),
+                CloseButtonText = L.Get("Common.Action.Cancel.Content"),
                 DefaultButton = ContentDialogButton.Close,
             };
 
@@ -997,7 +1026,10 @@ namespace AstraBrew_Launcher.Views
             ApplyWorldState();
             UpdateCounts();
             MarkDirty();
-            Notify("已解绑", "保存后角色卡里的 character_book 会被移除。", NotifySeverity.Success);
+            Notify(
+                L.Get("Wb.Notify.Unbound.Title"),
+                L.Get("Wb.Notify.Unbound.Body"),
+                NotifySeverity.Success);
         }
 
         /// <summary>点标题或箭头：展开 / 收起这一条的编辑区。</summary>
@@ -1014,7 +1046,7 @@ namespace AstraBrew_Launcher.Views
             var entry = new EntryForm
             {
                 Number = WorldBook.Entries.Count + 1,
-                Comment = "新条目",
+                Comment = L.Get("Wb.Entry.NewComment"),
                 IsExpanded = true,
                 Order = "100",
                 Probability = "100",
@@ -1045,7 +1077,10 @@ namespace AstraBrew_Launcher.Views
                     UpdateCounts();
                 });
 
-            Notify("已新增条目", "补上关键词与正文后即可被命中。", NotifySeverity.Informational);
+            Notify(
+                L.Get("Wb.Notify.EntryAdded.Title"),
+                L.Get("Wb.Notify.EntryAdded.Body"),
+                NotifySeverity.Informational);
         }
 
         // ==================== 卡面 ====================
@@ -1055,8 +1090,8 @@ namespace AstraBrew_Launcher.Views
             if (_document is null || !_document.CanReplaceCover)
             {
                 Notify(
-                    "这份卡没有可更换的图片",
-                    "只有 .png 角色卡才有卡面；.json 卡只是一份设定文件。",
+                    L.Get("Wb.Notify.NoCover.Title"),
+                    L.Get("Wb.Notify.NoCover.Body"),
                     NotifySeverity.Warning);
                 return;
             }
@@ -1081,11 +1116,14 @@ namespace AstraBrew_Launcher.Views
                 Character.CoverSource = ResourcePalette.Thumbnail(_path, 208, ignoreCache: true);
                 UpdateSubText();
 
-                Notify("已更换卡面", $"{file.Name} 的图像已写入，原来的角色设定保持不变。", NotifySeverity.Success);
+                Notify(
+                    L.Get("Wb.Notify.CoverChanged.Title"),
+                    L.F("Wb.Notify.CoverChanged.Body", file.Name),
+                    NotifySeverity.Success);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
             {
-                Notify("更换卡面失败", ex.Message, NotifySeverity.Error);
+                Notify(L.Get("Wb.Notify.CoverFail"), ex.Message, NotifySeverity.Error);
             }
         }
 
@@ -1111,29 +1149,29 @@ namespace AstraBrew_Launcher.Views
             switch (key)
             {
                 case "personality":
-                    title = "性格";
-                    hint = "说话方式、脾气、在意的事…";
+                    title = L.Get("Wb.Card.PersonalityLabel");
+                    hint = L.Get("Wb.Card.Personality.Placeholder");
                     read = () => Character.Personality;
                     write = value => Character.Personality = value;
                     break;
 
                 case "scenario":
-                    title = "场景";
-                    hint = "故事发生在哪、此刻正在做什么…";
+                    title = L.Get("Wb.Card.ScenarioLabel");
+                    hint = L.Get("Wb.Card.Scenario.Placeholder");
                     read = () => Character.Scenario;
                     write = value => Character.Scenario = value;
                     break;
 
                 case "firstMessage":
-                    title = "开场白";
-                    hint = "见面时说的第一句话…";
+                    title = L.Get("Wb.Card.FirstMessageLabel");
+                    hint = L.Get("Wb.Card.FirstMessage.Placeholder");
                     read = () => Character.FirstMessage;
                     write = value => Character.FirstMessage = value;
                     break;
 
                 default:
-                    title = "简介";
-                    hint = "外貌、身份、与你的关系…";
+                    title = L.Get("Wb.Card.DescriptionLabel");
+                    hint = L.Get("Wb.Card.Description.Placeholder");
                     read = () => Character.Description;
                     write = value => Character.Description = value;
                     break;
@@ -1155,8 +1193,8 @@ namespace AstraBrew_Launcher.Views
             }
 
             string? edited = await ShowTextEditorAsync(
-                string.IsNullOrWhiteSpace(prompt.Name) ? "提示词正文" : prompt.Name,
-                "这条提示词注入到上下文里的内容。",
+                string.IsNullOrWhiteSpace(prompt.Name) ? L.Get("Wb.Prompt.Body.Fallback") : prompt.Name,
+                L.Get("Wb.Prompt.Body.Hint"),
                 prompt.Content);
 
             if (edited is not null)
@@ -1191,13 +1229,13 @@ namespace AstraBrew_Launcher.Views
 
             var count = new TextBlock
             {
-                Text = $"{initial.Length} 字",
+                Text = L.F("Wb.Count.Chars", initial.Length),
                 FontSize = 11,
                 HorizontalAlignment = HorizontalAlignment.Right,
                 Foreground = Res("TextFillColorTertiaryBrush", Color.FromArgb(0xFF, 0x8A, 0x8A, 0x8A)),
             };
 
-            void SyncCount() => count.Text = $"{box.Text.Length} 字";
+            void SyncCount() => count.Text = L.F("Wb.Count.Chars", box.Text.Length);
 
             box.TextChanged += (_, _) => SyncCount();
             box.Loaded += (_, _) =>
@@ -1229,8 +1267,8 @@ namespace AstraBrew_Launcher.Views
                 XamlRoot = XamlRoot,
                 Title = title,
                 Content = content,
-                PrimaryButtonText = "保存",
-                CloseButtonText = "取消",
+                PrimaryButtonText = L.Get("Wb.Action.Save"),
+                CloseButtonText = L.Get("Common.Action.Cancel.Content"),
                 DefaultButton = ContentDialogButton.Primary,
             };
             dialog.Resources["ContentDialogMaxWidth"] = 760;
@@ -1250,7 +1288,7 @@ namespace AstraBrew_Launcher.Views
             var prompt = new PromptForm
             {
                 Identifier = $"custom-{Guid.NewGuid().ToString("N")[..8]}",
-                Name = "新的提示词",
+                Name = L.Get("Wb.Prompt.NewName"),
                 Role = 0,
                 Content = string.Empty,
                 Log = _presetLog,
@@ -1278,7 +1316,10 @@ namespace AstraBrew_Launcher.Views
                     UpdateCounts();
                 });
 
-            Notify("已添加提示词", "新条目的位置写在 prompt_order 末尾。", NotifySeverity.Informational);
+            Notify(
+                L.Get("Wb.Notify.PromptAdded.Title"),
+                L.Get("Wb.Notify.PromptAdded.Body"),
+                NotifySeverity.Informational);
         }
 
         private async void DeletePrompt_Click(object sender, RoutedEventArgs e)
@@ -1297,14 +1338,14 @@ namespace AstraBrew_Launcher.Views
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = "删除提示词",
+                Title = L.Get("Wb.PromptDelete.Title"),
                 Content = new TextBlock
                 {
                     TextWrapping = TextWrapping.Wrap,
-                    Text = $"从预设中移除「{prompt.Name}」，prompt_order 里对应的位置会一起清掉。",
+                    Text = L.F("Wb.PromptDelete.Body", prompt.Name),
                 },
-                PrimaryButtonText = "删除",
-                CloseButtonText = "取消",
+                PrimaryButtonText = L.Get("Wb.Action.Delete"),
+                CloseButtonText = L.Get("Common.Action.Cancel.Content"),
                 DefaultButton = ContentDialogButton.Close,
             };
 
@@ -1339,7 +1380,10 @@ namespace AstraBrew_Launcher.Views
                     UpdateCounts();
                 });
 
-            Notify("已删除提示词", $"{prompt.Name} 已从预设中移除。", NotifySeverity.Success);
+            Notify(
+                L.Get("Wb.Notify.PromptDeleted.Title"),
+                L.F("Wb.Notify.PromptDeleted.Body", prompt.Name),
+                NotifySeverity.Success);
         }
 
         private void RefreshPresetPage()
@@ -1365,9 +1409,9 @@ namespace AstraBrew_Launcher.Views
             });
 
             PresetFootText.Text = pageCount > 1
-                ? $"第 {_presetPage + 1} / {pageCount} 页 · 本页 {VisiblePrompts.Count} 条 · 共 {Prompts.Count} 条"
-                : $"共 {Prompts.Count} 条提示词";
-            PromptCountChip.Text = $"{Prompts.Count} 条";
+                ? L.F("Wb.Page.Prompts", _presetPage + 1, pageCount, VisiblePrompts.Count, Prompts.Count)
+                : L.F("Wb.Page.PromptsAll", Prompts.Count);
+            PromptCountChip.Text = L.F("Wb.Count.Prompts", Prompts.Count);
         }
 
         /// <summary>世界书条目的分页。</summary>
@@ -1394,8 +1438,8 @@ namespace AstraBrew_Launcher.Views
             });
 
             EntryPageText.Text = pageCount > 1
-                ? $"第 {_entryPage + 1} / {pageCount} 页 · 本页 {VisibleEntries.Count} 条 · 共 {WorldBook.Entries.Count} 条"
-                : $"共 {WorldBook.Entries.Count} 个条目";
+                ? L.F("Wb.Page.Entries", _entryPage + 1, pageCount, VisibleEntries.Count, WorldBook.Entries.Count)
+                : L.F("Wb.Page.EntriesAll", WorldBook.Entries.Count);
         }
 
         /// <summary>
@@ -1459,7 +1503,7 @@ namespace AstraBrew_Launcher.Views
                 for (int page = 0; page < pageCount; page++)
                 {
                     int target = page;
-                    var item = new MenuFlyoutItem { Text = $"第 {page + 1} 页" };
+                    var item = new MenuFlyoutItem { Text = L.F("Wb.Page.Item", page + 1) };
                     item.Click += (_, _) => go(target);
                     flyout.Items.Add(item);
                 }
@@ -1554,14 +1598,14 @@ namespace AstraBrew_Launcher.Views
             }
 
             int embeddedEnabled = EmbeddedWorld.Entries.Count(entry => entry.Enabled);
-            EmbeddedCountChip.Text = $"{EmbeddedWorld.Entries.Count} 个条目";
+            EmbeddedCountChip.Text = L.F("Wb.Count.Entries", EmbeddedWorld.Entries.Count);
             EmbeddedSubText.Text = EmbeddedWorld.Name.Length > 0
-                ? $"{EmbeddedWorld.Name} · {embeddedEnabled} 个启用"
-                : "未绑定";
+                ? L.F("Wb.Card.Embedded.BoundMeta", EmbeddedWorld.Name, embeddedEnabled)
+                : L.Get("Wb.Card.Embedded.Unbound");
 
-            EntryCountChip.Text = $"{WorldBook.Entries.Count} 个";
-            EntryEnabledChip.Text = $"{WorldBook.Entries.Count(entry => entry.Enabled)} 个启用";
-            PromptCountChip.Text = $"{Prompts.Count} 条";
+            EntryCountChip.Text = L.F("Wb.Count.Items", WorldBook.Entries.Count);
+            EntryEnabledChip.Text = L.F("Wb.Count.Enabled", WorldBook.Entries.Count(entry => entry.Enabled));
+            PromptCountChip.Text = L.F("Wb.Count.Prompts", Prompts.Count);
         }
 
         // ==================== 导航 ====================
@@ -1766,7 +1810,7 @@ namespace AstraBrew_Launcher.Views
         {
             if (JsonNode.Parse(File.ReadAllText(path)) is not JsonObject root)
             {
-                throw new InvalidDataException("世界书不是 JSON 对象");
+                throw new InvalidDataException(L.Get("Wb.Error.NotJsonObject"));
             }
 
             JsonNode? container = root["entries"] ?? root;

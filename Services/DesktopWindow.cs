@@ -70,7 +70,7 @@ namespace AstraBrew_Launcher.Services
         {
             if (string.IsNullOrWhiteSpace(url))
             {
-                detail = "还没有可打开的地址";
+                detail = L.Get("Dw.NoAddress");
                 return false;
             }
 
@@ -88,14 +88,14 @@ namespace AstraBrew_Launcher.Services
                 }
 
                 BringToFront();
-                detail = "桌面窗口";
+                detail = L.Get("Dw.WindowName");
                 return true;
             }
 
             try
             {
                 CreateWindow(url);
-                detail = "桌面窗口";
+                detail = L.Get("Dw.WindowName");
                 return true;
             }
             catch (Exception ex)
@@ -121,7 +121,7 @@ namespace AstraBrew_Launcher.Services
                     return true;
                 }
 
-                AppNotify.Warning("桌面窗口没能打开，改用浏览器", desktopDetail);
+                AppNotify.Warning(L.Get("Dw.FallbackWarning"), desktopDetail);
             }
 
             return BrowserLauncher.Open(url, TavernSettings.Browser, out detail);
@@ -245,7 +245,7 @@ namespace AstraBrew_Launcher.Services
 
             var window = new Window
             {
-                Title = "酒馆 · AstraBrew",
+                Title = L.Get("Dw.Title"),
                 Content = root,
             };
 
@@ -432,8 +432,8 @@ namespace AstraBrew_Launcher.Services
             catch (Exception ex)
             {
                 AppNotify.Error(
-                    "桌面窗口打不开",
-                    $"WebView2 初始化失败：{ex.Message}。可以改用普通模式（系统浏览器）打开。");
+                    L.Get("Dw.InitFail.Title"),
+                    L.F("Dw.InitFail.Body", ex.Message));
 
                 Close();
             }
@@ -474,9 +474,9 @@ namespace AstraBrew_Launcher.Services
                 if (args.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
                 {
                     AppNotify.Warning(
-                        "桌面窗口的浏览器进程已退出",
-                        "页面需要重新加载。",
-                        "重新加载",
+                        L.Get("Dw.ProcessGone.Title"),
+                        L.Get("Dw.ProcessGone.Body"),
+                        L.Get("Dw.Reload"),
                         Reload);
                 }
             };
@@ -507,20 +507,20 @@ namespace AstraBrew_Launcher.Services
             }
 
             AppNotify.Warning(
-                "页面没能加载",
+                L.Get("Dw.LoadFail.Title"),
                 $"{_url} · {DescribeError(args.WebErrorStatus)}",
-                "重新加载",
+                L.Get("Dw.Reload"),
                 Reload);
         }
 
         private static string DescribeError(CoreWebView2WebErrorStatus status) => status switch
         {
-            CoreWebView2WebErrorStatus.CannotConnect => "连不上酒馆（可能还在启动或已停止）",
-            CoreWebView2WebErrorStatus.ConnectionAborted => "连接被中断",
-            CoreWebView2WebErrorStatus.ConnectionReset => "连接被重置",
-            CoreWebView2WebErrorStatus.HostNameNotResolved => "域名解析失败",
-            CoreWebView2WebErrorStatus.ServerUnreachable => "服务不可达",
-            CoreWebView2WebErrorStatus.Timeout => "连接超时",
+            CoreWebView2WebErrorStatus.CannotConnect => L.Get("Dw.Err.CannotConnect"),
+            CoreWebView2WebErrorStatus.ConnectionAborted => L.Get("Dw.Err.Aborted"),
+            CoreWebView2WebErrorStatus.ConnectionReset => L.Get("Dw.Err.Reset"),
+            CoreWebView2WebErrorStatus.HostNameNotResolved => L.Get("Dw.Err.HostName"),
+            CoreWebView2WebErrorStatus.ServerUnreachable => L.Get("Dw.Err.ServerUnreachable"),
+            CoreWebView2WebErrorStatus.Timeout => L.Get("Dw.Err.Timeout"),
             _ => status.ToString(),
         };
 
@@ -556,14 +556,14 @@ namespace AstraBrew_Launcher.Services
                 {
                     if (operation.State == CoreWebView2DownloadState.Completed)
                     {
-                        AppNotify.Success("已保存到导出目录", target, "打开所在文件夹", () => Reveal(target));
+                        AppNotify.Success(L.Get("Dw.ExportOk.Title"), target, L.Get("Dw.ExportOk.Action"), () => Reveal(target));
                     }
                     else if (operation.State == CoreWebView2DownloadState.Interrupted)
                     {
                         AppNotify.Warning(
-                            "下载中断",
+                            L.Get("Dw.DownloadInterrupted"),
                             $"{name} · {operation.InterruptReason}",
-                            "重试",
+                            L.Get("Dw.Retry"),
                             () => _view?.CoreWebView2?.Reload());
                     }
                 };
@@ -572,7 +572,7 @@ namespace AstraBrew_Launcher.Services
             {
                 // 目录不可写时别把下载吞掉：交回 WebView2 默认行为，至少能存下来
                 args.Handled = false;
-                AppNotify.Warning("导出目录不可用", $"{directory} · {ex.Message}");
+                AppNotify.Warning(L.Get("Dw.ExportDirUnavailable"), $"{directory} · {ex.Message}");
             }
         }
 
@@ -617,13 +617,13 @@ namespace AstraBrew_Launcher.Services
 
                 if (name == "__error__")
                 {
-                    AppNotify.Warning("导出失败", string.IsNullOrEmpty(data) ? "页面没能读出内容" : data);
+                    AppNotify.Warning(L.Get("Dw.ExportFail.Title"), string.IsNullOrEmpty(data) ? L.Get("Dw.ExportFail.NoContent") : data);
                     return;
                 }
 
                 if (data.Length == 0)
                 {
-                    AppNotify.Warning("导出失败", "页面返回了空内容");
+                    AppNotify.Warning(L.Get("Dw.ExportFail.Title"), L.Get("Dw.ExportFail.Empty"));
                     return;
                 }
 
@@ -631,15 +631,15 @@ namespace AstraBrew_Launcher.Services
                 string target = UniquePath(ExportDirectory(), Sanitize(name));
                 File.WriteAllBytes(target, bytes);
 
-                AppNotify.Success("已保存到导出目录", target, "打开所在文件夹", () => Reveal(target));
+                AppNotify.Success(L.Get("Dw.ExportOk.Title"), target, L.Get("Dw.ExportOk.Action"), () => Reveal(target));
             }
             catch (FormatException)
             {
-                AppNotify.Warning("导出失败", "页面返回的内容不是有效的 base64");
+                AppNotify.Warning(L.Get("Dw.ExportFail.Title"), L.Get("Dw.ExportFail.BadBase64"));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
             {
-                AppNotify.Warning("导出失败", ex.Message);
+                AppNotify.Warning(L.Get("Dw.ExportFail.Title"), ex.Message);
             }
         }
 
@@ -772,16 +772,16 @@ namespace AstraBrew_Launcher.Services
                         _ = TavernRuntime.StopAsync();
 
                         AppNotify.Info(
-                            "桌面窗口已关闭",
-                            "正在停止酒馆服务。想让窗口关掉后继续挂后台，可以在设置里关掉「关闭窗口时停止酒馆」。");
+                            L.Get("Dw.Closed.Title"),
+                            L.Get("Dw.Closed.Stopping"));
                     }
                 }
                 else if (TavernRuntime.IsRunning)
                 {
                     AppNotify.Info(
-                        "桌面窗口已关闭",
-                        "酒馆仍在运行，可以从仪表盘或控制台点「访问酒馆」再打开窗口。",
-                        "重新打开",
+                        L.Get("Dw.Closed.Title"),
+                        L.Get("Dw.Closed.Keeping"),
+                        L.Get("Dw.Reopen"),
                         () => Open(TavernRuntime.State.Url, out _));
                 }
             }
@@ -799,7 +799,15 @@ namespace AstraBrew_Launcher.Services
         /// 拦截 blob / 大体积 data URL 下载，改走 IPC 保存。
         /// WebView2 对 <c>a[download]</c> 指向 blob 的处理常常是静默失败或存成无意义文件名。
         /// </summary>
-        private static string BlobPatchScript() => $$"""
+        private static string BlobPatchScript()
+        {
+            // 这两处要进 JS 字符串字面量：先按 JSON 转义成 "..."，再塞进模板，
+            // 免得译文里出现引号就把注入的脚本弄坏
+            string tooLargeJs = System.Text.Json.JsonSerializer.Serialize(L.Get("Dw.Page.TooLarge"));
+            string badTypesJs = System.Text.Json.JsonSerializer.Serialize(L.Get("Dw.Page.BadTypes"));
+            string allowedTypesJs = System.Text.Json.JsonSerializer.Serialize(L.Get("Dw.Page.AllowedTypes"));
+
+            return $$"""
             (function(){
             var MAX={{MaxInlineBytes}};
             function isDownload(url){
@@ -815,7 +823,7 @@ namespace AstraBrew_Launcher.Services
             function save(url,name){
               try{
                 fetch(url).then(function(r){return r.blob()}).then(function(b){
-                  if(b.size>MAX){throw new Error('文件超过 64 MB，浏览器无法一次性导出')}
+                  if(b.size>MAX){throw new Error({{tooLargeJs}})}
                   var reader=new FileReader();
                   reader.onload=function(){
                     var text=String(reader.result);
@@ -843,6 +851,7 @@ namespace AstraBrew_Launcher.Services
             };
             })()
             """;
+        }
 
         /// <summary>
         /// 选完文件再检查一次扩展名。
@@ -851,7 +860,12 @@ namespace AstraBrew_Launcher.Services
         /// 会把 <c>.json</c> 卡掉，用户选了却在页面里被静默拒绝。这里在 change 之后
         /// 按「角色卡 → .png/.json；其余 → .json」兜一层说明，避免「选了没反应」。
         /// </summary>
-        private static string FileInputFilterScript() => """
+        private static string FileInputFilterScript()
+        {
+            string badTypesJs = System.Text.Json.JsonSerializer.Serialize(L.Get("Dw.Page.BadTypes"));
+            string allowedTypesJs = System.Text.Json.JsonSerializer.Serialize(L.Get("Dw.Page.AllowedTypes"));
+
+            return $$"""
             (function(){
             function allowed(input){
               var accept=(input.getAttribute('accept')||'').toLowerCase();
@@ -882,10 +896,11 @@ namespace AstraBrew_Launcher.Services
               }
               if(bad.length){
                 input.value='';
-                alert('以下文件的类型不在允许范围内：\n'+bad.join('\n')+'\n\n允许的类型：'+accept);
+                alert({{badTypesJs}}+bad.join('\n')+'\n\n'+{{allowedTypesJs}}+accept);
               }
             },true)
             })()
             """;
+        }
     }
 }

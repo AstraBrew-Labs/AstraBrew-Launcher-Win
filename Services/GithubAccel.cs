@@ -38,10 +38,10 @@ namespace AstraBrew_Launcher.Services
         public const string WebPrefix = "https://gh-proxy.com/";
 
         /// <summary>走加速时给用户看的名字。</summary>
-        public const string AccelName = "GitHub 加速";
+        public static string AccelName => L.Get("Miss.AccelName");
 
         /// <summary>不经中转时给用户看的名字。</summary>
-        public const string DirectName = "GitHub 直连";
+        public static string DirectName => L.Get("Miss.DirectName");
 
         /// <summary>
         /// 已经带过中转前缀的地址（两个中转域名都算）——这些不要再套一层。

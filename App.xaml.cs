@@ -13,11 +13,18 @@ namespace AstraBrew_Launcher
         /// <summary>全局主窗口引用，供页面内跳转使用。</summary>
         public static MainWindow? MainWindow { get; private set; }
 
+        /// <summary>换语言时重建窗口用：把全局引用指向新窗口，页面里的 App.MainWindow 自动跟着换。</summary>
+        internal static void SetMainWindow(MainWindow window) => MainWindow = window;
+
         public App()
         {
             // 设置必须在任何 UI 创建之前读进来：主题、字体族、缩放都要用在首帧上，
             // 否则会先闪一帧系统默认外观再跳到用户选的那套。
             SettingsStore.Load();
+
+            // 语言要排在 InitializeComponent 之前：x:Uid 在元素创建的那一刻就解析掉了，
+            // 晚一步设置，首帧就会闪一下旧语言。
+            L.Initialize();
 
             InitializeComponent();
 

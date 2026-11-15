@@ -45,19 +45,19 @@ namespace AstraBrew_Launcher.Services
         /// </summary>
         public static string? Badge => Channel switch
         {
-            BuildChannel.Alpha => "预览版",
-            BuildChannel.Beta => "测试版",
-            BuildChannel.Debug => "开发版",
+            BuildChannel.Alpha => L.Get("Channel.Alpha.Badge"),
+            BuildChannel.Beta => L.Get("Channel.Beta.Badge"),
+            BuildChannel.Debug => L.Get("Channel.Debug.Badge"),
             _ => null,
         };
 
-        /// <summary>「版本与构建」里「更新通道」那一行 / 设置页版本行上的名字。</summary>
+        /// <summary>「版本与构建」里「更新通道」那一行的名字（渠道由构建决定，界面上只读）。</summary>
         public static string ChannelName => Channel switch
         {
-            BuildChannel.Alpha => "预览通道",
-            BuildChannel.Beta => "测试通道",
-            BuildChannel.Debug => "开发通道",
-            _ => "稳定通道",
+            BuildChannel.Alpha => L.Get("Channel.Alpha.Name"),
+            BuildChannel.Beta => L.Get("Channel.Beta.Name"),
+            BuildChannel.Debug => L.Get("Channel.Debug.Name"),
+            _ => L.Get("Channel.Stable.Name"),
         };
 
         /// <summary>渠道标记的强调色（文字色；底色由调用方按 12% 透明度兑出来）。</summary>
@@ -70,7 +70,9 @@ namespace AstraBrew_Launcher.Services
         };
 
         /// <summary>给日志 / 复制信息用的一行字，例如「预览版 · Alpha」。</summary>
-        public static string Describe => Badge is { Length: > 0 } badge ? $"{badge}（{Channel}）" : "正式版";
+        public static string Describe => Badge is { Length: > 0 } badge
+            ? L.F("Channel.Describe.Format", badge, Channel)
+            : L.Get("Channel.Stable.Badge");
 
         /// <summary>
         /// 完整版本号，含渠道后缀：<c>0.3.0-Alpha.0</c> / <c>0.3.0-Beta.0</c> / <c>0.3.0-Debug.0</c>，
@@ -114,7 +116,7 @@ namespace AstraBrew_Launcher.Services
             Version fallback = Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 3, 0);
             string core = $"{fallback.Major}.{fallback.Minor}.{fallback.Build}";
 
-            return Badge is { Length: > 0 } ? $"{core}-{Channel}.0" : core;
+            return IsStable ? core : $"{core}-{Channel}.0";
         }
 
         private static BuildChannel Resolve()

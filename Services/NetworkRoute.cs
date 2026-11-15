@@ -38,9 +38,9 @@ namespace AstraBrew_Launcher.Services
         /// <summary>给人看的一句话，弹窗顶部与「当前出口」都用它。</summary>
         public string Describe() => this switch
         {
-            { UseProxy: false } => "不走代理",
-            { Address: { Length: > 0 } address } => $"系统代理 {address}",
-            _ => "系统代理（PAC / 自动检测）",
+            { UseProxy: false } => L.Get("Miss.NoProxy"),
+            { Address: { Length: > 0 } address } => L.F("Miss.SystemProxy", address),
+            _ => L.Get("Miss.SystemProxyAuto"),
         };
     }
 }

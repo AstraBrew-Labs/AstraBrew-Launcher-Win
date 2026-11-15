@@ -33,13 +33,13 @@ namespace AstraBrew_Launcher.Services
         {
             if (RuntimeProbe.LocateNode(LauncherSettings.Runtime) is null && RuntimeProbe.LocateNode() is null)
             {
-                reason = "还没有可用的 Node.js，请先回上一步装好运行环境。";
+                reason = L.Get("Onb.NoNode");
                 return false;
             }
 
             if (GitCommand.LocateGit() is null)
             {
-                reason = "还没有可用的 Git，装不了内置实例，请先回上一步把 Git 装上。";
+                reason = L.Get("Onb.NoGit");
                 return false;
             }
 
@@ -83,12 +83,12 @@ namespace AstraBrew_Launcher.Services
             IReadOnlyList<SourceTarget> targets = TavernSource.InstallTargets(channel, mirrorUsable);
 
             string note = mirrorUsable
-                ? $"{LauncherSettings.ChannelName(channel)} 镜像可用（{revision}）"
+                ? L.F("Onb.MirrorReady", LauncherSettings.ChannelName(channel), revision)
                 : channel == DownloadChannel.Github
                     ? GithubAccel.Enabled
-                        ? "GitHub 通道：先走加速，失败回退直连"
-                        : "GitHub 直连"
-                    : $"镜像里还没有 {revision}，将回退 GitHub";
+                        ? L.Get("Onb.GithubAccel")
+                        : L.Get("Miss.DirectName")
+                    : L.F("Onb.MirrorMissing", revision);
 
             return new BuiltinSetupPlan(
                 revision,

@@ -48,8 +48,8 @@ namespace AstraBrew_Launcher.Views.Onboarding
         public bool IsBusy => _busy;
 
         public string? BlockingReason => _enabled
-            ? _busy ? "正在装酒馆" : null
-            : "先启用一个能用的酒馆";
+            ? _busy ? L.Get("Setup.S4.Blocking.Busy") : null
+            : L.Get("Setup.S4.Blocking.PickOne");
 
         // ==================== 生命周期 ====================
 
@@ -91,12 +91,12 @@ namespace AstraBrew_Launcher.Views.Onboarding
             BackToRuntimeButton.Visibility = Visibility.Collapsed;
 
             LocalListHost.Children.Clear();
-            ScanStatusText.Text = "会翻遍所有硬盘，慢的话要等几分钟。";
+            ScanStatusText.Text = L.Get("Setup.S4.Scan.Hint");
 
             OptionLocal.IsChecked = false;
             OptionBuiltin.IsChecked = false;
 
-            StateText.Text = "先选一种：用你有的，还是让启动器装。";
+            StateText.Text = L.Get("Setup.S4.State.Pick");
             RaiseState();
         }
 
@@ -125,11 +125,11 @@ namespace AstraBrew_Launcher.Views.Onboarding
             if (local)
             {
                 RenderLocals();
-                StateText.Text = "找一找或自己选，找到后点「用它」。";
+                StateText.Text = L.Get("Setup.S4.State.Scan");
                 return;
             }
 
-            StateText.Text = "点「下载并启用」，剩下的交给启动器。";
+            StateText.Text = L.Get("Setup.S4.State.Download");
 
             await LoadBuiltinPlanAsync();
         }
@@ -168,12 +168,12 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             ScanSnapshot state = InstanceScan.State;
 
-            ScanButton.Content = state.IsRunning ? "停下来" : "自动找一找";
+            ScanButton.Content = L.Get(state.IsRunning ? "Setup.S4.Scan.Stop" : "Setup.S4.Scan.Button");
             ScanStatusText.Text = state.IsRunning
-                ? $"已看 {state.Directories} 个文件夹 · 找到 {state.Found} 个 · {state.ElapsedLabel}"
+                ? L.F("Setup.S4.Scan.Progress", state.Directories, state.Found, state.ElapsedLabel)
                 : state.HasRun
-                    ? $"找完了：共 {state.Found} 个 · 用时 {state.ElapsedLabel}"
-                    : "扫描会遍历所有磁盘，机械硬盘可能需要几分钟。";
+                    ? L.F("Setup.S4.Scan.Done", state.Found, state.ElapsedLabel)
+                    : L.Get("Setup.S4.Scan.Hint");
 
             RenderLocals();
         }
@@ -218,7 +218,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             }
             catch (Exception ex)
             {
-                AppNotify.Error("没能打开选择窗口", ex.Message);
+                AppNotify.Error(L.Get("Setup.S4.Notify.PickerFailed"), ex.Message);
                 return;
             }
 
@@ -232,23 +232,23 @@ namespace AstraBrew_Launcher.Views.Onboarding
             switch (status)
             {
                 case LocalAddStatus.Added:
-                    AppNotify.Success("加进来了", instance?.Path ?? file.Path);
+                    AppNotify.Success(L.Get("Setup.S4.Notify.Added"), instance?.Path ?? file.Path);
                     break;
 
                 case LocalAddStatus.Duplicate:
-                    AppNotify.Info("这个已经在列表里", instance?.DisplayName ?? string.Empty);
+                    AppNotify.Info(L.Get("Setup.S4.Notify.Already"), instance?.DisplayName ?? string.Empty);
                     break;
 
                 case LocalAddStatus.Builtin:
-                    AppNotify.Info("这是内置那份", "到「我还没有」里管理。");
+                    AppNotify.Info(L.Get("Setup.S4.Notify.Builtin.Label"), L.Get("Setup.S4.Notify.Builtin.Body"));
                     break;
 
                 case LocalAddStatus.NotTavern:
-                    AppNotify.Warning("这里不是酒馆", "请选酒馆根目录里的 package.json。");
+                    AppNotify.Warning(L.Get("Setup.S4.Notify.NotTavern.Label"), L.Get("Setup.S4.Notify.NotTavern.Body"));
                     break;
 
                 default:
-                    AppNotify.Error("这个文件夹读不了", file.Path);
+                    AppNotify.Error(L.Get("Setup.S4.Notify.Unreadable"), file.Path);
                     break;
             }
 
@@ -274,9 +274,9 @@ namespace AstraBrew_Launcher.Views.Onboarding
                     FontSize = 12,
                     TextWrapping = TextWrapping.Wrap,
                     Foreground = Res("TextFillColorTertiaryBrush"),
-                    Text = InstanceScan.IsRunning
-                        ? "正在找…"
-                        : "还没找到。点「自动找一找」，或「自己选」一个 package.json。",
+                    Text = L.Get(InstanceScan.IsRunning
+                        ? "Setup.S4.List.Searching"
+                        : "Setup.S4.List.Empty"),
                 });
 
                 return;
@@ -323,7 +323,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
                     CornerRadius = new CornerRadius(8),
                     VerticalAlignment = VerticalAlignment.Center,
                     Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1F, 0xD8, 0x9B, 0x2B)),
-                    Child = new TextBlock { Text = "缺零件", FontSize = 10.5 },
+                    Child = new TextBlock { Text = L.Get("Setup.S4.Row.MissingDeps"), FontSize = 10.5 },
                 };
                 Grid.SetColumn(warn, 1);
                 grid.Children.Add(warn);
@@ -331,7 +331,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             var enable = new Button
             {
-                Content = instance.DepsReady ? "用它" : "装好零件再用",
+                Content = L.Get(instance.DepsReady ? "Setup.S4.Row.Use" : "Setup.S4.Row.InstallDepsFirst"),
                 VerticalAlignment = VerticalAlignment.Center,
             };
 
@@ -354,7 +354,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             {
                 SetBusy(true);
                 BuiltinProgressPanel.Visibility = Visibility.Visible;
-                BuiltinProgressText.Text = "正在装零件…";
+                BuiltinProgressText.Text = L.Get("Setup.S4.Deps.Installing");
 
                 var progress = new Progress<TavernInstallProgress>(value =>
                 {
@@ -373,7 +373,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
                     if (!result.Success)
                     {
-                        AppNotify.Error("零件没装好", result.Message + (result.Hint is { Length: > 0 } hint ? " " + hint : string.Empty));
+                        AppNotify.Error(L.Get("Setup.S4.Notify.DepsFailed"), result.Message + (result.Hint is { Length: > 0 } hint ? " " + hint : string.Empty));
                         return;
                     }
                 }
@@ -388,14 +388,14 @@ namespace AstraBrew_Launcher.Views.Onboarding
             {
                 _enabled = true;
 
-                StateText.Text = $"已经用上 {instance.DisplayName}，点「完成」收工。";
-                AppNotify.Success("已经用上了", instance.Path);
+                StateText.Text = L.F("Setup.S4.State.Enabled", instance.DisplayName);
+                AppNotify.Success(L.Get("Setup.S4.Notify.Enabled"), instance.Path);
                 RenderLocals();
                 RaiseState();
             }
             else
             {
-                AppNotify.Warning("这个还用不了", "零件没装全，或文件夹已经不在了。");
+                AppNotify.Warning(L.Get("Setup.S4.Notify.Unusable.Label"), L.Get("Setup.S4.Notify.Unusable.Body"));
             }
         }
 
@@ -408,13 +408,13 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 BuiltinInfoText.Text = reason;
                 InstallBuiltinButton.Visibility = Visibility.Collapsed;
                 BackToRuntimeButton.Visibility = Visibility.Visible;
-                StateText.Text = "装内置酒馆要先有第 3 步那两样。";
+                StateText.Text = L.Get("Setup.S4.Builtin.NeedRuntime");
                 return;
             }
 
             InstallBuiltinButton.Visibility = Visibility.Visible;
             BackToRuntimeButton.Visibility = Visibility.Collapsed;
-            BuiltinInfoText.Text = "正在查版本…";
+            BuiltinInfoText.Text = L.Get("Setup.S4.Builtin.Checking");
 
             if (TavernInstances.BuiltinInstalled)
             {
@@ -426,26 +426,28 @@ namespace AstraBrew_Launcher.Views.Onboarding
             {
                 _plan = await OnboardingInstances.PlanBuiltinAsync(_cts?.Token ?? CancellationToken.None);
 
-                BuiltinTitleText.Text = $"内置酒馆 {_plan.Revision}";
+                BuiltinTitleText.Text = L.F("Setup.S4.Builtin.Title", _plan.Revision);
                 BuiltinInfoText.Text = _plan.Note is { Length: > 0 } note
-                    ? $"准备装 {_plan.Revision} · {note}"
-                    : $"准备装 {_plan.Revision}";
-                InstallBuiltinButton.Content = "下载并启用";
+                    ? L.F("Setup.S4.Builtin.PrepareWithNote", _plan.Revision, note)
+                    : L.F("Setup.S4.Builtin.Prepare", _plan.Revision);
+                InstallBuiltinButton.Content = L.Get("Setup.S4.Builtin.Download");
             }
             catch (Exception ex)
             {
-                BuiltinInfoText.Text = "查版本失败了：" + ex.Message;
+                BuiltinInfoText.Text = L.F("Setup.S4.Builtin.CheckFailed", ex.Message);
             }
         }
 
         private void RenderInstalledBuiltin()
         {
-            BuiltinTitleText.Text = $"内置酒馆 {TavernInstances.Builtin.Version}";
-            BuiltinInfoText.Text = TavernInstances.BuiltinRunnable
-                ? "已经装好了，直接用。"
-                : "下载好了，但还缺零件。";
+            BuiltinTitleText.Text = L.F("Setup.S4.Builtin.Title", TavernInstances.Builtin.Version);
+            BuiltinInfoText.Text = L.Get(TavernInstances.BuiltinRunnable
+                ? "Setup.S4.Builtin.Ready"
+                : "Setup.S4.Builtin.NeedsDeps");
 
-            InstallBuiltinButton.Content = TavernInstances.BuiltinRunnable ? "用它" : "下载并启用";
+            InstallBuiltinButton.Content = L.Get(TavernInstances.BuiltinRunnable
+                ? "Setup.S4.Row.Use"
+                : "Setup.S4.Builtin.Download");
             InstallDepsButton.Visibility = TavernInstances.BuiltinRunnable ? Visibility.Collapsed : Visibility.Visible;
         }
 
@@ -482,7 +484,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             SetBusy(true);
             BuiltinProgressPanel.Visibility = Visibility.Visible;
             BuiltinBar.Value = 0;
-            BuiltinProgressText.Text = "准备下载…";
+            BuiltinProgressText.Text = L.Get("Setup.S4.Builtin.Preparing");
             InstallBuiltinButton.IsEnabled = false;
 
             var progress = new Progress<TavernInstallProgress>(value =>
@@ -512,12 +514,14 @@ namespace AstraBrew_Launcher.Views.Onboarding
                     // 克隆成功、依赖没装完：给一条更省事的补装路径
                     BuiltinProgressPanel.Visibility = Visibility.Collapsed;
                     RenderInstalledBuiltin();
-                    AppNotify.Warning("下载好了，只缺零件", "点「补装零件」继续，不用重新下载。");
+                    AppNotify.Warning(
+                        L.Get("Setup.S4.Notify.DownloadedNoDeps.Label"),
+                        L.Get("Setup.S4.Notify.DownloadedNoDeps.Body"));
                     return;
                 }
 
                 BuiltinProgressText.Text = result.Message;
-                AppNotify.Error("内置那份没装上", result.Message);
+                AppNotify.Error(L.Get("Setup.S4.Notify.BuiltinFailed"), result.Message);
             }
             finally
             {
@@ -538,7 +542,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             SetBusy(true);
             BuiltinProgressPanel.Visibility = Visibility.Visible;
             BuiltinBar.Value = 0;
-            BuiltinProgressText.Text = "正在安装依赖…";
+            BuiltinProgressText.Text = L.Get("Setup.S4.Deps.InstallingShort");
 
             var progress = new Progress<TavernInstallProgress>(value =>
             {
@@ -558,7 +562,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 }
                 else
                 {
-                    AppNotify.Error("零件没装上", result.Message);
+                    AppNotify.Error(L.Get("Setup.S4.Notify.DepsFailedBundled"), result.Message);
                 }
             }
             finally
@@ -574,14 +578,16 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 _enabled = true;
                 InstallDepsButton.Visibility = Visibility.Collapsed;
 
-                StateText.Text = "内置酒馆能用了，点「完成」收工。";
-                AppNotify.Success("内置酒馆已经启用", TavernInstances.Builtin.Path);
+                StateText.Text = L.Get("Setup.S4.State.BuiltinEnabled");
+                AppNotify.Success(L.Get("Setup.S4.Notify.BuiltinEnabled"), TavernInstances.Builtin.Path);
                 RenderInstalledBuiltin();
                 RaiseState();
             }
             else
             {
-                AppNotify.Warning("内置那份还用不了", "零件似乎没装全，点「补装零件」再试。");
+                AppNotify.Warning(
+                    L.Get("Setup.S4.Notify.BuiltinUnusable.Title"),
+                    L.Get("Setup.S4.Notify.BuiltinUnusable.Detail"));
             }
         }
 

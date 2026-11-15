@@ -3,6 +3,7 @@
     x:Class="AstraBrew_Launcher.Views.DashboardPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
@@ -83,8 +84,8 @@
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Spacing="3">
-                    <TextBlock Style="{StaticResource PageTitleTextStyle}" Text="仪表盘" />
-                    <TextBlock Style="{StaticResource PageSubtitleTextStyle}" Text="服务状态、启动配置与常用操作" />
+                    <TextBlock Style="{StaticResource PageTitleTextStyle}" controls:Loc.Text="Dashboard.Page.Title" />
+                    <TextBlock Style="{StaticResource PageSubtitleTextStyle}" controls:Loc.Text="Dashboard.Page.Subtitle" />
                 </StackPanel>
 
                 <StackPanel
@@ -95,13 +96,12 @@
                     <TextBlock
                         x:Name="LastSyncText"
                         VerticalAlignment="Center"
-                        Style="{StaticResource MetricLabelTextStyle}"
-                        Text="本地进程 · 2 秒采样" />
+                        Style="{StaticResource MetricLabelTextStyle}" />
                     <Button
                         Click="Refresh_Click"
                         Style="{StaticResource SubtleIconButtonStyle}"
-                        AutomationProperties.Name="刷新指标"
-                        ToolTipService.ToolTip="刷新指标">
+                        controls:Loc.Name="Dashboard.A11y.Refresh"
+                        controls:Loc.ToolTip="Dashboard.Action.Refresh.ToolTip">
                         <FontIcon FontSize="14" Glyph="&#xE72C;" />
                     </Button>
                 </StackPanel>
@@ -184,13 +184,11 @@
                                     <TextBlock
                                         x:Name="ServiceStateText"
                                         VerticalAlignment="Center"
-                                        Style="{StaticResource SectionTitleTextStyle}"
-                                        Text="服务运行中" />
+                                        Style="{StaticResource SectionTitleTextStyle}" />
                                     <Border Style="{StaticResource StatusPillStyle}">
                                         <TextBlock
                                             x:Name="HeroVersionPillText"
-                                            Style="{StaticResource StatusPillTextStyle}"
-                                            Text="内置 · v1.19.2" />
+                                            Style="{StaticResource StatusPillTextStyle}" />
                                     </Border>
                                 </StackPanel>
 
@@ -209,8 +207,8 @@
                                     <Button
                                         Click="CopyEndpoint_Click"
                                         Style="{StaticResource SubtleIconButtonStyle}"
-                                        AutomationProperties.Name="复制服务地址"
-                                        ToolTipService.ToolTip="复制地址">
+                                        controls:Loc.Name="Dashboard.A11y.CopyEndpoint"
+                                        controls:Loc.ToolTip="Dashboard.Action.CopyEndpoint.ToolTip">
                                         <FontIcon FontSize="12" Glyph="&#xE8C8;" />
                                     </Button>
                                     <TextBlock
@@ -219,8 +217,7 @@
                                         VerticalAlignment="Center"
                                         FontSize="12"
                                         Foreground="{ThemeResource SystemFillColorSuccessBrush}"
-                                        Opacity="0"
-                                        Text="已复制" />
+                                        Opacity="0" />
                                 </StackPanel>
 
                                 <!--  主操作：左边启停，竖线右边是「访问酒馆」（服务在跑时才有）  -->
@@ -237,14 +234,14 @@
                                                 x:Name="PrimaryActionGlyph"
                                                 FontSize="14"
                                                 Glyph="&#xE72C;" />
-                                            <TextBlock x:Name="PrimaryActionText" Text="重启服务" />
+                                            <TextBlock x:Name="PrimaryActionText" />
                                         </StackPanel>
                                     </Button>
 
                                     <Button x:Name="HeroStopButton" Click="Stop_Click">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <FontIcon FontSize="14" Glyph="&#xE71A;" />
-                                            <TextBlock Text="停止" />
+                                            <TextBlock controls:Loc.Text="Dashboard.Action.Stop" />
                                         </StackPanel>
                                     </Button>
 
@@ -261,12 +258,12 @@
                                     <Button
                                         x:Name="HeroOpenButton"
                                         Click="OpenTavern_Click"
-                                        AutomationProperties.Name="访问酒馆"
-                                        ToolTipService.ToolTip="打开酒馆窗口（已开着就唤到前台）"
+                                        controls:Loc.Name="Dashboard.A11y.OpenTavern"
+                                        controls:Loc.ToolTip="Dashboard.Action.OpenTavern.ToolTip"
                                         Visibility="Collapsed">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <FontIcon x:Name="HeroOpenGlyph" FontSize="14" Glyph="&#xE7F4;" />
-                                            <TextBlock x:Name="HeroOpenText" Text="访问酒馆" />
+                                            <TextBlock x:Name="HeroOpenText" />
                                         </StackPanel>
                                     </Button>
                                 </StackPanel>
@@ -283,7 +280,7 @@
                                     x:Name="HeroUptimeLabel"
                                     HorizontalAlignment="Right"
                                     Style="{StaticResource MetricLabelTextStyle}"
-                                    Text="已持续运行" />
+                                    controls:Loc.Text="Dashboard.Metric.Uptime" />
                                 <StackPanel
                                     x:Name="HeroUptimePanel"
                                     Orientation="Vertical"
@@ -324,7 +321,7 @@
                             </Grid.ColumnDefinitions>
 
                             <StackPanel Spacing="1">
-                                <TextBlock Style="{StaticResource MetricLabelTextStyle}" Text="内存占用" />
+                                <TextBlock Style="{StaticResource MetricLabelTextStyle}" controls:Loc.Text="Dashboard.Metric.Memory" />
                                 <TextBlock
                                     x:Name="MemoryValue"
                                     Style="{StaticResource CardTitleTextStyle}"
@@ -338,14 +335,14 @@
                                     Text="—" />
                             </StackPanel>
                             <StackPanel Grid.Column="2" Spacing="1">
-                                <TextBlock Style="{StaticResource MetricLabelTextStyle}" Text="今日访问" />
+                                <TextBlock Style="{StaticResource MetricLabelTextStyle}" controls:Loc.Text="Dashboard.Metric.Requests.Label" />
                                 <TextBlock
                                     x:Name="RequestsValue"
                                     Style="{StaticResource CardTitleTextStyle}"
                                     Text="—" />
                             </StackPanel>
                             <StackPanel Grid.Column="3" Spacing="1">
-                                <TextBlock Style="{StaticResource MetricLabelTextStyle}" Text="启动耗时" />
+                                <TextBlock Style="{StaticResource MetricLabelTextStyle}" controls:Loc.Text="Dashboard.Metric.Startup" />
                                 <TextBlock
                                     x:Name="StartupValue"
                                     Style="{StaticResource CardTitleTextStyle}"
@@ -378,7 +375,7 @@
                             <TextBlock
                                 VerticalAlignment="Center"
                                 Style="{StaticResource MetricLabelTextStyle}"
-                                Text="当前版本" />
+                                controls:Loc.Text="Dashboard.Metric.Version" />
                             <FontIcon
                                 HorizontalAlignment="Right"
                                 VerticalAlignment="Center"
@@ -392,8 +389,7 @@
                             Text="v1.19.2" />
                         <TextBlock
                             x:Name="CurrentVersionCaption"
-                            Style="{StaticResource FootnoteTextStyle}"
-                            Text="内置酒馆 · 已是最新" />
+                            Style="{StaticResource FootnoteTextStyle}" />
                     </StackPanel>
                 </Border>
 
@@ -405,7 +401,7 @@
                             <TextBlock
                                 VerticalAlignment="Center"
                                 Style="{StaticResource MetricLabelTextStyle}"
-                                Text="已装扩展" />
+                                controls:Loc.Text="Dashboard.Metric.Extensions.Label" />
                             <FontIcon
                                 HorizontalAlignment="Right"
                                 VerticalAlignment="Center"
@@ -433,7 +429,7 @@
                             <TextBlock
                                 VerticalAlignment="Center"
                                 Style="{StaticResource MetricLabelTextStyle}"
-                                Text="角色卡" />
+                                controls:Loc.Text="Dashboard.Metric.Cards.Label" />
                             <FontIcon
                                 HorizontalAlignment="Right"
                                 VerticalAlignment="Center"
@@ -451,8 +447,7 @@
                                 Margin="0,0,0,3"
                                 VerticalAlignment="Bottom"
                                 FontSize="13"
-                                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                Text="张" />
+                                Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                         </StackPanel>
                         <TextBlock
                             x:Name="CharactersCaption"
@@ -470,7 +465,7 @@
                             <TextBlock
                                 VerticalAlignment="Center"
                                 Style="{StaticResource MetricLabelTextStyle}"
-                                Text="磁盘占用" />
+                                controls:Loc.Text="Dashboard.Metric.Disk.Label" />
                             <FontIcon
                                 HorizontalAlignment="Right"
                                 VerticalAlignment="Center"
@@ -504,8 +499,8 @@
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.ColumnSpan="2" Spacing="2">
-                        <TextBlock Style="{StaticResource CardTitleTextStyle}" Text="启动配置" />
-                        <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="选择酒馆版本与运行模式，保存后下次启动生效" />
+                        <TextBlock Style="{StaticResource CardTitleTextStyle}" controls:Loc.Text="Dashboard.Group.Launch.Title" />
+                        <TextBlock Style="{StaticResource FootnoteTextStyle}" controls:Loc.Text="Dashboard.Group.Launch.Hint" />
                     </StackPanel>
 
                     <!--  左列：版本 + 启动模式  -->
@@ -517,14 +512,14 @@
                         <!--  酒馆版本  -->
                         <StackPanel Spacing="8">
                             <Grid>
-                                <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="酒馆版本" />
+                                <TextBlock Style="{StaticResource FieldLabelTextStyle}" controls:Loc.Text="Dashboard.Field.Version" />
                                 <HyperlinkButton
                                     Padding="4,0,0,0"
                                     HorizontalAlignment="Right"
                                     VerticalAlignment="Center"
-                                    AutomationProperties.Name="管理版本"
+                                    controls:Loc.Name="Dashboard.A11y.ManageVersions"
                                     Click="ManageVersions_Click"
-                                    Content="管理版本" />
+                                    controls:Loc.Content="Dashboard.Action.ManageVersions" />
                             </Grid>
 
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -532,13 +527,13 @@
                                 <ComboBox
                                     x:Name="VersionCombo"
                                     MinWidth="220"
-                                    AutomationProperties.Name="酒馆版本"
+                                    controls:Loc.Name="Dashboard.A11y.TavernVersion"
                                     SelectionChanged="VersionCombo_SelectionChanged" />
                                 <Button
                                     Click="RescanVersions_Click"
                                     Style="{StaticResource SubtleIconButtonStyle}"
-                                    AutomationProperties.Name="重新扫描本地版本"
-                                    ToolTipService.ToolTip="重新扫描本地版本">
+                                    controls:Loc.Name="Dashboard.A11y.RescanVersions"
+                                    controls:Loc.ToolTip="Dashboard.Action.Rescan.ToolTip">
                                     <FontIcon FontSize="13" Glyph="&#xE72C;" />
                                 </Button>
                             </StackPanel>
@@ -550,13 +545,11 @@
                                             <Border x:Name="VersionTypeTag" Style="{StaticResource StatusPillStyle}">
                                                 <TextBlock
                                                     x:Name="VersionTypeText"
-                                                    Style="{StaticResource StatusPillTextStyle}"
-                                                    Text="内置" />
+                                                    Style="{StaticResource StatusPillTextStyle}" />
                                             </Border>
                                             <TextBlock
                                                 x:Name="VersionKernelText"
-                                                Style="{StaticResource CellTextStyle}"
-                                                Text="内核 v1.19.2" />
+                                                Style="{StaticResource CellTextStyle}" />
                                         </StackPanel>
                                         <TextBlock
                                             x:Name="VersionSizeText"
@@ -572,19 +565,17 @@
                                         TextTrimming="CharacterEllipsis" />
                                     <TextBlock
                                         x:Name="RuntimeEnvText"
-                                        Style="{StaticResource FootnoteTextStyle}"
-                                        Text="运行环境 · —" />
+                                        Style="{StaticResource FootnoteTextStyle}" />
                                     <TextBlock
                                         x:Name="DataModeText"
-                                        Style="{StaticResource FootnoteTextStyle}"
-                                        Text="数据存放 · —" />
+                                        Style="{StaticResource FootnoteTextStyle}" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
 
                         <!--  启动模式  -->
                         <StackPanel Spacing="8">
-                            <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="启动模式" />
+                            <TextBlock Style="{StaticResource FieldLabelTextStyle}" controls:Loc.Text="Dashboard.Field.Mode" />
 
                             <Grid ColumnSpacing="10">
                                 <Grid.ColumnDefinitions>
@@ -595,32 +586,32 @@
 
                                 <RadioButton
                                     x:Name="NormalModeRadio"
-                                    AutomationProperties.Name="普通模式"
+                                    controls:Loc.Name="Dashboard.A11y.ModeNormal"
                                     Checked="Mode_Checked"
                                     GroupName="LaunchMode"
                                     IsChecked="True"
                                     Style="{StaticResource ChoiceCardRadioStyle}">
-                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="普通模式" />
+                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="Dashboard.Mode.Normal.Label" />
                                 </RadioButton>
 
                                 <RadioButton
                                     x:Name="DesktopModeRadio"
                                     Grid.Column="1"
-                                    AutomationProperties.Name="桌面模式"
+                                    controls:Loc.Name="Dashboard.A11y.ModeDesktop"
                                     Checked="Mode_Checked"
                                     GroupName="LaunchMode"
                                     Style="{StaticResource ChoiceCardRadioStyle}">
-                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="桌面模式" />
+                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="Dashboard.Mode.Desktop.Label" />
                                 </RadioButton>
 
                                 <RadioButton
                                     x:Name="ServerModeRadio"
                                     Grid.Column="2"
-                                    AutomationProperties.Name="服务器模式"
+                                    controls:Loc.Name="Dashboard.A11y.ModeServer"
                                     Checked="Mode_Checked"
                                     GroupName="LaunchMode"
                                     Style="{StaticResource ChoiceCardRadioStyle}">
-                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="服务器模式" />
+                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="Dashboard.Mode.Server.Label" />
                                 </RadioButton>
                             </Grid>
 
@@ -628,7 +619,6 @@
                             <TextBlock
                                 x:Name="ModeDescriptionText"
                                 Style="{StaticResource FootnoteTextStyle}"
-                                Text="用默认浏览器打开酒馆，适合日常对话。"
                                 TextWrapping="Wrap" />
                         </StackPanel>
                     </StackPanel>
@@ -644,24 +634,23 @@
                         Style="{StaticResource SubPanelStyle}">
                         <StackPanel Spacing="12">
                             <Grid>
-                                <TextBlock Style="{StaticResource CardTitleTextStyle}" Text="模式设置" />
+                                <TextBlock Style="{StaticResource CardTitleTextStyle}" controls:Loc.Text="Dashboard.Browser.Group" />
                                 <TextBlock
                                     x:Name="ModeSettingsTag"
                                     HorizontalAlignment="Right"
                                     VerticalAlignment="Center"
-                                    Style="{StaticResource MetricLabelTextStyle}"
-                                    Text="普通模式" />
+                                    Style="{StaticResource MetricLabelTextStyle}" />
                             </Grid>
 
                             <!--  仅普通模式：默认浏览器  -->
                             <StackPanel x:Name="NormalModePanel" Spacing="10">
-                                <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="默认浏览器" />
+                                <TextBlock Style="{StaticResource FieldLabelTextStyle}" controls:Loc.Text="Dashboard.Browser.Label" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <RadioButton
                                         x:Name="ChromeRadio"
-                                        AutomationProperties.Name="谷歌浏览器"
+                                        controls:Loc.Name="Dashboard.A11y.BrowserChrome"
                                         Checked="Browser_Checked"
-                                        Content="谷歌浏览器"
+                                        controls:Loc.Content="Dashboard.Browser.Chrome"
                                         GroupName="Browser"
                                         IsChecked="True"
                                         Style="{StaticResource ChoiceChipRadioStyle}" />
@@ -674,16 +663,15 @@
                                         Style="{StaticResource ChoiceChipRadioStyle}" />
                                     <RadioButton
                                         x:Name="FirefoxRadio"
-                                        AutomationProperties.Name="火狐浏览器"
+                                        controls:Loc.Name="Dashboard.A11y.BrowserFirefox"
                                         Checked="Browser_Checked"
-                                        Content="火狐浏览器"
+                                        controls:Loc.Content="Dashboard.Browser.Firefox"
                                         GroupName="Browser"
                                         Style="{StaticResource ChoiceChipRadioStyle}" />
                                 </StackPanel>
                                 <TextBlock
                                     x:Name="BrowserHint"
                                     Style="{StaticResource FootnoteTextStyle}"
-                                    Text="启动酒馆后自动用所选浏览器打开界面。"
                                     TextWrapping="Wrap" />
                             </StackPanel>
 
@@ -702,11 +690,11 @@
                                     <TextBlock
                                         VerticalAlignment="Center"
                                         Style="{StaticResource CellTextStyle}"
-                                        Text="独立窗口运行" />
+                                        controls:Loc.Text="Dashboard.Mode.Desktop.Title" />
                                 </StackPanel>
                                 <TextBlock
                                     Style="{StaticResource FootnoteTextStyle}"
-                                    Text="酒馆界面在独立窗口中打开，不经过浏览器，也无需配置网络访问方式。"
+                                    controls:Loc.Text="Dashboard.Mode.Desktop.Hint"
                                     TextWrapping="Wrap" />
                             </StackPanel>
 
@@ -715,27 +703,27 @@
                                 x:Name="ServerModePanel"
                                 Spacing="10"
                                 Visibility="Collapsed">
-                                <TextBlock Style="{StaticResource FieldLabelTextStyle}" Text="服务模式" />
+                                <TextBlock Style="{StaticResource FieldLabelTextStyle}" controls:Loc.Text="Dashboard.Scope.Label" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <RadioButton
                                         x:Name="LanRadio"
-                                        AutomationProperties.Name="局域网"
+                                        controls:Loc.Name="Dashboard.A11y.ScopeLan"
                                         Checked="ServiceScope_Checked"
-                                        Content="局域网"
+                                        controls:Loc.Content="Dashboard.Scope.Lan.Label"
                                         GroupName="ServiceScope"
                                         IsChecked="True"
                                         Style="{StaticResource ChoiceChipRadioStyle}" />
                                     <RadioButton
                                         x:Name="WanRadio"
-                                        AutomationProperties.Name="互联网"
+                                        controls:Loc.Name="Dashboard.A11y.ScopeWan"
                                         Checked="ServiceScope_Checked"
-                                        Content="互联网"
+                                        controls:Loc.Content="Dashboard.Scope.Internet.Label"
                                         GroupName="ServiceScope"
                                         Style="{StaticResource ChoiceChipRadioStyle}" />
                                 </StackPanel>
 
                                 <StackPanel Spacing="2">
-                                    <TextBlock Style="{StaticResource MetricLabelTextStyle}" Text="访问地址" />
+                                    <TextBlock Style="{StaticResource MetricLabelTextStyle}" controls:Loc.Text="Dashboard.Scope.Address" />
                                     <TextBlock
                                         x:Name="AccessAddressText"
                                         Style="{StaticResource MonoTextStyle}"
@@ -746,7 +734,6 @@
                                 <TextBlock
                                     x:Name="ServiceScopeHint"
                                     Style="{StaticResource FootnoteTextStyle}"
-                                    Text="同一 Wi-Fi 下的设备可直接访问，无需额外配置。"
                                     TextWrapping="Wrap" />
                             </StackPanel>
                         </StackPanel>
@@ -759,15 +746,15 @@
                 <StackPanel Spacing="14">
                     <Grid>
                         <StackPanel Spacing="2">
-                            <TextBlock Style="{StaticResource CardTitleTextStyle}" Text="快捷操作" />
-                            <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="常用动作集中在这里，无需切换页面" />
+                            <TextBlock Style="{StaticResource CardTitleTextStyle}" controls:Loc.Text="Dashboard.Group.Shortcuts.Title" />
+                            <TextBlock Style="{StaticResource FootnoteTextStyle}" controls:Loc.Text="Dashboard.Group.Shortcuts.Hint" />
                         </StackPanel>
                         <HyperlinkButton
                             Padding="4,0,0,0"
                             HorizontalAlignment="Right"
                             VerticalAlignment="Center"
                             Click="OpenConsole_Click"
-                            Content="查看日志" />
+                            controls:Loc.Content="Dashboard.Action.ViewLogs" />
                     </Grid>
 
                     <Grid
@@ -788,7 +775,7 @@
                         <Button
                             x:Name="Qa1"
                             Click="OpenTavern_Click"
-                            AutomationProperties.Name="访问酒馆"
+                            controls:Loc.Name="Dashboard.A11y.OpenTavern"
                             Style="{StaticResource QuickActionButtonStyle}">
                             <Grid ColumnSpacing="10">
                                 <Grid.ColumnDefinitions>
@@ -808,12 +795,10 @@
                                     Spacing="0">
                                     <TextBlock
                                         x:Name="Qa1Text"
-                                        Style="{StaticResource CellTitleTextStyle}"
-                                        Text="访问酒馆" />
+                                        Style="{StaticResource CellTitleTextStyle}" />
                                     <TextBlock
                                         x:Name="OpenTavernHint"
-                                        Style="{StaticResource FootnoteTextStyle}"
-                                        Text="用 谷歌浏览器 打开" />
+                                        Style="{StaticResource FootnoteTextStyle}" />
                                 </StackPanel>
                             </Grid>
                         </Button>
@@ -822,7 +807,7 @@
                             x:Name="Qa2"
                             Grid.Column="1"
                             Click="OpenConsole_Click"
-                            AutomationProperties.Name="打开控制台"
+                            controls:Loc.Name="Dashboard.A11y.OpenConsole"
                             Style="{StaticResource QuickActionButtonStyle}">
                             <Grid ColumnSpacing="10">
                                 <Grid.ColumnDefinitions>
@@ -839,8 +824,8 @@
                                     Grid.Column="1"
                                     VerticalAlignment="Center"
                                     Spacing="0">
-                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="控制台" />
-                                    <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="查看实时日志" />
+                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="Dashboard.Action.Console.Label" />
+                                    <TextBlock Style="{StaticResource FootnoteTextStyle}" controls:Loc.Text="Dashboard.Action.Console.Hint" />
                                 </StackPanel>
                             </Grid>
                         </Button>
@@ -849,7 +834,7 @@
                             x:Name="Qa3"
                             Grid.Column="2"
                             Click="OpenDataDir_Click"
-                            AutomationProperties.Name="打开数据目录"
+                            controls:Loc.Name="Dashboard.A11y.OpenDataDir"
                             Style="{StaticResource QuickActionButtonStyle}">
                             <Grid ColumnSpacing="10">
                                 <Grid.ColumnDefinitions>
@@ -866,8 +851,8 @@
                                     Grid.Column="1"
                                     VerticalAlignment="Center"
                                     Spacing="0">
-                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="数据目录" />
-                                    <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="配置与角色卡" />
+                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="Dashboard.Action.DataFolder.Label" />
+                                    <TextBlock Style="{StaticResource FootnoteTextStyle}" controls:Loc.Text="Dashboard.Action.DataFolder.Hint" />
                                 </StackPanel>
                             </Grid>
                         </Button>
@@ -876,7 +861,7 @@
                             x:Name="Qa4"
                             Grid.Row="1"
                             Click="ImportCard_Click"
-                            AutomationProperties.Name="导入角色卡"
+                            controls:Loc.Name="Dashboard.A11y.ImportCard"
                             Style="{StaticResource QuickActionButtonStyle}">
                             <Grid ColumnSpacing="10">
                                 <Grid.ColumnDefinitions>
@@ -893,7 +878,7 @@
                                     Grid.Column="1"
                                     VerticalAlignment="Center"
                                     Spacing="0">
-                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="导入角色卡" />
+                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="Dashboard.Action.ImportCard" />
                                     <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="PNG / JSON" />
                                 </StackPanel>
                             </Grid>
@@ -904,7 +889,7 @@
                             Grid.Row="1"
                             Grid.Column="1"
                             Click="CopyEndpoint_Click"
-                            AutomationProperties.Name="复制服务地址"
+                            controls:Loc.Name="Dashboard.A11y.CopyEndpoint"
                             Style="{StaticResource QuickActionButtonStyle}">
                             <Grid ColumnSpacing="10">
                                 <Grid.ColumnDefinitions>
@@ -921,8 +906,8 @@
                                     Grid.Column="1"
                                     VerticalAlignment="Center"
                                     Spacing="0">
-                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="复制地址" />
-                                    <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="分享给其他设备" />
+                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="Dashboard.Action.CopyEndpoint.Label" />
+                                    <TextBlock Style="{StaticResource FootnoteTextStyle}" controls:Loc.Text="Dashboard.Action.CopyEndpoint.Hint" />
                                 </StackPanel>
                             </Grid>
                         </Button>
@@ -932,7 +917,7 @@
                             Grid.Row="1"
                             Grid.Column="2"
                             Click="OpenConfig_Click"
-                            AutomationProperties.Name="打开酒馆配置"
+                            controls:Loc.Name="Dashboard.A11y.OpenConfig"
                             Style="{StaticResource QuickActionButtonStyle}">
                             <Grid ColumnSpacing="10">
                                 <Grid.ColumnDefinitions>
@@ -949,8 +934,8 @@
                                     Grid.Column="1"
                                     VerticalAlignment="Center"
                                     Spacing="0">
-                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="酒馆配置" />
-                                    <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="模型与端口" />
+                                    <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="Dashboard.Action.TavernConfig.Label" />
+                                    <TextBlock Style="{StaticResource FootnoteTextStyle}" controls:Loc.Text="Dashboard.Action.TavernConfig.Hint" />
                                 </StackPanel>
                             </Grid>
                         </Button>

@@ -138,8 +138,7 @@ namespace AstraBrew_Launcher.Services
 
             return changed
                 ? (string.Join(' ', tokens),
-                    "NODE_OPTIONS 传给 Node 的模块路径是文件路径，Node 的 ESM 加载器只认 file: 协议"
-                    + "（否则报 ERR_UNSUPPORTED_ESM_URL_SCHEME，进程直接退出），启动前已改写成 file:// URL。")
+                    L.Get("Miss.NodeEnvNote"))
                 : (raw, null);
         }
 

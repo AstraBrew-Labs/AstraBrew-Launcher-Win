@@ -161,22 +161,22 @@ namespace AstraBrew_Launcher.Services
 
             try
             {
-                reporter.Send(InstallStage.Preparing, "检查安装目录与磁盘空间…", 0, force: true);
-                log.Info($"{spec.VersionLabel} 安装开始");
-                log.Info($"目标目录 {spec.InstallRoot}");
-                log.Info($"暂存目录 {spec.StagingRoot}");
-                log.Info($"下载文件 {spec.ArchivePath}");
+                reporter.Send(InstallStage.Preparing, L.Get("Cmp.Stage.CheckDisk"), 0, force: true);
+                log.Info(L.F("Cmp.Log.Start", spec.VersionLabel));
+                log.Info(L.F("Cmp.Log.TargetRoot", spec.InstallRoot));
+                log.Info(L.F("Cmp.Log.StagingRoot", spec.StagingRoot));
+                log.Info(L.F("Cmp.Log.DownloadFile", spec.ArchivePath));
 
                 Directory.CreateDirectory(Path.GetDirectoryName(spec.InstallRoot)!);
                 Directory.CreateDirectory(AppPaths.TempRoot);
 
                 if (FreeSpace(AppPaths.RoamingRoot) is { } free && free < spec.RequiredFreeBytes)
                 {
-                    log.Fail($"磁盘可用空间不足：{FormatSize(free)}，至少需要 {FormatSize(spec.RequiredFreeBytes)}");
+                    log.Fail(L.F("Cmp.Log.DiskLow", FormatSize(free), FormatSize(spec.RequiredFreeBytes)));
                     return Failure(
                         InstallError.DiskFull,
-                        $"磁盘空间不足，至少需要 {FormatSize(spec.RequiredFreeBytes)} 可用空间。",
-                        "清理系统盘后再点一次「安装」。",
+                        L.F("Ins.DiskLow.Title", FormatSize(spec.RequiredFreeBytes)),
+                        L.Get("Cmp.DiskLow.Hint"),
                         log);
                 }
 
@@ -188,13 +188,13 @@ namespace AstraBrew_Launcher.Services
                     return lastError == InstallError.Download
                         ? Failure(
                             InstallError.Download,
-                            "下载源都没有返回完整的安装包，请稍后重试。",
-                            $"已依次尝试 {spec.SourceNames}。",
+                            L.Get("Cmp.NoPackage.Title"),
+                            L.F("Cmp.NoPackage.Body", spec.SourceNames),
                             log)
                         : Failure(
                             InstallError.Network,
-                            "连不上下载源，请检查网络后重试。",
-                            $"已依次尝试 {spec.SourceNames}，均未连上。",
+                            L.Get("Cmp.Unreachable.Title"),
+                            L.F("Cmp.Unreachable.Body", spec.SourceNames),
                             log);
                 }
 
@@ -206,7 +206,7 @@ namespace AstraBrew_Launcher.Services
 
                 if (!spec.ExistsAt(spec.StagingRoot))
                 {
-                    log.Fail($"解压结果不完整，未在 {spec.StagingRoot} 找到可执行文件");
+                    log.Fail(L.F("Cmp.Log.ExtractIncomplete", spec.StagingRoot));
                     return Failure(
                         InstallError.Verify,
                         spec.IncompleteMessage,
@@ -214,43 +214,43 @@ namespace AstraBrew_Launcher.Services
                         log);
                 }
 
-                reporter.Send(InstallStage.Verifying, "正在替换到内置环境…", ExtractShare, force: true);
+                reporter.Send(InstallStage.Verifying, L.Get("Cmp.Stage.Swap"), ExtractShare, force: true);
                 Commit(spec, log);
 
                 WriteStamp(spec, sourceName, log);
                 TryDelete(spec.ArchivePath);
                 TryDeleteDirectory(spec.StagingRoot);
 
-                reporter.Send(InstallStage.Done, "安装完成", 100, force: true);
-                log.Info($"安装完成，来源 {sourceName}");
-                return new InstallResult(true, InstallError.None, "安装完成", null, log.FilePath);
+                reporter.Send(InstallStage.Done, L.Get("Ins.Stage.Done"), 100, force: true);
+                log.Info(L.F("Cmp.Log.Done", sourceName));
+                return new InstallResult(true, InstallError.None, L.Get("Ins.Stage.Done"), null, log.FilePath);
             }
             catch (OperationCanceledException)
             {
-                log.Warn("用户取消安装");
+                log.Warn(L.Get("Cmp.Log.Cancelled"));
                 TryDelete(spec.ArchivePath);
                 TryDeleteDirectory(spec.StagingRoot);
-                reporter.Send(InstallStage.Failed, "已取消", 0, force: true);
-                return new InstallResult(false, InstallError.Cancelled, "已取消安装。", null, log.FilePath);
+                reporter.Send(InstallStage.Failed, L.Get("Cmp.Stage.Cancelled"), 0, force: true);
+                return new InstallResult(false, InstallError.Cancelled, L.Get("Ins.Cancelled.Title"), null, log.FilePath);
             }
             catch (ExtractException ex)
             {
-                log.Fail("解压失败", ex.InnerException ?? ex);
+                log.Fail(L.Get("Cmp.Log.ExtractFail"), ex.InnerException ?? ex);
                 TryDelete(spec.ArchivePath);
                 TryDeleteDirectory(spec.StagingRoot);
-                reporter.Send(InstallStage.Failed, "解压失败", 0, force: true);
+                reporter.Send(InstallStage.Failed, L.Get("Cmp.Log.ExtractFail"), 0, force: true);
                 return Failure(ex.Error, ex.Message, ex.Hint, log);
             }
             catch (Exception ex)
             {
-                log.Fail("安装过程中出现未预期的错误", ex);
+                log.Fail(L.Get("Cmp.Log.Unexpected"), ex);
                 TryDelete(spec.ArchivePath);
                 TryDeleteDirectory(spec.StagingRoot);
-                reporter.Send(InstallStage.Failed, "安装失败", 0, force: true);
+                reporter.Send(InstallStage.Failed, L.Get("Cmp.Stage.InstallFail"), 0, force: true);
                 return Failure(
                     InstallError.Unknown,
-                    "安装没能完成，请重试。",
-                    "详细原因见日志。",
+                    L.Get("Cmp.Incomplete.Title"),
+                    L.Get("Cmp.Incomplete.Hint"),
                     log);
             }
         }
@@ -275,8 +275,8 @@ namespace AstraBrew_Launcher.Services
             {
                 token.ThrowIfCancellationRequested();
 
-                reporter.Send(InstallStage.Downloading, $"正在连接 {name}…", 0, force: true);
-                log.Info($"尝试下载源 {name}：{url}");
+                reporter.Send(InstallStage.Downloading, L.F("Cmp.Stage.Connecting", name), 0, force: true);
+                log.Info(L.F("Cmp.Log.TrySource", name, url));
 
                 try
                 {
@@ -291,17 +291,17 @@ namespace AstraBrew_Launcher.Services
                 {
                     stoppedBy = ex.Error;
                     sawResponse |= ex.Error == InstallError.Download;
-                    log.Fail($"下载源 {name} 不可用", ex.InnerException ?? ex);
+                    log.Fail(L.F("Cmp.Log.SourceDown", name), ex.InnerException ?? ex);
                     TryDelete(spec.ArchivePath);
                     reporter.Send(
                         InstallStage.Downloading,
-                        $"{name} 不可用，换下一个源…",
+                        L.F("Cmp.Stage.NextSource", name),
                         0,
                         force: true);
                 }
             }
 
-            log.Fail($"全部 {spec.Sources.Count} 个下载源均失败（最后原因 {stoppedBy}）");
+            log.Fail(L.F("Cmp.Log.AllDown", spec.Sources.Count, stoppedBy));
             return (null, sawResponse ? InstallError.Download : InstallError.Network);
         }
 
@@ -334,14 +334,14 @@ namespace AstraBrew_Launcher.Services
             {
                 throw new DownloadException(
                     InstallError.Network,
-                    $"{name} 连接超时");
+                    L.F("Cmp.Err.Timeout", name));
             }
             catch (Exception ex)
             {
                 // 任何传输层异常都只算「这个源不行」，换下一个；不能让单个源把整条链路打断
                 throw new DownloadException(
                     InstallError.Network,
-                    $"{name} 连接失败",
+                    L.F("Cmp.Err.Connect", name),
                     ex);
             }
 
@@ -351,11 +351,11 @@ namespace AstraBrew_Launcher.Services
                 {
                     throw new DownloadException(
                         InstallError.Download,
-                        $"{name} 返回 HTTP {(int)response.StatusCode}");
+                        L.F("Cmp.Err.Http", name, (int)response.StatusCode));
                 }
 
                 long total = response.Content.Headers.ContentLength ?? -1;
-                log.Info($"{name} 响应 {(int)response.StatusCode} · 长度 {(total > 0 ? FormatSize(total) : "未知")}");
+                log.Info(L.F("Cmp.Log.Response", name, (int)response.StatusCode, total > 0 ? FormatSize(total) : L.Get("Cmp.Unknown")));
 
                 long received = 0;
                 var clock = Stopwatch.StartNew();
@@ -389,11 +389,11 @@ namespace AstraBrew_Launcher.Services
                     {
                         throw new DownloadException(
                             InstallError.Network,
-                            $"{name} 下载中断：{StallTimeout.TotalSeconds:0} 秒没有收到数据");
+                            L.F("Cmp.Stall", name, StallTimeout.TotalSeconds.ToString("0")));
                     }
                     catch (Exception ex)
                     {
-                        throw new DownloadException(InstallError.Network, $"{name} 下载中断", ex);
+                        throw new DownloadException(InstallError.Network, L.F("Cmp.Err.Interrupted", name), ex);
                     }
 
                     if (read == 0)
@@ -413,7 +413,7 @@ namespace AstraBrew_Launcher.Services
 
                     reporter.Send(
                         InstallStage.Downloading,
-                        $"正在从 {name} 下载",
+                        L.F("Cmp.Stage.Downloading", name),
                         percent,
                         received,
                         total,
@@ -426,7 +426,7 @@ namespace AstraBrew_Launcher.Services
                 {
                     throw new DownloadException(
                         InstallError.Download,
-                        $"{name} 下载不完整（{FormatSize(received)} / {FormatSize(total)}）");
+                        L.F("Cmp.Err.Incomplete", name, FormatSize(received), FormatSize(total)));
                 }
 
                 if (received < 1024 * 1024)
@@ -434,11 +434,15 @@ namespace AstraBrew_Launcher.Services
                     // 正常安装包都几十兆；只有几百 K 基本是被劫持到了错误页
                     throw new DownloadException(
                         InstallError.Download,
-                        $"{name} 返回的内容不像安装包（{FormatSize(received)}）");
+                        L.F("Cmp.Err.NotInstaller", name, FormatSize(received)));
                 }
 
-                log.Info($"{name} 下载完成：{FormatSize(received)}，耗时 {clock.Elapsed.TotalSeconds:0.0} 秒，"
-                    + $"平均 {FormatSize((long)(received / Math.Max(clock.Elapsed.TotalSeconds, 0.1)))}/s");
+                log.Info(L.F(
+                        "Cmp.Log.Downloaded",
+                        name,
+                        FormatSize(received),
+                        clock.Elapsed.TotalSeconds.ToString("0.0"),
+                        FormatSize((long)(received / Math.Max(clock.Elapsed.TotalSeconds, 0.1)))));
             }
         }
 
@@ -466,9 +470,9 @@ namespace AstraBrew_Launcher.Services
                     // 不剥掉这层，node.exe 会落在 bin\nodejs\node-v22.20.0-win-x64\node.exe，
                     // 探测找不到、PATH 也拼不对。MinGit 是根目录平铺的，前缀为空，走同一条路也不会错。
                     string prefix = DetectRootPrefix(archive);
-                    log.Info($"压缩包含 {total} 个条目，根目录前缀 [{(prefix.Length > 0 ? prefix : "无")}]，解压到 {spec.StagingRoot}");
+                    log.Info(L.F("Cmp.Log.Archive", total, prefix.Length > 0 ? prefix : L.Get("Cmp.None"), spec.StagingRoot));
 
-                    reporter.Send(InstallStage.Extracting, "正在解压…", DownloadShare, force: true);
+                    reporter.Send(InstallStage.Extracting, L.Get("Cmp.Stage.Extracting"), DownloadShare, force: true);
 
                     int done = 0;
                     foreach (ZipArchiveEntry entry in archive.Entries)
@@ -494,14 +498,14 @@ namespace AstraBrew_Launcher.Services
                         catch (ArgumentException)
                         {
                             // 名字里带非法字符（老 zip 里偶见），跳过即可
-                            log.Warn($"跳过非法条目 {entry.FullName}");
+                            log.Warn(L.F("Cmp.Log.SkipIllegal", entry.FullName));
                             continue;
                         }
 
                         // zip-slip 防护：解出来的路径必须还在暂存目录内
                         if (!destination.StartsWith(stagingFull, StringComparison.OrdinalIgnoreCase))
                         {
-                            log.Warn($"跳过越界条目 {entry.FullName}");
+                            log.Warn(L.F("Cmp.Log.SkipOutside", entry.FullName));
                             continue;
                         }
 
@@ -520,8 +524,8 @@ namespace AstraBrew_Launcher.Services
                         {
                             throw new ExtractException(
                                 InstallError.Extract,
-                                "解压失败：磁盘空间不足或安装目录被占用。",
-                                "清理磁盘、关闭杀毒软件的实时拦截后重试。",
+                                L.Get("Cmp.ExtractFail.Title"),
+                                L.Get("Cmp.ExtractFail.Hint"),
                                 ex);
                         }
 
@@ -530,10 +534,10 @@ namespace AstraBrew_Launcher.Services
                         double percent = DownloadShare
                             + (ExtractShare - DownloadShare) * done / Math.Max(total, 1);
 
-                        reporter.Send(InstallStage.Extracting, "正在解压…", percent);
+                        reporter.Send(InstallStage.Extracting, L.Get("Cmp.Stage.Extracting"), percent);
                     }
 
-                    log.Info($"解压完成，共 {done} 个条目");
+                    log.Info(L.F("Cmp.Log.ExtractDone", done));
                 },
                 token);
 
@@ -580,7 +584,7 @@ namespace AstraBrew_Launcher.Services
         {
             if (Directory.Exists(spec.InstallRoot))
             {
-                log.Info($"移除旧版本 {spec.InstallRoot}");
+                log.Info(L.F("Cmp.Log.RemoveOld", spec.InstallRoot));
                 try
                 {
                     Directory.Delete(spec.InstallRoot, recursive: true);
@@ -596,7 +600,7 @@ namespace AstraBrew_Launcher.Services
             }
 
             Directory.Move(spec.StagingRoot, spec.InstallRoot);
-            log.Info($"已就位 {spec.InstallRoot}");
+            log.Info(L.F("Ins.Log.Placed", spec.InstallRoot));
         }
 
         /// <summary>写一份安装标记，排查时能看出这一份是谁、什么时候、从哪装的。</summary>
@@ -618,7 +622,7 @@ namespace AstraBrew_Launcher.Services
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                log.Warn($"安装标记写入失败：{ex.Message}");
+                log.Warn(L.F("Ins.Log.MarkerFail", ex.Message));
             }
         }
 

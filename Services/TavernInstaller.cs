@@ -138,8 +138,8 @@ namespace AstraBrew_Launcher.Services
             {
                 return new TavernInstallResult(
                     false,
-                    "另一个安装任务正在进行",
-                    "等它结束再试，或者先到控制台看看进度。",
+                    L.Get("Ins.Busy.Title"),
+                    L.Get("Ins.Busy.Body"),
                     null,
                     null,
                     null);
@@ -164,13 +164,13 @@ namespace AstraBrew_Launcher.Services
             var reporter = new Reporter(progress);
             var clock = Stopwatch.StartNew();
 
-            log.Info($"依赖安装开始 · 目录 {root}");
-            log.Info($"npm 源 {LauncherSettings.NpmRegistryName} {LauncherSettings.NpmRegistryUrl}");
+            log.Info(L.F("Ins.Log.DepsStart", root));
+            log.Info(L.F("Ins.Log.DepsRegistry", LauncherSettings.NpmRegistryName, LauncherSettings.NpmRegistryUrl));
 
             if (!File.Exists(Path.Combine(root, "package.json")))
             {
-                log.Fail("目录里没有 package.json");
-                return Failure("这个目录里没有 package.json。", "确认一下选的是酒馆代码目录，再补依赖。", log);
+                log.Fail(L.Get("Ins.Log.NoPackage"));
+                return Failure(L.Get("Ins.DepsNoPackage.Title"), L.Get("Ins.DepsNoPackage.Hint"), log);
             }
 
             try
@@ -179,10 +179,10 @@ namespace AstraBrew_Launcher.Services
 
                 if (!deps.Ok)
                 {
-                    log.Fail($"依赖安装失败：{deps.Reason}");
+                    log.Fail(L.F("Ins.Log.DepsFail", deps.Reason));
                     return new TavernInstallResult(
                         false,
-                        "依赖没有装好，酒馆还起不来。",
+                        L.Get("Ins.DepsFailed.Title"),
                         deps.Reason,
                         log.FilePath,
                         null,
@@ -192,13 +192,13 @@ namespace AstraBrew_Launcher.Services
                     };
                 }
 
-                reporter.Send(TavernInstallStage.Done, "依赖已装好", null, 100, force: true);
-                log.Info($"依赖安装完成 · 耗时 {clock.Elapsed.TotalSeconds:0.0} 秒");
+                reporter.Send(TavernInstallStage.Done, L.Get("Ins.Stage.DepsReady"), null, 100, force: true);
+                log.Info(L.F("Ins.Log.DepsDone", clock.Elapsed.TotalSeconds.ToString("0.0")));
 
                 return new TavernInstallResult(
                     true,
-                    "Node 依赖已装好",
-                    $"耗时 {clock.Elapsed.TotalSeconds:0.0} 秒，现在可以直接启动。",
+                    L.Get("Ins.DepsOk.Title"),
+                    L.F("Ins.DepsOk.Body", clock.Elapsed.TotalSeconds.ToString("0.0")),
                     log.FilePath,
                     null,
                     null)
@@ -208,13 +208,13 @@ namespace AstraBrew_Launcher.Services
             }
             catch (OperationCanceledException)
             {
-                log.Warn("用户取消依赖安装");
-                return Failure("已取消安装依赖。", "代码还在，随时可以再点一次「安装依赖」。", log);
+                log.Warn(L.Get("Ins.Log.DepsCancelled"));
+                return Failure(L.Get("Ins.DepsCancelled.Title"), L.Get("Ins.DepsCancelled.Hint"), log);
             }
             catch (Exception ex)
             {
-                log.Fail("依赖安装出错", ex);
-                return Failure("安装依赖时出错，请重试。", ex.Message, log) with { DepsReady = false };
+                log.Fail(L.Get("Ins.Log.DepsError"), ex);
+                return Failure(L.Get("Ins.DepsError.Title"), ex.Message, log) with { DepsReady = false };
             }
         }
 
@@ -228,29 +228,29 @@ namespace AstraBrew_Launcher.Services
             var reporter = new Reporter(progress);
             var clock = Stopwatch.StartNew();
 
-            log.Info($"内置实例安装开始 · 目标版本 {revision}");
-            log.Info($"安装目录 {InstallRoot}");
-            log.Info($"暂存目录 {StagingRoot}");
+            log.Info(L.F("Ins.Log.Start", revision));
+            log.Info(L.F("Ins.Log.InstallRoot", InstallRoot));
+            log.Info(L.F("Ins.Log.StagingRoot", StagingRoot));
 
             string? git = RuntimeProbe.LocateGit();
             if (git is null)
             {
-                log.Fail("没有找到 Git 可执行文件");
-                return Failure("没有找到 Git，无法拉取源码。", "请先在「设置 → 运行环境」里安装 Git。", log);
+                log.Fail(L.Get("Ins.Log.NoGit"));
+                return Failure(L.Get("Ins.NoGit.Title"), L.Get("Ins.NoGit.Hint"), log);
             }
 
             log.Info($"Git {git}");
 
             try
             {
-                reporter.Send(TavernInstallStage.Preparing, "检查磁盘空间…", null, 0, force: true);
+                reporter.Send(TavernInstallStage.Preparing, L.Get("Ins.Stage.CheckDisk"), null, 0, force: true);
 
                 if (FreeSpace(AppPaths.RoamingRoot) is { } free && free < RequiredFreeBytes)
                 {
-                    log.Fail($"磁盘剩余 {ComponentInstaller.FormatSize(free)}，不足 {ComponentInstaller.FormatSize(RequiredFreeBytes)}");
+                    log.Fail(L.F("Ins.Log.DiskLow", ComponentInstaller.FormatSize(free), ComponentInstaller.FormatSize(RequiredFreeBytes)));
                     return Failure(
-                        $"磁盘空间不足，至少需要 {ComponentInstaller.FormatSize(RequiredFreeBytes)} 可用空间。",
-                        "清理系统盘后再点一次安装。",
+                        L.F("Ins.DiskLow.Title", ComponentInstaller.FormatSize(RequiredFreeBytes)),
+                        L.Get("Ins.DiskLow.Hint"),
                         log);
                 }
 
@@ -266,12 +266,12 @@ namespace AstraBrew_Launcher.Services
 
                     reporter.Send(
                         TavernInstallStage.Cloning,
-                        $"正在从{target.Name}拉取 {revision}…",
+                        L.F("Ins.Stage.Pulling", target.Name, revision),
                         $"$ git clone --depth 1 --branch {revision} {target.Url}",
                         1,
                         force: true);
 
-                    log.Info($"尝试 {target.Name} {target.Url}");
+                    log.Info(L.F("Ins.Log.Try", target.Name, target.Url));
                     CleanStaging(log);
 
                     CloneOutcome outcome = await CloneAsync(git, target, revision, reporter, log, token)
@@ -285,16 +285,16 @@ namespace AstraBrew_Launcher.Services
                     }
 
                     failures.Add($"{target.Name}：{outcome.Reason}");
-                    log.Warn($"{target.Name} 失败：{outcome.Reason}");
+                    log.Warn(L.F("Ins.Log.SourceFail", target.Name, outcome.Reason));
                 }
 
                 if (!installed)
                 {
                     CleanStaging(log);
-                    log.Fail($"所有源都失败：{string.Join(" / ", failures)}");
+                    log.Fail(L.F("Ins.Log.AllSourcesFail", string.Join(" / ", failures)));
                     return Failure(
-                        "拉取源码失败，没有拿到完整的代码。",
-                        "已依次尝试 " + string.Join("、", Describe(targets)) + "；请检查网络或代理后重试。",
+                        L.Get("Ins.PullFail.Title"),
+                        L.F("Ins.PullFail.Hint", string.Join(L.Get("Common.List.And"), Describe(targets))),
                         log);
                 }
 
@@ -302,11 +302,11 @@ namespace AstraBrew_Launcher.Services
                 if (!File.Exists(Path.Combine(StagingRoot, "package.json")))
                 {
                     CleanStaging(log);
-                    log.Fail("暂存目录里没有 package.json");
-                    return Failure("下载到的内容不像是酒馆源码，已清理。", "请稍后重试，或换一条下载通道。", log);
+                    log.Fail(L.Get("Ins.Log.StagingNoPackage"));
+                    return Failure(L.Get("Ins.NotSource.Title"), L.Get("Ins.NotSource.Hint"), log);
                 }
 
-                reporter.Send(TavernInstallStage.Committing, "正在写入安装目录…", null, CloneShare + 4, force: true);
+                reporter.Send(TavernInstallStage.Committing, L.Get("Ins.Stage.Writing"), null, CloneShare + 4, force: true);
 
                 bool hadInstall = Directory.Exists(InstallRoot);
 
@@ -317,14 +317,14 @@ namespace AstraBrew_Launcher.Services
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     CleanStaging(log);
-                    log.Fail("覆盖安装目录失败", ex);
+                    log.Fail(L.Get("Ins.Log.ReplaceFail"), ex);
                     return Failure(
-                        hadInstall ? "换版失败，原来的版本已保留。" : "安装失败，安装目录没有写入。",
-                        "请先在仪表盘停止正在运行的酒馆，再试一次。",
+                        hadInstall ? L.Get("Ins.ReplaceFail.Title.Switch") : L.Get("Ins.ReplaceFail.Title.Install"),
+                        L.Get("Ins.ReplaceFail.Hint"),
                         log);
                 }
 
-                reporter.Send(TavernInstallStage.Verifying, "正在读取版本…", null, DepsShare - 2, force: true);
+                reporter.Send(TavernInstallStage.Verifying, L.Get("Ins.Stage.ReadingVersion"), null, DepsShare - 2, force: true);
                 string? version = ReadInstalledVersion() ?? revision;
                 WriteStamp(used, revision, version, log);
 
@@ -333,13 +333,13 @@ namespace AstraBrew_Launcher.Services
 
                 if (!deps.Ok)
                 {
-                    log.Fail($"依赖安装失败：{deps.Reason}");
-                    log.Info($"安装结束（依赖未就绪）· {version} · 耗时 {clock.Elapsed.TotalSeconds:0.0} 秒");
+                    log.Fail(L.F("Ins.Log.DepsFail", deps.Reason));
+                    log.Info(L.F("Ins.Log.DepsNotReady", version, clock.Elapsed.TotalSeconds.ToString("0.0")));
 
                     return new TavernInstallResult(
                         false,
-                        $"代码已就位（{version}），但依赖没有装好。",
-                        $"在版本管理页点「安装依赖」重试。{(deps.Reason is { Length: > 0 } reason ? reason : string.Empty)}",
+                        L.F("Ins.DepsNotReady.Title", version),
+                        L.F("Ins.DepsNotReady.Body", deps.Reason is { Length: > 0 } reason ? reason : string.Empty),
                         log.FilePath,
                         version,
                         used.Name)
@@ -348,13 +348,13 @@ namespace AstraBrew_Launcher.Services
                     };
                 }
 
-                reporter.Send(TavernInstallStage.Done, "安装完成", null, 100, force: true);
-                log.Info($"安装完成 · {version} · 来自 {used.Name} · 耗时 {clock.Elapsed.TotalSeconds:0.0} 秒");
+                reporter.Send(TavernInstallStage.Done, L.Get("Ins.Stage.Done"), null, 100, force: true);
+                log.Info(L.F("Ins.Log.Done", version, used.Name, clock.Elapsed.TotalSeconds.ToString("0.0")));
 
                 return new TavernInstallResult(
                     true,
-                    $"SillyTavern {version} 已安装到 {InstallRoot}",
-                    $"来自 {used.Name}，耗时 {clock.Elapsed.TotalSeconds:0.0} 秒。",
+                    L.F("Ins.Installed", version, InstallRoot),
+                    L.F("Ins.Done.Body", used.Name, clock.Elapsed.TotalSeconds.ToString("0.0")),
                     log.FilePath,
                     version,
                     used.Name)
@@ -365,20 +365,20 @@ namespace AstraBrew_Launcher.Services
             catch (OperationCanceledException)
             {
                 CleanStaging(log);
-                log.Warn("用户取消，暂存目录已清理");
-                return Failure("已取消安装。", "没有改动现有版本。", log);
+                log.Warn(L.Get("Ins.Log.Cancelled"));
+                return Failure(L.Get("Ins.Cancelled.Title"), L.Get("Ins.Cancelled.Hint"), log);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 CleanStaging(log);
-                log.Fail("安装失败", ex);
-                return Failure("安装失败：磁盘写入被拒绝。", "关闭杀毒软件的实时拦截后重试。", log);
+                log.Fail(L.Get("Ins.Log.Fail"), ex);
+                return Failure(L.Get("Ins.AccessDenied.Title"), L.Get("Ins.AccessDenied.Hint"), log);
             }
             catch (Exception ex)
             {
                 CleanStaging(log);
-                log.Fail("安装失败", ex);
-                return Failure("安装时出错，请重试。", ex.Message, log);
+                log.Fail(L.Get("Ins.Log.Fail"), ex);
+                return Failure(L.Get("Ins.Error.Title"), ex.Message, log);
             }
         }
 
@@ -431,7 +431,7 @@ namespace AstraBrew_Launcher.Services
             using Process? process = Process.Start(startInfo);
             if (process is null)
             {
-                return new CloneOutcome(false, "无法启动 Git");
+                return new CloneOutcome(false, L.Get("Ins.GitCannotStart"));
             }
 
             string? lastError = null;
@@ -490,11 +490,11 @@ namespace AstraBrew_Launcher.Services
 
             if (process.ExitCode == 0)
             {
-                reporter.Send(TavernInstallStage.Cloning, "代码已拉取，正在校验…", null, CloneShare, force: true);
+                reporter.Send(TavernInstallStage.Cloning, L.Get("Ins.Stage.Verifying"), null, CloneShare, force: true);
                 return new CloneOutcome(true, null);
             }
 
-            return new CloneOutcome(false, lastError ?? $"Git 退出码 {process.ExitCode}");
+            return new CloneOutcome(false, lastError ?? L.F("Ins.GitExit", process.ExitCode));
         }
 
         /// <summary>
@@ -509,7 +509,7 @@ namespace AstraBrew_Launcher.Services
             if (line.StartsWith("Cloning into", StringComparison.Ordinal))
             {
                 percent = 1;
-                detail = "正在连接仓库…";
+                detail = L.Get("Ins.Progress.Connecting");
                 return true;
             }
 
@@ -536,18 +536,18 @@ namespace AstraBrew_Launcher.Services
             if (line.StartsWith("Receiving objects", StringComparison.Ordinal))
             {
                 stage = 0.62 * value / 100;
-                detail = $"正在下载代码 · {value}%";
+                detail = L.F("Ins.Progress.Downloading", value);
             }
             else if (line.StartsWith("Resolving deltas", StringComparison.Ordinal))
             {
                 stage = 0.62 + 0.10 * value / 100;
-                detail = $"正在解包 · {value}%";
+                detail = L.F("Ins.Progress.Unpacking", value);
             }
             else if (line.StartsWith("Updating files", StringComparison.Ordinal)
                 || line.StartsWith("Checking out files", StringComparison.Ordinal))
             {
                 stage = 0.72 + 0.20 * value / 100;
-                detail = $"正在写入文件 · {value}%";
+                detail = L.F("Ins.Progress.Writing", value);
             }
             else
             {
@@ -580,26 +580,26 @@ namespace AstraBrew_Launcher.Services
             string? node = RuntimeProbe.LocateNode();
             if (node is null)
             {
-                return new DepsOutcome(false, "没有找到 Node.js，请先在「设置 → 运行环境」里安装。");
+                return new DepsOutcome(false, L.Get("Ins.NoNode"));
             }
 
             string? npmCli = RuntimeProbe.LocateNpmCli();
             if (npmCli is null)
             {
-                return new DepsOutcome(false, "没有找到 npm，Node.js 可能没有装完整。");
+                return new DepsOutcome(false, L.Get("Ins.NoNpm"));
             }
 
             string registry = LauncherSettings.NpmRegistryUrl;
 
             reporter.Send(
                 TavernInstallStage.InstallingDeps,
-                $"正在用{LauncherSettings.NpmRegistryName}源安装依赖…",
+                L.F("Ins.Stage.Npm", LauncherSettings.NpmRegistryName),
                 $"$ npm install --omit=dev --registry={registry}",
                 DepsShare,
                 force: true);
 
             log.Info($"npm {npmCli}");
-            log.Info($"npm install · 源 {LauncherSettings.NpmRegistryName} {registry} · 目录 {root}");
+            log.Info(L.F("Ins.Log.Npm", LauncherSettings.NpmRegistryName, registry, root));
 
             var startInfo = new ProcessStartInfo(node)
             {
@@ -637,7 +637,7 @@ namespace AstraBrew_Launcher.Services
             using Process? process = Process.Start(startInfo);
             if (process is null)
             {
-                return new DepsOutcome(false, "无法启动 npm。");
+                return new DepsOutcome(false, L.Get("Ins.NpmCannotStart"));
             }
 
             string? lastError = null;
@@ -650,10 +650,10 @@ namespace AstraBrew_Launcher.Services
             // 缓存命中时几百个包的行两秒内刷完，之后可能几分钟没有任何输出。
             // 光靠行驱动会让界面一直停在「已处理 1 个包」，所以另起一个秒表把「还在动」说出来。
             string StatusText() => fetched > 0
-                ? $"正在安装依赖 · 已处理 {fetched} 个包 · {clock.Elapsed.TotalSeconds:0} 秒"
+                ? L.F("Ins.Progress.NpmPackages", fetched, clock.Elapsed.TotalSeconds.ToString("0"))
                 : resolved > 0
-                    ? $"正在解析依赖 · 已查询 {resolved} 个包 · {clock.Elapsed.TotalSeconds:0} 秒"
-                    : $"正在准备依赖 · {clock.Elapsed.TotalSeconds:0} 秒";
+                    ? L.F("Ins.Progress.NpmResolving", resolved, clock.Elapsed.TotalSeconds.ToString("0"))
+                    : L.F("Ins.Progress.NpmPreparing", clock.Elapsed.TotalSeconds.ToString("0"));
 
             void Push(string? detail)
             {
@@ -699,8 +699,8 @@ namespace AstraBrew_Launcher.Services
 
                     fetched++;
                     string name = url[(url.LastIndexOf('/') + 1)..];
-                    log.Info($"npm: 取回 {name}");
-                    Push($"取回 {name}（{fetched}）");
+                    log.Info(L.F("Ins.Log.NpmFetch", name));
+                    Push(L.F("Ins.Progress.Fetch", name, fetched));
                     return;
                 }
 
@@ -780,15 +780,15 @@ namespace AstraBrew_Launcher.Services
 
             if (process.ExitCode != 0)
             {
-                return new DepsOutcome(false, lastError ?? $"npm 退出码 {process.ExitCode}。");
+                return new DepsOutcome(false, lastError ?? L.F("Ins.NpmExit", process.ExitCode));
             }
 
             if (!Directory.Exists(Path.Combine(root, "node_modules")))
             {
-                return new DepsOutcome(false, "npm 结束了，但没有生成 node_modules。");
+                return new DepsOutcome(false, L.Get("Ins.NoNodeModules"));
             }
 
-            log.Info($"npm install 完成 · 共取回 {fetched} 个包");
+            log.Info(L.F("Ins.Log.NpmDone", fetched));
             return new DepsOutcome(true, null);
         }
 
@@ -829,11 +829,11 @@ namespace AstraBrew_Launcher.Services
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    log.Warn($"上一次留下的旧目录清理失败：{ex.Message}");
+                    log.Warn(L.F("Ins.Log.OldCleanupFail", ex.Message));
                 }
 
-                reporter.Send(TavernInstallStage.Committing, "正在移走旧版本…", null, CloneShare + 4.5, force: true);
-                log.Info($"旧版本移到 {retired}");
+                reporter.Send(TavernInstallStage.Committing, L.Get("Ins.Stage.Retiring"), null, CloneShare + 4.5, force: true);
+                log.Info(L.F("Ins.Log.Retired", retired));
                 Directory.Move(InstallRoot, retired);
             }
 
@@ -847,14 +847,14 @@ namespace AstraBrew_Launcher.Services
                 if (retired is not null && !Directory.Exists(InstallRoot))
                 {
                     Directory.Move(retired, InstallRoot);
-                    log.Warn("新版本就位失败，已回滚到原版本");
+                    log.Warn(L.Get("Ins.Log.RolledBack"));
                 }
 
                 throw;
             }
 
-            reporter.Send(TavernInstallStage.Committing, "正在清理旧版本…", null, CloneShare + 5, force: true);
-            log.Info($"已就位 {InstallRoot}");
+            reporter.Send(TavernInstallStage.Committing, L.Get("Ins.Stage.CleaningOld"), null, CloneShare + 5, force: true);
+            log.Info(L.F("Ins.Log.Placed", InstallRoot));
 
             if (retired is not null)
             {
@@ -863,11 +863,11 @@ namespace AstraBrew_Launcher.Services
                 try
                 {
                     DeleteTree(retired);
-                    log.Info($"旧版本已删除 {retired}");
+                    log.Info(L.F("Ins.Log.OldRemoved", retired));
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    log.Warn($"旧版本目录删除失败，可手动清理 {retired}：{ex.Message}");
+                    log.Warn(L.F("Ins.Log.OldRemoveFail", retired, ex.Message));
                 }
             }
         }
@@ -913,7 +913,7 @@ namespace AstraBrew_Launcher.Services
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                log.Warn($"暂存目录清理失败：{ex.Message}");
+                log.Warn(L.F("Ins.Log.StagingCleanupFail", ex.Message));
             }
         }
 
@@ -965,7 +965,7 @@ namespace AstraBrew_Launcher.Services
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                log.Warn($"安装标记写入失败：{ex.Message}");
+                log.Warn(L.F("Ins.Log.MarkerFail", ex.Message));
             }
         }
 

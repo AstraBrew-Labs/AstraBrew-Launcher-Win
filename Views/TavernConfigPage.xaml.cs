@@ -68,6 +68,9 @@ namespace AstraBrew_Launcher.Views
             Unloaded += OnUnloaded;
         }
 
+        /// <summary>上一次保存的时间，用来重拼「已保存 · 14:32」这句。</summary>
+        private DateTime? _savedAt;
+
         /// <summary>x:Bind 数据源：两个版本的白名单列表指向同一个集合。</summary>
         public ObservableCollection<WhitelistEntry> Whitelist => TavernSettings.Whitelist;
 
@@ -77,6 +80,10 @@ namespace AstraBrew_Launcher.Views
         {
             TavernSettings.Changed += Shared_Changed;
             TavernSettings.WhitelistChanged += Shared_WhitelistChanged;
+
+            // 页头状态、版本说明、白名单提示这些是代码拼出来的，Loc 刷不到
+            LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+            LanguageSwitch.LanguageChanged += OnLanguageChanged;
 
             _syncing = true;
             ApplyVersion();
@@ -109,10 +116,24 @@ namespace AstraBrew_Launcher.Views
         {
             TavernSettings.Changed -= Shared_Changed;
             TavernSettings.WhitelistChanged -= Shared_WhitelistChanged;
+            LanguageSwitch.LanguageChanged -= OnLanguageChanged;
 
             // 还没到防抖时间就切走了：这里补一次，别把改动丢了
             _saveTimer.Stop();
             SaveToConfig();
+        }
+
+        /// <summary>
+        /// 换语言：静态文字由 <c>Loc</c> 重刷，这里重画由状态拼出来的那几处——
+        /// 版本说明、白名单提示、保存状态与项数。
+        /// </summary>
+        private void OnLanguageChanged(object? sender, EventArgs e)
+        {
+            ApplyVersion();
+            SyncBrowserRows();
+            SyncWhitelistMeta();
+            SyncWhitelistUi();
+            RefreshSaveState();
         }
 
         // ==================== 版本切换 ====================
@@ -134,13 +155,11 @@ namespace AstraBrew_Launcher.Views
             SimplePanel.Visibility = simple ? Visibility.Visible : Visibility.Collapsed;
             AdvancedPanel.Visibility = simple ? Visibility.Collapsed : Visibility.Visible;
 
-            VersionTitle.Text = simple ? "小白版 · 常用设置" : "高手版 · 全部选项";
-            VersionHint.Text = simple
-                ? "只放最常用的几项，其余按官方推荐值跑就好。"
-                : "官方 config.yaml 的全部选项，逐项标注对应字段。";
+            VersionTitle.Text = L.Get(simple ? "Cfg.Version.Simple.Title" : "Cfg.Version.Advanced.Title");
+            VersionHint.Text = L.Get(simple ? "Cfg.Version.Simple.Hint" : "Cfg.Version.Advanced.Hint");
             VersionCount.Text = simple
-                ? (TavernSettings.IsNormalMode ? "5 项" : "3 项")
-                : "9 组";
+                ? L.F("Cfg.Version.Count", TavernSettings.IsNormalMode ? 5 : 3)
+                : L.Get("Cfg.Version.Advanced.Count");
         }
 
         // ==================== 分组折叠 ====================
@@ -319,14 +338,12 @@ namespace AstraBrew_Launcher.Views
             // 副标题与项数跟着变：选项都没了还说「含默认浏览器」「5 项」会显得自相矛盾
             if (NetworkSectionHint is not null)
             {
-                NetworkSectionHint.Text = normal
-                    ? "端口、监听地址、协议栈与默认浏览器"
-                    : "端口、监听地址与协议栈";
+                NetworkSectionHint.Text = L.Get(normal ? "Cfg.G1.HintLabel" : "Cfg.G1.Hint.Client");
             }
 
             if (VersionCount is not null && LauncherSettings.IsSimpleLevel)
             {
-                VersionCount.Text = normal ? "5 项" : "3 项";
+                VersionCount.Text = L.F("Cfg.Version.Count", normal ? 5 : 3);
             }
         }
 
@@ -356,10 +373,10 @@ namespace AstraBrew_Launcher.Views
             bool locked = TavernSettings.WhitelistLocked;
 
             string note = desktop
-                ? "桌面模式只允许本机通过内置窗口访问，名单固定为 127.0.0.1 与 ::1，无需修改。"
+                ? L.Get("Cfg.Whitelist.Note.Desktop")
                 : locked
-                    ? $"名单按「{TavernSettings.ScopeName}」自动生成，不可手动修改。"
-                    : "只有名单里的地址能连上酒馆；127.0.0.1 与 ::1 固定保留，其余可以增删。";
+                    ? L.F("Cfg.Whitelist.Note.Scope", TavernSettings.ScopeName)
+                    : L.Get("Cfg.Whitelist.Note.Editable");
 
             SimpleWhitelistNote.Text = note;
             AdvWhitelistNote.Text = note;
@@ -367,19 +384,19 @@ namespace AstraBrew_Launcher.Views
             if (SimpleWhitelistSubtitle is not null)
             {
                 SimpleWhitelistSubtitle.Text = desktop
-                    ? "桌面模式由启动器的内置窗口打开酒馆，只有本机能访问。"
+                    ? L.Get("Cfg.Whitelist.Hint.Desktop")
                     : locked
-                        ? "服务器模式下按「服务范围」自动生成：局域网放行本机网段，互联网全开放。"
-                        : "只有名单里的地址能连上酒馆；127.0.0.1 与 ::1 固定保留，其余可以增删。";
+                        ? L.Get("Cfg.Whitelist.Hint.Server")
+                        : L.Get("Cfg.Whitelist.Note.Editable");
             }
 
             if (AdvWhitelistSubtitle is not null)
             {
                 AdvWhitelistSubtitle.Text = desktop
-                    ? "桌面模式只允许本机访问，白名单固定为 127.0.0.1 与 ::1。对应 whitelistMode。"
+                    ? L.Get("Cfg.Whitelist.Adv.Desktop")
                     : locked
-                        ? "开启后只有名单内的地址能连接。名单按「服务范围」自动生成，对应 whitelistMode。"
-                        : "开启后只有名单内的地址能连接；127.0.0.1 与 ::1 固定保留。对应 whitelistMode。";
+                        ? L.Get("Cfg.Whitelist.Adv.Scope")
+                        : L.Get("Cfg.Whitelist.Adv.On");
             }
         }
 
@@ -457,7 +474,7 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            SimpleWhitelistCount.Text = $"{TavernSettings.Whitelist.Count} 条";
+            SimpleWhitelistCount.Text = L.F("Cfg.Whitelist.Count", TavernSettings.Whitelist.Count);
         }
 
         // ==================== 共享状态 ====================
@@ -530,7 +547,7 @@ namespace AstraBrew_Launcher.Views
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                Notify("保存失败", ex.Message, NotifySeverity.Error);
+                Notify(L.Get("Cfg.Notify.SaveFail"), ex.Message, NotifySeverity.Error);
             }
         }
 
@@ -917,7 +934,7 @@ namespace AstraBrew_Launcher.Views
             _resetting = true;
             _saveTimer.Stop();
             ResetBtn.IsEnabled = false;
-            StateText.Text = "正在恢复默认配置…";
+            StateText.Text = L.Get("Cfg.State.Reverting");
 
             try
             {
@@ -928,31 +945,32 @@ namespace AstraBrew_Launcher.Views
                     ApplyFetchedDefaults();
 
                     Notify(
-                        "已恢复默认配置",
+                        L.Get("Cfg.Notify.ResetOkLabel"),
                         result.Downloaded
-                            ? $"本地没有默认配置，已通过{result.Source}下载并覆盖 {result.Path}；"
-                                + "端口 11451、IPv6 与局域网访问已开启，白名单只保留本机。"
-                            : $"已用本地默认配置覆盖 {result.Path}；"
-                                + "端口 11451、IPv6 与局域网访问已开启，白名单只保留本机。",
+                            ? L.F("Cfg.Notify.ResetOk.Downloaded", result.Source, result.Path)
+                            : L.F("Cfg.Notify.ResetOk.Local", result.Path),
                         NotifySeverity.Success);
                 }
                 else
                 {
-                    Notify("恢复默认配置失败", result.Error ?? "请检查网络后重试。", NotifySeverity.Error);
+                    Notify(
+                        L.Get("Cfg.Notify.ResetFail"),
+                        result.Error ?? L.Get("Cfg.Notify.CheckNetwork"),
+                        NotifySeverity.Error);
                 }
             }
             finally
             {
                 _resetting = false;
                 ResetBtn.IsEnabled = true;
-                StateText.Text = _dirty ? "有未保存修改" : "已同步";
+                StateText.Text = L.Get(_dirty ? "Cfg.State.Dirty" : "Cfg.State.Synced");
             }
         }
 
         private void OpenConfigFile_Click(object sender, RoutedEventArgs e)
         {
             Notify(
-                "已定位配置文件",
+                L.Get("Cfg.Notify.LocateOk"),
                 GlobalTavernConfig.ActivePath,
                 NotifySeverity.Informational);
         }
@@ -985,9 +1003,9 @@ namespace AstraBrew_Launcher.Views
             FetchProgress.Visibility = Visibility.Visible;
             FetchProgress.IsActive = true;
             // 三条渠道的先后：镜像 → 加速 → 直连，状态文字直接说清从哪开始试
-            MaskStatusText.Text = GithubAccel.Enabled
-                ? "正在从 GitCode 镜像下载默认配置，失败会依次回退到加速与直连…"
-                : "正在从 GitCode 镜像下载默认配置，失败会回退到 GitHub 直连…";
+            MaskStatusText.Text = L.Get(GithubAccel.Enabled
+                ? "Cfg.Download.Progress.Mirror"
+                : "Cfg.Download.Progress.Direct");
 
             try
             {
@@ -1000,15 +1018,17 @@ namespace AstraBrew_Launcher.Views
                     MaskStatusText.Text = string.Empty;
 
                     Notify(
-                        "默认配置已就绪",
-                        $"已通过{result.Source}获取并保存到 {result.Path}；"
-                            + "端口 11451、IPv6 与局域网访问已开启，白名单只保留本机。",
+                        L.Get("Cfg.Notify.DefaultOkLabel"),
+                        L.F("Cfg.Notify.DefaultOk.Body", result.Source, result.Path),
                         NotifySeverity.Success);
                 }
                 else
                 {
-                    MaskStatusText.Text = "获取失败：" + result.Error;
-                    Notify("获取默认配置失败", result.Error ?? "请检查网络后重试。", NotifySeverity.Error);
+                    MaskStatusText.Text = L.F("Cfg.Mask.Failed", result.Error);
+                    Notify(
+                        L.Get("Cfg.Notify.FetchFail"),
+                        result.Error ?? L.Get("Cfg.Notify.CheckNetwork"),
+                        NotifySeverity.Error);
                 }
             }
             finally
@@ -1046,15 +1066,15 @@ namespace AstraBrew_Launcher.Views
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                Notify("读取配置失败", ex.Message, NotifySeverity.Error);
+                Notify(L.Get("Cfg.Notify.ReadFail"), ex.Message, NotifySeverity.Error);
                 return;
             }
 
             if (!GlobalTavernConfig.LooksLikeConfig(imported))
             {
                 Notify(
-                    "这不是酒馆配置",
-                    "文件里找不到 port 与 whitelistMode 这两项，看起来不是 SillyTavern 的 config.yaml。",
+                    L.Get("Cfg.Import.NotTavern.Title"),
+                    L.Get("Cfg.Import.NotTavern.Body"),
                     NotifySeverity.Warning);
                 return;
             }
@@ -1062,17 +1082,15 @@ namespace AstraBrew_Launcher.Views
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = "导入配置",
+                Title = L.Get("Cfg.Import.Dialog.Title"),
                 Content = new TextBlock
                 {
-                    Text = $"将 {Path.GetFileName(picked)} 导入到：\n{GlobalTavernConfig.GlobalPath}\n\n"
-                        + "覆盖：当前配置整份替换成它，现有改动全部丢弃。\n"
-                        + "合并：保留当前配置，只把它里面多出来的项补进来。",
+                    Text = L.F("Cfg.Import.Dialog.Body", Path.GetFileName(picked), GlobalTavernConfig.GlobalPath),
                     TextWrapping = TextWrapping.Wrap,
                 },
-                PrimaryButtonText = "覆盖",
-                SecondaryButtonText = "合并",
-                CloseButtonText = "取消",
+                PrimaryButtonText = L.Get("Cfg.Import.Overwrite"),
+                SecondaryButtonText = L.Get("Cfg.Import.Merge"),
+                CloseButtonText = L.Get("Common.Action.Cancel.Content"),
                 DefaultButton = ContentDialogButton.Close,
             };
 
@@ -1089,8 +1107,8 @@ namespace AstraBrew_Launcher.Views
                     LoadFromConfig();
                     MarkClean();
                     Notify(
-                        "配置已覆盖",
-                        $"已用 {fileName} 覆盖 {GlobalTavernConfig.GlobalPath}。",
+                        L.Get("Cfg.Notify.Imported.Title"),
+                        L.F("Cfg.Notify.Imported.Body", fileName, GlobalTavernConfig.GlobalPath),
                         NotifySeverity.Success);
                 }
                 else if (choice == ContentDialogResult.Secondary)
@@ -1100,16 +1118,16 @@ namespace AstraBrew_Launcher.Views
                     MarkClean();
 
                     Notify(
-                        "配置已合并",
+                        L.Get("Cfg.Notify.Merged.Title"),
                         merged.AddedKeys == 0
-                            ? $"{fileName} 里没有当前缺少的项，配置保持不变。"
-                            : $"从 {fileName} 补入 {merged.AddedKeys} 项，当前已有的设置一个都没动。",
+                            ? L.F("Cfg.Notify.Merged.None", fileName)
+                            : L.F("Cfg.Notify.Merged.Body", fileName, merged.AddedKeys),
                         merged.AddedKeys == 0 ? NotifySeverity.Informational : NotifySeverity.Success);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
-                Notify("导入失败", ex.Message, NotifySeverity.Error);
+                Notify(L.Get("Cfg.Notify.ImportFail"), ex.Message, NotifySeverity.Error);
             }
         }
 
@@ -1149,8 +1167,8 @@ namespace AstraBrew_Launcher.Views
                 _dirty = true;
                 StateDotClean.Visibility = Visibility.Collapsed;
                 StateDotDirty.Visibility = Visibility.Visible;
-                StateText.Text = "正在编辑";
-                DirtyHint.Text = "停手后会自动保存";
+                StateText.Text = L.Get("Cfg.State.Editing");
+                DirtyHint.Text = L.Get("Cfg.DirtyHint.Editing");
             }
 
             // 防抖：每改一次就重新计时，停手 700ms 才真正写盘
@@ -1169,8 +1187,31 @@ namespace AstraBrew_Launcher.Views
 
             StateDotClean.Visibility = Visibility.Visible;
             StateDotDirty.Visibility = Visibility.Collapsed;
-            StateText.Text = "已保存";
-            DirtyHint.Text = $"已保存 · {DateTime.Now:HH:mm}，下次启动服务时生效";
+
+            // 记下时间：换语言时这句要按新语言重拼，不能把「已保存 · 14:32」丢掉
+            _savedAt = DateTime.Now;
+            RefreshSaveState();
+        }
+
+        /// <summary>保存状态那两行按当前状态重写：改完、保存完、换语言都要走这里。</summary>
+        private void RefreshSaveState()
+        {
+            if (StateText is null)
+            {
+                return;
+            }
+
+            if (_dirty)
+            {
+                StateText.Text = L.Get("Cfg.State.Editing");
+                DirtyHint.Text = L.Get("Cfg.DirtyHint.Editing");
+                return;
+            }
+
+            StateText.Text = L.Get("Cfg.State.Saved");
+            DirtyHint.Text = _savedAt is { } at
+                ? L.F("Cfg.DirtyHint.Saved", at.ToString("HH:mm"))
+                : string.Empty;
         }
 
         /// <summary>页面播报统一走全局消息（窗口右下角），页面里不再挂 InfoBar。</summary>

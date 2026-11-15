@@ -11,7 +11,7 @@
     <StackPanel Spacing="12">
         <controls:SegmentedPicker
             x:Name="SourcePicker"
-            Options="从别的启动器导入,从旧版导入"
+            OptionsKey="Setup.S1.Mode.Option"
             SelectionChanged="SourcePicker_SelectionChanged" />
 
         <!--  ==================== 从酒馆启动器 GUI 迁移 ====================  -->
@@ -28,18 +28,17 @@
                         VerticalAlignment="Center"
                         FontSize="12.5"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        Text="正在找旧数据…"
                         TextWrapping="Wrap" />
 
                     <Button
                         x:Name="PickFolderButton"
                         Grid.Column="1"
                         Click="PickConfig_Click"
-                        ToolTipService.ToolTip="选酒馆根目录里的 config.yaml"
+                        controls:Loc.ToolTip="Setup.S1.Migration.PickTip"
                         Visibility="Collapsed">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon FontSize="12" Glyph="&#xE8E5;" />
-                            <TextBlock Text="自己选文件" />
+                            <TextBlock controls:Loc.Text="Setup.S1.Pick" />
                         </StackPanel>
                     </Button>
                 </Grid>
@@ -78,7 +77,7 @@
                 <Button
                     x:Name="GuiRescanButton"
                     Click="GuiRescan_Click"
-                    Content="再找一次"
+                    controls:Loc.Content="Setup.S1.Rescan"
                     Visibility="Collapsed" />
                 <Button
                     x:Name="GuiRunButton"
@@ -87,7 +86,7 @@
                     Visibility="Collapsed">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon FontSize="12" Glyph="&#xE72A;" />
-                        <TextBlock Text="开始搬" />
+                        <TextBlock controls:Loc.Text="Setup.S1.Start" />
                     </StackPanel>
                 </Button>
             </StackPanel>
@@ -140,7 +139,7 @@
                 <Button
                     x:Name="LegacyRescanButton"
                     Click="LegacyRescan_Click"
-                    Content="再找一次"
+                    controls:Loc.Content="Setup.S1.Rescan"
                     Visibility="Collapsed" />
                 <Button
                     x:Name="LegacyRunButton"
@@ -149,7 +148,7 @@
                     Visibility="Collapsed">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon FontSize="12" Glyph="&#xE72A;" />
-                        <TextBlock Text="开始整理" />
+                        <TextBlock controls:Loc.Text="Setup.S1.StartLegacy" />
                     </StackPanel>
                 </Button>
             </StackPanel>
@@ -166,7 +165,7 @@
 
         <TextBlock
             Style="{StaticResource FootnoteTextStyle}"
-            Text="不想搬就点「下一步」。搬的过程只复制和改名，不会删你的东西。"
+            controls:Loc.Text="Setup.S1.Intro"
             TextWrapping="Wrap" />
     </StackPanel>
 </UserControl>

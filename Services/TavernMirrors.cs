@@ -102,7 +102,7 @@ namespace AstraBrew_Launcher.Services
         {
             if (!IsMirror(channel))
             {
-                return MirrorRefs.Failed(channel, "当前是 GitHub 直连，没有镜像需要比对");
+                return MirrorRefs.Failed(channel, L.Get("Miss.Mirror.Direct"));
             }
 
             if (!force && TryGetCached(channel, out MirrorRefs cached))
@@ -153,7 +153,7 @@ namespace AstraBrew_Launcher.Services
             string? git = RuntimeProbe.LocateGit();
             if (git is null)
             {
-                return MirrorRefs.Failed(channel, "尚未安装 Git，无法比对镜像");
+                return MirrorRefs.Failed(channel, L.Get("Miss.Mirror.NoGit"));
             }
 
             string url = TavernSource.RepoUrl(channel);
@@ -187,7 +187,7 @@ namespace AstraBrew_Launcher.Services
                 using Process? process = Process.Start(startInfo);
                 if (process is null)
                 {
-                    return MirrorRefs.Failed(channel, "无法启动 Git");
+                    return MirrorRefs.Failed(channel, L.Get("Miss.Mirror.CannotStart"));
                 }
 
                 Task<string> stdout = process.StandardOutput.ReadToEndAsync();
@@ -203,7 +203,7 @@ namespace AstraBrew_Launcher.Services
                 catch (OperationCanceledException)
                 {
                     TryKill(process);
-                    return MirrorRefs.Failed(channel, token.IsCancellationRequested ? "已取消" : "比对镜像超时");
+                    return MirrorRefs.Failed(channel, token.IsCancellationRequested ? L.Get("Miss.Mirror.Cancelled") : L.Get("Miss.Mirror.Timeout"));
                 }
 
                 string output = await stdout.ConfigureAwait(false);
@@ -211,7 +211,7 @@ namespace AstraBrew_Launcher.Services
 
                 if (process.ExitCode != 0)
                 {
-                    return MirrorRefs.Failed(channel, FirstLine(errors) ?? $"Git 退出码 {process.ExitCode}");
+                    return MirrorRefs.Failed(channel, FirstLine(errors) ?? L.F("Miss.Mirror.Exit", process.ExitCode));
                 }
 
                 foreach (string line in output.Split('\n'))
@@ -238,7 +238,7 @@ namespace AstraBrew_Launcher.Services
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
-                return MirrorRefs.Failed(channel, FirstLine(ex.Message) ?? "无法读取镜像仓库");
+                return MirrorRefs.Failed(channel, FirstLine(ex.Message) ?? L.Get("Miss.Mirror.Unreadable"));
             }
         }
 

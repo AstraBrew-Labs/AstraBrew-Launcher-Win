@@ -248,9 +248,9 @@ namespace AstraBrew_Launcher.Services
             int logical = Math.Max(1, Environment.ProcessorCount);
             return LauncherSettings.CpuCores switch
             {
-                CpuCorePreference.Auto => $"自动 · {logical} 核留 {(logical >= 8 ? 2 : 1)} 给系统",
-                CpuCorePreference.Half => $"一半 · {logical} 核用 {Math.Max(1, logical / 2)}",
-                _ => $"全部 · {logical} 核全开",
+                CpuCorePreference.Auto => L.F("Miss.CpuAuto", logical, logical >= 8 ? 2 : 1),
+                CpuCorePreference.Half => L.F("Miss.CpuHalf", logical, Math.Max(1, logical / 2)),
+                _ => L.F("Miss.CpuAll", logical),
             };
         }
 

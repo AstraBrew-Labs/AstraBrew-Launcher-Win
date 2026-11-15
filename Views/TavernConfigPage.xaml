@@ -45,10 +45,10 @@
                         <Button
                             Width="18"
                             Height="18"
-                            AutomationProperties.Name="移除该项"
+                            panels:Loc.Name="Cfg.Remove.Name"
                             Click="RemoveWhitelist_Click"
                             Style="{StaticResource ChipCloseButtonStyle}"
-                            ToolTipService.ToolTip="从白名单移除">
+                            panels:Loc.ToolTip="Cfg.Remove.Tip">
                             <FontIcon FontSize="9" Glyph="&#xE711;" />
                         </Button>
                     </StackPanel>
@@ -69,10 +69,10 @@
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Spacing="3">
-                    <TextBlock Style="{StaticResource PageTitleTextStyle}" Text="酒馆配置" />
+                    <TextBlock Style="{StaticResource PageTitleTextStyle}" panels:Loc.Text="Cfg.Page.Title" />
                     <TextBlock
                         Style="{StaticResource PageSubtitleTextStyle}"
-                        Text="调整端口、访问范围与启动行为，修改在下次启动服务时生效。" />
+                        panels:Loc.Text="Cfg.Page.Subtitle" />
                 </StackPanel>
 
                 <StackPanel
@@ -97,31 +97,31 @@
                                     Fill="{ThemeResource SystemFillColorCautionBrush}"
                                     Visibility="Collapsed" />
                             </Grid>
-                            <TextBlock x:Name="StateText" Style="{StaticResource StatusPillTextStyle}" Text="已同步" />
+                            <TextBlock x:Name="StateText" Style="{StaticResource StatusPillTextStyle}" panels:Loc.Text="Cfg.State.Synced" />
                         </StackPanel>
                     </Border>
 
-                    <Button AutomationProperties.Name="打开配置文件" Click="OpenConfigFile_Click">
+                    <Button panels:Loc.Name="Cfg.Action.OpenFile" Click="OpenConfigFile_Click">
                         <StackPanel Orientation="Horizontal" Spacing="7">
                             <FontIcon FontSize="13" Glyph="&#xE8E5;" />
-                            <TextBlock Text="打开配置文件" />
+                            <TextBlock panels:Loc.Text="Cfg.Action.OpenFile" />
                         </StackPanel>
                     </Button>
 
-                    <Button AutomationProperties.Name="导入配置" Click="ImportConfig_Click">
+                    <Button panels:Loc.Name="Cfg.Action.Import" Click="ImportConfig_Click">
                         <StackPanel Orientation="Horizontal" Spacing="7">
                             <FontIcon FontSize="13" Glyph="&#xE8B5;" />
-                            <TextBlock Text="导入配置" />
+                            <TextBlock panels:Loc.Text="Cfg.Action.Import" />
                         </StackPanel>
                     </Button>
 
                     <Button
                         x:Name="ResetBtn"
-                        AutomationProperties.Name="恢复默认配置"
+                        panels:Loc.Name="Cfg.Action.Reset.Name"
                         Click="Reset_Click">
                         <StackPanel Orientation="Horizontal" Spacing="7">
                             <FontIcon FontSize="13" Glyph="&#xE777;" />
-                            <TextBlock Text="恢复默认" />
+                            <TextBlock panels:Loc.Text="Cfg.Action.ResetLabel" />
                         </StackPanel>
                     </Button>
                 </StackPanel>
@@ -139,26 +139,26 @@
                         <StackPanel Orientation="Horizontal" Spacing="3">
                             <RadioButton
                                 x:Name="SimpleRadio"
-                                AutomationProperties.Name="小白版"
+                                panels:Loc.Name="Cfg.Version.SimpleLabel"
                                 Checked="Version_Checked"
                                 GroupName="ConfigVersion"
                                 IsChecked="True"
                                 Style="{StaticResource SegmentRadioStyle}">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon FontSize="12" Glyph="&#xE8A5;" />
-                                    <TextBlock Text="小白版" />
+                                    <TextBlock panels:Loc.Text="Cfg.Version.SimpleLabel" />
                                 </StackPanel>
                             </RadioButton>
 
                             <RadioButton
                                 x:Name="AdvancedRadio"
-                                AutomationProperties.Name="高手版"
+                                panels:Loc.Name="Cfg.Version.AdvancedLabel"
                                 Checked="Version_Checked"
                                 GroupName="ConfigVersion"
                                 Style="{StaticResource SegmentRadioStyle}">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon FontSize="12" Glyph="&#xE943;" />
-                                    <TextBlock Text="高手版" />
+                                    <TextBlock panels:Loc.Text="Cfg.Version.AdvancedLabel" />
                                 </StackPanel>
                             </RadioButton>
                         </StackPanel>
@@ -171,11 +171,11 @@
                         </Grid.ColumnDefinitions>
 
                         <StackPanel Spacing="1" VerticalAlignment="Center">
-                            <TextBlock x:Name="VersionTitle" Style="{StaticResource CellTitleTextStyle}" Text="小白版 · 常用设置" />
+                            <TextBlock x:Name="VersionTitle" Style="{StaticResource CellTitleTextStyle}" panels:Loc.Text="Cfg.Version.Simple.Title" />
                             <TextBlock
                                 x:Name="VersionHint"
                                 Style="{StaticResource FieldHintTextStyle}"
-                                Text="只放最常用的几项，其余按官方推荐值跑就好。" />
+                                panels:Loc.Text="Cfg.Version.Simple.Hint" />
                         </StackPanel>
 
                         <TextBlock
@@ -184,7 +184,7 @@
                             Margin="10,0,0,0"
                             VerticalAlignment="Center"
                             Style="{StaticResource FootnoteTextStyle}"
-                            Text="5 项" />
+                            panels:Loc.Text="Cfg.Version.Count" />
                     </Grid>
                 </Grid>
             </Border>
@@ -216,10 +216,10 @@
                                 <TextBlock
                                     FontSize="15"
                                     Style="{StaticResource CellTitleTextStyle}"
-                                    Text="常用设置" />
+                                    panels:Loc.Text="Cfg.Simple.Section.Title" />
                                 <TextBlock
                                     Style="{StaticResource FieldHintTextStyle}"
-                                    Text="改完自动保存，下次启动酒馆时生效。" />
+                                    panels:Loc.Text="Cfg.Simple.Section.Hint" />
                             </StackPanel>
                         </Grid>
 
@@ -236,15 +236,15 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="端口" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="手机、平板访问酒馆时用的门牌号，一般不用改。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.Simple.Port.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.Simple.Port.Hint" />
                                     </StackPanel>
 
                                     <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
                                         <NumberBox
                                             x:Name="SimplePortBox"
                                             Width="150"
-                                            AutomationProperties.Name="端口"
+                                            panels:Loc.Name="Cfg.Simple.Port.Title"
                                             LargeChange="100"
                                             Maximum="65535"
                                             Minimum="1024"
@@ -257,7 +257,7 @@
                                             HorizontalAlignment="Right"
                                             Foreground="{ThemeResource SystemFillColorCriticalBrush}"
                                             Style="{StaticResource FieldHintTextStyle}"
-                                            Text="端口需在 1024–65535 之间"
+                                            panels:Loc.Text="Cfg.Port.Range"
                                             TextWrapping="NoWrap"
                                             Visibility="Collapsed" />
                                     </StackPanel>
@@ -273,14 +273,14 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="局域网访问" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="打开后，同一个 Wi-Fi 下的手机、平板也能打开酒馆。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.Simple.Lan.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.Simple.Lan.Hint" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         x:Name="SimpleLanToggle"
                                         Grid.Column="1"
-                                        AutomationProperties.Name="局域网访问"
+                                        panels:Loc.Name="Cfg.Simple.Lan.Title"
                                         OffContent=""
                                         OnContent=""
                                         Toggled="Lan_Toggled" />
@@ -296,14 +296,14 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="自动打开浏览器" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="启动后自动帮你打开酒馆页面，不用手动点。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.Simple.AutoOpen.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.Simple.AutoOpen.Hint" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         x:Name="SimpleAutoBrowserToggle"
                                         Grid.Column="1"
-                                        AutomationProperties.Name="自动打开浏览器"
+                                        panels:Loc.Name="Cfg.Simple.AutoOpen.Title"
                                         IsOn="True"
                                         OffContent=""
                                         OnContent=""
@@ -320,20 +320,20 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="默认浏览器" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="自动打开时用哪个浏览器；和首页的快捷切换是同一个设置。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.Simple.Browser.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.Simple.Browser.Hint" />
                                     </StackPanel>
 
                                     <ComboBox
                                         x:Name="SimpleBrowserCombo"
                                         Grid.Column="1"
                                         Width="180"
-                                        AutomationProperties.Name="默认浏览器"
+                                        panels:Loc.Name="Cfg.Simple.Browser.Title"
                                         SelectionChanged="Browser_SelectionChanged">
-                                        <ComboBoxItem Content="谷歌浏览器" />
+                                        <ComboBoxItem panels:Loc.Content="Cfg.Browser.Chrome" />
                                         <ComboBoxItem Content="Edge" />
-                                        <ComboBoxItem Content="火狐浏览器" />
-                                        <ComboBoxItem Content="系统默认" />
+                                        <ComboBoxItem panels:Loc.Content="Cfg.Browser.Firefox" />
+                                        <ComboBoxItem panels:Loc.Content="Cfg.Browser.System" />
                                     </ComboBox>
                                 </Grid>
                             </Border>
@@ -364,11 +364,11 @@
                                 <TextBlock
                                     FontSize="15"
                                     Style="{StaticResource CellTitleTextStyle}"
-                                    Text="IP 白名单" />
+                                    panels:Loc.Text="Cfg.Simple.Whitelist.Title" />
                                 <TextBlock
                                     Style="{StaticResource FieldHintTextStyle}"
                                     x:Name="SimpleWhitelistSubtitle"
-                                    Text="只有名单里的地址能连上酒馆；127.0.0.1 与 ::1 固定保留。" />
+                                    panels:Loc.Text="Cfg.Simple.Whitelist.Hint" />
                             </StackPanel>
 
                             <TextBlock
@@ -376,7 +376,7 @@
                                 Grid.Column="2"
                                 VerticalAlignment="Center"
                                 Style="{StaticResource FootnoteTextStyle}"
-                                Text="3 条" />
+                                panels:Loc.Text="Cfg.Whitelist.Count" />
                         </Grid>
 
                         <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
@@ -410,16 +410,16 @@
 
                                 <TextBox
                                     x:Name="SimpleWhitelistInput"
-                                    AutomationProperties.Name="新增白名单地址"
+                                    panels:Loc.Name="Cfg.Whitelist.Add.Name"
                                     Height="32"
                                     KeyDown="WhitelistInput_KeyDown"
-                                    PlaceholderText="输入 IP 或网段，回车即可添加" />
+                                    panels:Loc.Placeholder="Cfg.Whitelist.Add.Placeholder" />
 
                                 <Button
                                     Grid.Column="1"
-                                    AutomationProperties.Name="添加白名单"
+                                    panels:Loc.Name="Cfg.Whitelist.Add.ButtonName"
                                     Click="AddWhitelistSimple_Click"
-                                    Content="添加"
+                                    panels:Loc.Content="Cfg.Whitelist.Add.Button"
                                     Style="{StaticResource AccentActionButtonStyle}" />
                             </Grid>
 
@@ -432,7 +432,7 @@
                             <TextBlock
                                 x:Name="SimpleWhitelistNote"
                                 Style="{StaticResource FieldHintTextStyle}"
-                                Text="只有名单里的地址能连上酒馆；127.0.0.1 与 ::1 固定保留，其余可以增删。"
+                                panels:Loc.Text="Cfg.Whitelist.Note.Editable"
                                 TextWrapping="Wrap" />
                         </StackPanel>
                     </StackPanel>
@@ -453,7 +453,7 @@
                     <StackPanel>
                         <ToggleButton
                             x:Name="NetHeader"
-                            AutomationProperties.Name="网络与访问"
+                            panels:Loc.Name="Cfg.G1.Title"
                             IsChecked="True"
                             Style="{StaticResource SectionHeaderToggleStyle}"
                             Tag="Net"
@@ -478,11 +478,11 @@
                                     <TextBlock
                                         FontSize="15"
                                         Style="{StaticResource CellTitleTextStyle}"
-                                        Text="网络与访问" />
+                                        panels:Loc.Text="Cfg.G1.Title" />
                                     <TextBlock
                                         x:Name="NetworkSectionHint"
                                         Style="{StaticResource FieldHintTextStyle}"
-                                        Text="端口、监听地址、协议栈与默认浏览器" />
+                                        panels:Loc.Text="Cfg.G1.HintLabel" />
                                 </StackPanel>
 
                                 <FontIcon
@@ -512,15 +512,15 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="端口" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="服务监听端口。对应 port，可用范围 1024–65535。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G1.Port.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G1.Port.Hint" />
                                     </StackPanel>
 
                                     <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
                                         <NumberBox
                                             x:Name="AdvPortBox"
                                             Width="150"
-                                            AutomationProperties.Name="端口"
+                                            panels:Loc.Name="Cfg.G1.Port.Title"
                                             LargeChange="100"
                                             Maximum="65535"
                                             Minimum="1024"
@@ -533,7 +533,7 @@
                                             HorizontalAlignment="Right"
                                             Foreground="{ThemeResource SystemFillColorCriticalBrush}"
                                             Style="{StaticResource FieldHintTextStyle}"
-                                            Text="端口需在 1024–65535 之间"
+                                            panels:Loc.Text="Cfg.Port.Range"
                                             TextWrapping="NoWrap"
                                             Visibility="Collapsed" />
                                     </StackPanel>
@@ -543,8 +543,8 @@
                             <Border Style="{StaticResource SettingRowCardStyle}">
                                 <StackPanel Spacing="8">
                                     <StackPanel Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="监听地址" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="监听的具体地址，支持 IPv4 与 IPv6。对应 listenAddress.ipv4 与 listenAddress.ipv6，默认监听所有网卡。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G1.Listen.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G1.Listen.Hint" />
                                     </StackPanel>
 
                                     <Grid ColumnSpacing="8">
@@ -555,7 +555,7 @@
 
                                         <TextBox
                                             x:Name="ListenIpv4Box"
-                                            AutomationProperties.Name="IPv4 监听地址"
+                                            panels:Loc.Name="Cfg.G1.V4.Name"
                                             Header="IPv4"
                                             PlaceholderText="0.0.0.0"
                                             Text="0.0.0.0"
@@ -564,7 +564,7 @@
                                         <TextBox
                                             x:Name="ListenIpv6Box"
                                             Grid.Column="1"
-                                            AutomationProperties.Name="IPv6 监听地址"
+                                            panels:Loc.Name="Cfg.G1.V6.Name"
                                             Header="IPv6"
                                             PlaceholderText="[::]"
                                             Text="[::]"
@@ -584,13 +584,13 @@
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
 
-                                    <CheckBox x:Name="Field_protocol__ipv4" Content="启用 IPv4" ToolTipService.ToolTip="至少要启用一个协议：IPv4 / IPv6。对应 protocol.ipv4。" IsChecked="True" />
-                                    <CheckBox x:Name="Field_protocol__ipv6" Grid.Column="1" Content="启用 IPv6" ToolTipService.ToolTip="至少要启用一个协议；auto 会按系统是否支持自动检测。对应 protocol.ipv6。" />
+                                    <CheckBox x:Name="Field_protocol__ipv4" panels:Loc.Content="Cfg.G1.Proto4Label" panels:Loc.ToolTip="Cfg.G1.Proto4.Tip" IsChecked="True" />
+                                    <CheckBox x:Name="Field_protocol__ipv6" Grid.Column="1" panels:Loc.Content="Cfg.G1.Proto6Label" panels:Loc.ToolTip="Cfg.G1.Proto6.Tip" />
                                     <CheckBox
                                         x:Name="Field_dnsPreferIPv6"
                                         Grid.Row="1"
-                                        Content="DNS 优先 IPv6"
-                                        ToolTipService.ToolTip="解析域名时优先用 IPv6；运营商 IPv6 有问题时别开。对应 dnsPreferIPv6。" />
+                                        panels:Loc.Content="Cfg.G1.DnsPreferV6Label"
+                                        panels:Loc.ToolTip="Cfg.G1.DnsPreferV6.Tip" />
                                 </Grid>
                             </Border>
 
@@ -602,15 +602,15 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="心跳间隔" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="秒；写心跳文件的间隔，0 表示关闭。对应 heartbeatInterval。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G1.Heartbeat.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G1.Heartbeat.Hint" />
                                     </StackPanel>
 
                                     <NumberBox
                                         x:Name="HeartbeatBox"
                                         Grid.Column="1"
                                         Width="150"
-                                        AutomationProperties.Name="心跳间隔"
+                                        panels:Loc.Name="Cfg.G1.Heartbeat.Title"
                                         LargeChange="1000"
                                         Minimum="0"
                                         SmallChange="500"
@@ -628,14 +628,14 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="自动打开浏览器" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="酒馆启动时自动打开浏览器。对应 browserLaunch.enabled。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G1.AutoOpen.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G1.AutoOpen.Hint" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         x:Name="AdvAutoBrowserToggle"
                                         Grid.Column="1"
-                                        AutomationProperties.Name="自动打开浏览器"
+                                        panels:Loc.Name="Cfg.G1.AutoOpen.Title"
                                         IsOn="True"
                                         OffContent=""
                                         OnContent=""
@@ -651,20 +651,20 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="默认浏览器" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="用哪个浏览器打开。对应 browserLaunch.browser：default / firefox / chrome / edge，Android 不支持。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G1.Browser.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G1.Browser.Hint" />
                                     </StackPanel>
 
                                     <ComboBox
                                         x:Name="AdvBrowserCombo"
                                         Grid.Column="1"
                                         Width="180"
-                                        AutomationProperties.Name="默认浏览器"
+                                        panels:Loc.Name="Cfg.G1.Browser.Title"
                                         SelectionChanged="Browser_SelectionChanged">
-                                        <ComboBoxItem Content="谷歌浏览器" />
+                                        <ComboBoxItem panels:Loc.Content="Cfg.Browser.Chrome" />
                                         <ComboBoxItem Content="Edge" />
-                                        <ComboBoxItem Content="火狐浏览器" />
-                                        <ComboBoxItem Content="系统默认" />
+                                        <ComboBoxItem panels:Loc.Content="Cfg.Browser.Firefox" />
+                                        <ComboBoxItem panels:Loc.Content="Cfg.Browser.System" />
                                     </ComboBox>
                                 </Grid>
                             </Border>
@@ -677,7 +677,7 @@
                     <StackPanel>
                         <ToggleButton
                             x:Name="AuthHeader"
-                            AutomationProperties.Name="账号与访问控制"
+                            panels:Loc.Name="Cfg.G2.Title"
                             Style="{StaticResource SectionHeaderToggleStyle}"
                             Tag="Auth"
                             Checked="Section_Toggled"
@@ -701,8 +701,8 @@
                                     <TextBlock
                                         FontSize="15"
                                         Style="{StaticResource CellTitleTextStyle}"
-                                        Text="账号与访问控制" />
-                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="基础认证、用户账号、白名单与 Host 校验" />
+                                        panels:Loc.Text="Cfg.G2.Title" />
+                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G2.Hint" />
                                 </StackPanel>
 
                                 <FontIcon
@@ -733,14 +733,14 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="基础认证" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="为接口开启基础认证，打开酒馆时要输用户名和密码。对应 basicAuthMode。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G2.BasicAuth.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G2.BasicAuth.Hint" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         x:Name="Field_basicAuthMode"
                                         Grid.Column="1"
-                                        AutomationProperties.Name="基础认证"
+                                        panels:Loc.Name="Cfg.G2.BasicAuth.Title"
                                         OffContent=""
                                         OnContent=""
                                         Tag="AuthPanel"
@@ -762,11 +762,11 @@
                                         <TextBlock
                                             VerticalAlignment="Center"
                                             Style="{StaticResource FieldTitleTextStyle}"
-                                            Text="用户名" />
+                                            panels:Loc.Text="Cfg.G2.User.Title" />
                                         <TextBox
                                             x:Name="Field_basicAuthUser__username"
                                             Grid.Column="1"
-                                            AutomationProperties.Name="认证用户名"
+                                            panels:Loc.Name="Cfg.G2.User.Name"
                                             Text="user" />
                                     </Grid>
                                 </Border>
@@ -781,11 +781,11 @@
                                         <TextBlock
                                             VerticalAlignment="Center"
                                             Style="{StaticResource FieldTitleTextStyle}"
-                                            Text="密码" />
+                                            panels:Loc.Text="Cfg.G2.Pass.Title" />
                                         <PasswordBox
                                             x:Name="Field_basicAuthUser__password"
                                             Grid.Column="1"
-                                            AutomationProperties.Name="认证密码"
+                                            panels:Loc.Name="Cfg.G2.Pass.Name"
                                             Password="password" />
                                     </Grid>
                                 </Border>
@@ -802,13 +802,13 @@
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
 
-                                    <CheckBox x:Name="Field_enableUserAccounts" Content="启用用户账号" ToolTipService.ToolTip="多用户模式，每人各自登录。对应 enableUserAccounts。" />
-                                    <CheckBox x:Name="Field_enableDiscreetLogin" Grid.Column="1" Content="隐蔽登录" ToolTipService.ToolTip="登录页不显示用户列表，只能手动输用户名。对应 enableDiscreetLogin。" />
+                                    <CheckBox x:Name="Field_enableUserAccounts" panels:Loc.Content="Cfg.G2.UserAccountsLabel" panels:Loc.ToolTip="Cfg.G2.UserAccounts.Tip" />
+                                    <CheckBox x:Name="Field_enableDiscreetLogin" Grid.Column="1" panels:Loc.Content="Cfg.G2.DiscreetLoginLabel" panels:Loc.ToolTip="Cfg.G2.DiscreetLogin.Tip" />
                                     <CheckBox
                                         x:Name="Field_perUserBasicAuth"
                                         Grid.Row="1"
-                                        Content="每用户独立认证"
-                                        ToolTipService.ToolTip="与基础认证同时开启时，认证用的用户名密码与各自账号一致。对应 perUserBasicAuth。" />
+                                        panels:Loc.Content="Cfg.G2.PerUserAuthLabel"
+                                        panels:Loc.ToolTip="Cfg.G2.PerUserAuth.Tip" />
                                 </Grid>
                             </Border>
 
@@ -820,17 +820,17 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="IP 白名单" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G2.Whitelist.Title" />
                                         <TextBlock
                                             x:Name="AdvWhitelistSubtitle"
                                             Style="{StaticResource FieldHintTextStyle}"
-                                            Text="开启后只有名单内的地址能连接，对应 whitelistMode。" />
+                                            panels:Loc.Text="Cfg.G2.Whitelist.Hint" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         x:Name="Field_whitelistMode"
                                         Grid.Column="1"
-                                        AutomationProperties.Name="IP 白名单"
+                                        panels:Loc.Name="Cfg.G2.Whitelist.Title"
                                         IsOn="True"
                                         OffContent=""
                                         OnContent=""
@@ -869,16 +869,16 @@
 
                                     <TextBox
                                         x:Name="AdvWhitelistInput"
-                                        AutomationProperties.Name="新增白名单地址"
+                                        panels:Loc.Name="Cfg.Whitelist.Add.Name"
                                         Height="32"
                                         KeyDown="WhitelistInput_KeyDown"
-                                        PlaceholderText="输入 IP 或网段，回车即可添加" />
+                                        panels:Loc.Placeholder="Cfg.Whitelist.Add.Placeholder" />
 
                                     <Button
                                         Grid.Column="1"
-                                        AutomationProperties.Name="添加白名单"
+                                        panels:Loc.Name="Cfg.Whitelist.Add.ButtonName"
                                         Click="AddWhitelistAdvanced_Click"
-                                        Content="添加" />
+                                        panels:Loc.Content="Cfg.Whitelist.Add.Button" />
                                 </Grid>
 
                                 <TextBlock
@@ -890,7 +890,7 @@
                                 <TextBlock
                                     x:Name="AdvWhitelistNote"
                                     Style="{StaticResource FieldHintTextStyle}"
-                                    Text="只有名单里的地址能连上酒馆；127.0.0.1 与 ::1 固定保留，其余可以增删。"
+                                    panels:Loc.Text="Cfg.Whitelist.Note.Editable"
                                     TextWrapping="Wrap" />
                             </StackPanel>
 
@@ -902,14 +902,14 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="Host 白名单" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="校验请求头里的 Host，防止域名伪装；建议在开启监听（局域网访问）时使用。对应 hostWhitelist.enabled。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G2.Host.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G2.Host.Hint" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         x:Name="Field_hostWhitelist__enabled"
                                         Grid.Column="1"
-                                        AutomationProperties.Name="Host 白名单"
+                                        panels:Loc.Name="Cfg.G2.Host.Title"
                                         OffContent=""
                                         OnContent=""
                                         Tag="HostPanel"
@@ -924,37 +924,37 @@
                                 <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
                                     <CheckBox
                                         x:Name="Field_hostWhitelist__scan"
-                                        Content="扫描 Host 头自动补充"
+                                        panels:Loc.Content="Cfg.G2.HostScanLabel"
                                         IsChecked="True"
-                                        ToolTipService.ToolTip="扫描收到的请求，识别疑似 Host 头伪装。对应 hostWhitelist.scan。" />
+                                        panels:Loc.ToolTip="Cfg.G2.HostScan.Tip" />
                                 </Border>
 
                                 <TextBox
                                     x:Name="FieldArray_hostWhitelist__hosts"
                                     AcceptsReturn="True"
-                                    AutomationProperties.Name="Host 白名单列表"
+                                    panels:Loc.Name="Cfg.G2.HostList.Name"
                                     FontFamily="Consolas"
                                     FontSize="12"
                                     Height="76"
-                                    PlaceholderText="每行一个域名"
+                                    panels:Loc.Placeholder="Cfg.G2.HostList.Placeholder"
                                     TextWrapping="Wrap" />
                             </StackPanel>
 
                             <Border Style="{StaticResource SettingRowCardStyle}">
                                 <StackPanel Spacing="6">
                                     <StackPanel Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="导入域名" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="从这些域名导入角色卡时，信任它们提供的图片地址。对应 whitelistImportDomains。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G2.ImportDomains.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G2.ImportDomains.Hint" />
                                     </StackPanel>
 
                                     <TextBox
                                         x:Name="FieldArray_whitelistImportDomains"
                                         AcceptsReturn="True"
-                                        AutomationProperties.Name="导入域名列表"
+                                        panels:Loc.Name="Cfg.G2.ImportDomains.Name"
                                         FontFamily="Consolas"
                                         FontSize="12"
                                         Height="76"
-                                        PlaceholderText="每行一个域名，例如 example.com"
+                                        panels:Loc.Placeholder="Cfg.G2.ImportDomains.Placeholder"
                                         TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
@@ -992,7 +992,7 @@
                                         FontSize="15"
                                         Style="{StaticResource CellTitleTextStyle}"
                                         Text="HTTPS / SSL" />
-                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="启用加密传输，配置证书与私钥路径" />
+                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G3.Hint" />
                                 </StackPanel>
 
                                 <FontIcon
@@ -1023,14 +1023,14 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="启用 HTTPS" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="启用 SSL/TLS 加密；必须同时提供证书与私钥，否则服务起不来。对应 ssl.enabled。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G3.Enabled.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G3.Enabled.Hint" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         x:Name="Field_ssl__enabled"
                                         Grid.Column="1"
-                                        AutomationProperties.Name="启用 HTTPS"
+                                        panels:Loc.Name="Cfg.G3.Enabled.Title"
                                         OffContent=""
                                         OnContent=""
                                         Tag="SslPanel"
@@ -1052,11 +1052,11 @@
                                         <TextBlock
                                             VerticalAlignment="Center"
                                             Style="{StaticResource FieldTitleTextStyle}"
-                                            Text="证书路径" />
+                                            panels:Loc.Text="Cfg.G3.Cert.Title" />
                                         <TextBox
                                             x:Name="Field_ssl__certPath"
                                             Grid.Column="1"
-                                            AutomationProperties.Name="证书路径"
+                                            panels:Loc.Name="Cfg.G3.Cert.Title"
                                             FontFamily="Consolas"
                                             Text="./certs/cert.pem" />
                                     </Grid>
@@ -1072,11 +1072,11 @@
                                         <TextBlock
                                             VerticalAlignment="Center"
                                             Style="{StaticResource FieldTitleTextStyle}"
-                                            Text="私钥路径" />
+                                            panels:Loc.Text="Cfg.G3.Key.Title" />
                                         <TextBox
                                             x:Name="Field_ssl__keyPath"
                                             Grid.Column="1"
-                                            AutomationProperties.Name="私钥路径"
+                                            panels:Loc.Name="Cfg.G3.Key.Title"
                                             FontFamily="Consolas"
                                             Text="./certs/privkey.pem" />
                                     </Grid>
@@ -1090,14 +1090,14 @@
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
-                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="私钥口令" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="私钥口令，私钥没有加密就留空。对应 ssl.keyPassphrase；更安全的做法是用命令行参数或环境变量传入。" />
+                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G3.Pass.Title" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G3.Pass.Hint" />
                                         </StackPanel>
                                         <PasswordBox
                                             x:Name="Field_ssl__keyPassphrase"
                                             Grid.Column="1"
-                                            AutomationProperties.Name="私钥口令"
-                                            PlaceholderText="可选" />
+                                            panels:Loc.Name="Cfg.G3.Pass.Title"
+                                            panels:Loc.Placeholder="Cfg.Optional.Placeholder" />
                                     </Grid>
                                 </Border>
                             </StackPanel>
@@ -1110,7 +1110,7 @@
                     <StackPanel>
                         <ToggleButton
                             x:Name="CorsHeader"
-                            AutomationProperties.Name="跨域 CORS"
+                            panels:Loc.Name="Cfg.G4.Title"
                             Style="{StaticResource SectionHeaderToggleStyle}"
                             Tag="Cors"
                             Checked="Section_Toggled"
@@ -1134,8 +1134,8 @@
                                     <TextBlock
                                         FontSize="15"
                                         Style="{StaticResource CellTitleTextStyle}"
-                                        Text="跨域 CORS" />
-                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="允许来源、方法与请求头，按需收紧" />
+                                        panels:Loc.Text="Cfg.G4.Title" />
+                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G4.Hint" />
                                 </StackPanel>
 
                                 <FontIcon
@@ -1166,14 +1166,14 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="启用 CORS" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="启用或关闭 CORS 中间件；关掉后跨域请求会被浏览器直接拦下。对应 cors.enabled。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G4.Enabled.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G4.Enabled.Hint" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         Grid.Column="1"
                                         x:Name="Field_cors__enabled"
-                                        AutomationProperties.Name="启用 CORS"
+                                        panels:Loc.Name="Cfg.G4.Enabled.Title"
                                         IsOn="True"
                                         OffContent=""
                                         OnContent=""
@@ -1186,13 +1186,13 @@
                                 <Border Style="{StaticResource SettingRowCardStyle}">
                                     <StackPanel Spacing="6">
                                         <StackPanel Spacing="2">
-                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="允许来源" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="允许的来源：null 表示浏览器直接打开本地文件，* 表示允许任意来源。对应 cors.origin，每行一个。" />
+                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G4.Origin.Title" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G4.Origin.Hint" />
                                         </StackPanel>
                                         <TextBox
                                             AcceptsReturn="True"
                                             x:Name="FieldArray_cors__origin"
-                                            AutomationProperties.Name="CORS 允许来源"
+                                            panels:Loc.Name="Cfg.G4.Origin.Name"
                                             FontFamily="Consolas"
                                             FontSize="12"
                                             Height="64"
@@ -1204,13 +1204,13 @@
                                 <Border Style="{StaticResource SettingRowCardStyle}">
                                     <StackPanel Spacing="6">
                                         <StackPanel Spacing="2">
-                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="允许方法" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="允许的 HTTP 方法。对应 cors.methods，每行一个。" />
+                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G4.Methods.Title" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G4.Methods.Hint" />
                                         </StackPanel>
                                         <TextBox
                                             AcceptsReturn="True"
                                             x:Name="FieldArray_cors__methods"
-                                            AutomationProperties.Name="CORS 允许方法"
+                                            panels:Loc.Name="Cfg.G4.Methods.Name"
                                             FontFamily="Consolas"
                                             FontSize="12"
                                             Height="64"
@@ -1227,55 +1227,55 @@
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
-                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="预检缓存时间" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="预检请求的缓存时间（秒），留空表示不发送缓存头。对应 cors.maxAge。" />
+                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G4.MaxAge.Title" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G4.MaxAge.Hint" />
                                         </StackPanel>
 
                                         <NumberBox
                                             Grid.Column="1"
                                             Width="150"
                                             x:Name="Field_cors__maxAge"
-                                            AutomationProperties.Name="预检缓存时间"
+                                            panels:Loc.Name="Cfg.G4.MaxAge.Title"
                                             Minimum="0"
                                             SpinButtonPlacementMode="Compact"
-                                            PlaceholderText="未设置" />
+                                            panels:Loc.Placeholder="Cfg.Unset.Placeholder" />
                                     </Grid>
                                 </Border>
 
                                 <Border Style="{StaticResource SettingRowCardStyle}">
                                     <StackPanel Spacing="6">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="允许请求头" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G4.AllowHeaders.Title" />
                                         <TextBox
                                             AcceptsReturn="True"
                                             x:Name="FieldArray_cors__allowedHeaders"
-                                            AutomationProperties.Name="CORS 允许请求头"
+                                            panels:Loc.Name="Cfg.G4.AllowHeaders.Name"
                                             FontFamily="Consolas"
                                             FontSize="12"
                                             Height="56"
-                                            PlaceholderText="每行一个，留空表示不限制"
+                                            panels:Loc.Placeholder="Cfg.G4.AllowHeaders.Placeholder"
                                             TextWrapping="Wrap" />
                                     </StackPanel>
                                 </Border>
 
                                 <Border Style="{StaticResource SettingRowCardStyle}">
                                     <StackPanel Spacing="6">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="暴露响应头" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G4.ExposeHeaders.Title" />
                                         <TextBox
                                             AcceptsReturn="True"
                                             x:Name="FieldArray_cors__exposedHeaders"
-                                            AutomationProperties.Name="CORS 暴露响应头"
+                                            panels:Loc.Name="Cfg.G4.ExposeHeaders.Name"
                                             FontFamily="Consolas"
                                             FontSize="12"
                                             Height="56"
-                                            PlaceholderText="每行一个"
+                                            panels:Loc.Placeholder="Cfg.G4.ExposeHeaders.Placeholder"
                                             TextWrapping="Wrap" />
                                     </StackPanel>
                                 </Border>
 
                                 <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
                                     <CheckBox
-                                        x:Name="Field_cors__credentials" Content="允许携带凭据"
-                                        ToolTipService.ToolTip="允许携带 Cookie 与 Authorization 头；开启后来源不能用 *。对应 cors.credentials。" />
+                                        x:Name="Field_cors__credentials" panels:Loc.Content="Cfg.G4.CredentialsLabel"
+                                        panels:Loc.ToolTip="Cfg.G4.Credentials.Tip" />
                                 </Border>
                             </StackPanel>
                         </StackPanel>
@@ -1287,7 +1287,7 @@
                     <StackPanel>
                         <ToggleButton
                             x:Name="ProxyHeader"
-                            AutomationProperties.Name="代理与备份"
+                            panels:Loc.Name="Cfg.G5.Title"
                             Style="{StaticResource SectionHeaderToggleStyle}"
                             Tag="Proxy"
                             Checked="Section_Toggled"
@@ -1311,8 +1311,8 @@
                                     <TextBlock
                                         FontSize="15"
                                         Style="{StaticResource CellTitleTextStyle}"
-                                        Text="代理与备份" />
-                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="请求代理、备份份数与聊天记录保护" />
+                                        panels:Loc.Text="Cfg.G5.Title" />
+                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G5.Hint" />
                                 </StackPanel>
 
                                 <FontIcon
@@ -1343,14 +1343,14 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="请求代理" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="开启后，所有出站的 HTTP/HTTPS 请求都走这个代理。对应 requestProxy.enabled。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G5.Proxy.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G5.Proxy.Hint" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         Grid.Column="1"
                                         x:Name="Field_requestProxy__enabled"
-                                        AutomationProperties.Name="请求代理"
+                                        panels:Loc.Name="Cfg.G5.Proxy.Title"
                                         OffContent=""
                                         OnContent=""
                                         Tag="ProxyPanel"
@@ -1372,11 +1372,11 @@
                                         <TextBlock
                                             VerticalAlignment="Center"
                                             Style="{StaticResource FieldTitleTextStyle}"
-                                            Text="代理地址" />
+                                            panels:Loc.Text="Cfg.G5.ProxyUrl.Title" />
                                         <TextBox
                                             Grid.Column="1"
                                             x:Name="Field_requestProxy__url"
-                                            AutomationProperties.Name="代理地址"
+                                            panels:Loc.Name="Cfg.G5.ProxyUrl.Title"
                                             FontFamily="Consolas"
                                             PlaceholderText="http://127.0.0.1:7890" />
                                     </Grid>
@@ -1384,15 +1384,15 @@
 
                                 <Border Style="{StaticResource SettingRowCardStyle}">
                                     <StackPanel Spacing="6">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="直连主机" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G5.ProxyBypass.Title" />
                                         <TextBox
                                             AcceptsReturn="True"
                                             x:Name="FieldArray_requestProxy__bypass"
-                                            AutomationProperties.Name="代理直连主机"
+                                            panels:Loc.Name="Cfg.G5.ProxyBypass.Name"
                                             FontFamily="Consolas"
                                             FontSize="12"
                                             Height="56"
-                                            PlaceholderText="每行一个，这些地址不走代理"
+                                            panels:Loc.Placeholder="Cfg.G5.ProxyBypass.Placeholder"
                                             TextWrapping="Wrap" />
                                     </StackPanel>
                                 </Border>
@@ -1406,15 +1406,15 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="通用备份份数" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="每个聊天文件与设置文件各保留多少份备份。对应 backups.common.numberOfBackups。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G5.Backups.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G5.Backups.Hint" />
                                     </StackPanel>
 
                                     <NumberBox
                                         Grid.Column="1"
                                         Width="150"
                                         x:Name="Field_backups__common__numberOfBackups"
-                                        AutomationProperties.Name="通用备份份数"
+                                        panels:Loc.Name="Cfg.G5.Backups.Title"
                                         Minimum="1"
                                         SpinButtonPlacementMode="Compact"
                                         Value="50" />
@@ -1429,14 +1429,14 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="聊天记录备份" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="自动备份聊天记录，避免误删。对应 backups.chat.enabled。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G5.ChatBackup.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G5.ChatBackup.Hint" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         Grid.Column="1"
                                         x:Name="Field_backups__chat__enabled"
-                                        AutomationProperties.Name="聊天记录备份"
+                                        panels:Loc.Name="Cfg.G5.ChatBackup.Title"
                                         IsOn="True"
                                         OffContent=""
                                         OnContent=""
@@ -1448,9 +1448,9 @@
                             <StackPanel x:Name="ChatPanel" Spacing="8">
                                 <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
                                     <CheckBox
-                                        x:Name="Field_backups__chat__checkIntegrity" Content="备份时校验完整性"
+                                        x:Name="Field_backups__chat__checkIntegrity" panels:Loc.Content="Cfg.G5.IntegrityLabel"
                                         IsChecked="True"
-                                        ToolTipService.ToolTip="保存前先校验聊天文件完整，避免写入坏数据。对应 backups.chat.checkIntegrity。" />
+                                        panels:Loc.ToolTip="Cfg.G5.Integrity.Tip" />
                                 </Border>
 
                                 <Border Style="{StaticResource SettingRowCardStyle}">
@@ -1461,15 +1461,15 @@
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
-                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="最大备份数" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="每个用户最多保留多少份聊天备份（从最新的算起），-1 表示全部保留。对应 backups.chat.maxTotalBackups。" />
+                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G5.MaxBackups.Title" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G5.MaxBackups.Hint" />
                                         </StackPanel>
 
                                         <NumberBox
                                             Grid.Column="1"
                                             Width="150"
                                             x:Name="Field_backups__chat__maxTotalBackups"
-                                            AutomationProperties.Name="完整备份上限"
+                                            panels:Loc.Name="Cfg.G5.MaxBackups.Name"
                                             SmallChange="1"
                                             SpinButtonPlacementMode="Compact"
                                             Value="-1" />
@@ -1484,15 +1484,15 @@
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
-                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="写入节流间隔" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="毫秒；同一用户两次聊天备份之间的最小间隔。对应 backups.chat.throttleInterval。" />
+                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G5.Throttle.Title" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G5.Throttle.Hint" />
                                         </StackPanel>
 
                                         <NumberBox
                                             Grid.Column="1"
                                             Width="150"
                                             x:Name="Field_backups__chat__throttleInterval"
-                                            AutomationProperties.Name="写入节流间隔"
+                                            panels:Loc.Name="Cfg.G5.Throttle.Title"
                                             LargeChange="1000"
                                             Minimum="0"
                                             SmallChange="500"
@@ -1510,7 +1510,7 @@
                     <StackPanel>
                         <ToggleButton
                             x:Name="ThumbHeader"
-                            AutomationProperties.Name="缩略图"
+                            panels:Loc.Name="Cfg.G6.Title"
                             Style="{StaticResource SectionHeaderToggleStyle}"
                             Tag="Thumb"
                             Checked="Section_Toggled"
@@ -1534,8 +1534,8 @@
                                     <TextBlock
                                         FontSize="15"
                                         Style="{StaticResource CellTitleTextStyle}"
-                                        Text="缩略图" />
-                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="格式、质量与各类图片的生成尺寸" />
+                                        panels:Loc.Text="Cfg.G6.Title" />
+                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G6.Hint" />
                                 </StackPanel>
 
                                 <FontIcon
@@ -1566,14 +1566,14 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="启用缩略图" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="是否生成角色头像缩略图；关掉后角色列表加载原图，流量更大也更清晰。对应 thumbnails.enabled。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G6.Enabled.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G6.Enabled.Hint" />
                                     </StackPanel>
 
                                     <ToggleSwitch
                                         Grid.Column="1"
                                         x:Name="Field_thumbnails__enabled"
-                                        AutomationProperties.Name="启用缩略图"
+                                        panels:Loc.Name="Cfg.G6.Enabled.Title"
                                         IsOn="True"
                                         OffContent=""
                                         OnContent=""
@@ -1591,8 +1591,8 @@
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
-                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="图片格式" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="头像缩略图格式：jpg 压缩最好但不能透明，png 保留透明但体积大约翻倍。对应 thumbnails.format，只影响新缩略图。" />
+                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G6.Format.Title" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G6.Format.Hint" />
                                         </StackPanel>
 
                                         <ComboBox
@@ -1600,7 +1600,7 @@
                                             Width="150"
                                             x:Name="FieldEnum_thumbnails__format"
                                             Tag="jpg,png,webp"
-                                            AutomationProperties.Name="缩略图格式"
+                                            panels:Loc.Name="Cfg.G6.Format.Name"
                                             SelectedIndex="0">
                                             <ComboBoxItem Content="JPEG" />
                                             <ComboBoxItem Content="PNG" />
@@ -1617,15 +1617,15 @@
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
-                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="压缩质量" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="JPG 缩略图质量，1–100，越高越清晰也越大。对应 thumbnails.quality。" />
+                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G6.Quality.Title" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G6.Quality.Hint" />
                                         </StackPanel>
 
                                         <NumberBox
                                             Grid.Column="1"
                                             Width="150"
                                             x:Name="Field_thumbnails__quality"
-                                            AutomationProperties.Name="缩略图质量"
+                                            panels:Loc.Name="Cfg.G6.Quality.Name"
                                             Maximum="100"
                                             Minimum="1"
                                             SpinButtonPlacementMode="Compact"
@@ -1641,8 +1641,8 @@
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
-                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="背景缩略图尺寸" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="宽 × 高，像素。对应 thumbnails.dimensions。" />
+                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G6.BgSize.Title" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G6.BgSize.Hint" />
                                         </StackPanel>
 
                                         <StackPanel
@@ -1652,7 +1652,7 @@
                                             VerticalAlignment="Center">
                                             <NumberBox
                                                 Width="84"
-                                                AutomationProperties.Name="背景缩略图宽"
+                                                panels:Loc.Name="Cfg.G6.BgW.Name"
                                                 SpinButtonPlacementMode="Hidden"
                                                 Value="160" />
                                             <TextBlock
@@ -1661,7 +1661,7 @@
                                                 Text="×" />
                                             <NumberBox
                                                 Width="84"
-                                                AutomationProperties.Name="背景缩略图高"
+                                                panels:Loc.Name="Cfg.G6.BgH.Name"
                                                 SpinButtonPlacementMode="Hidden"
                                                 Value="90" />
                                         </StackPanel>
@@ -1676,8 +1676,8 @@
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
-                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="头像缩略图尺寸" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="宽 × 高，像素。对应 thumbnails.dimensions。" />
+                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G6.AvatarSize.Title" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G6.AvatarSize.Hint" />
                                         </StackPanel>
 
                                         <StackPanel
@@ -1687,7 +1687,7 @@
                                             VerticalAlignment="Center">
                                             <NumberBox
                                                 Width="84"
-                                                AutomationProperties.Name="头像缩略图宽"
+                                                panels:Loc.Name="Cfg.G6.AvatarW.Name"
                                                 SpinButtonPlacementMode="Hidden"
                                                 Value="96" />
                                             <TextBlock
@@ -1696,7 +1696,7 @@
                                                 Text="×" />
                                             <NumberBox
                                                 Width="84"
-                                                AutomationProperties.Name="头像缩略图高"
+                                                panels:Loc.Name="Cfg.G6.AvatarH.Name"
                                                 SpinButtonPlacementMode="Hidden"
                                                 Value="144" />
                                         </StackPanel>
@@ -1711,8 +1711,8 @@
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel VerticalAlignment="Center" Spacing="2">
-                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="角色卡缩略图尺寸" />
-                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="宽 × 高，像素。对应 thumbnails.dimensions。" />
+                                            <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G6.CardSize.Title" />
+                                            <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G6.CardSize.Hint" />
                                         </StackPanel>
 
                                         <StackPanel
@@ -1722,7 +1722,7 @@
                                             VerticalAlignment="Center">
                                             <NumberBox
                                                 Width="84"
-                                                AutomationProperties.Name="角色卡缩略图宽"
+                                                panels:Loc.Name="Cfg.G6.CardW.Name"
                                                 SpinButtonPlacementMode="Hidden"
                                                 Value="96" />
                                             <TextBlock
@@ -1731,7 +1731,7 @@
                                                 Text="×" />
                                             <NumberBox
                                                 Width="84"
-                                                AutomationProperties.Name="角色卡缩略图高"
+                                                panels:Loc.Name="Cfg.G6.CardH.Name"
                                                 SpinButtonPlacementMode="Hidden"
                                                 Value="144" />
                                         </StackPanel>
@@ -1747,7 +1747,7 @@
                     <StackPanel>
                         <ToggleButton
                             x:Name="PerfHeader"
-                            AutomationProperties.Name="性能"
+                            panels:Loc.Name="Cfg.G7.Title"
                             Style="{StaticResource SectionHeaderToggleStyle}"
                             Tag="Perf"
                             Checked="Section_Toggled"
@@ -1771,8 +1771,8 @@
                                     <TextBlock
                                         FontSize="15"
                                         Style="{StaticResource CellTitleTextStyle}"
-                                        Text="性能" />
-                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="加载策略与缓存，低配机器可优先调这里" />
+                                        panels:Loc.Text="Cfg.G7.Title" />
+                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G7.Hint" />
                                 </StackPanel>
 
                                 <FontIcon
@@ -1798,12 +1798,12 @@
                             <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
                                 <StackPanel Spacing="8">
                                     <CheckBox x:Name="Field_performance__lazyLoadCharacters"
-                                        Content="延迟加载角色卡"
-                                        ToolTipService.ToolTip="进角色列表后才加载详情，卡片很多时首屏更快；可能和个别扩展不兼容。对应 performance.lazyLoadCharacters。" />
+                                        panels:Loc.Content="Cfg.G7.LazyLoadLabel"
+                                        panels:Loc.ToolTip="Cfg.G7.LazyLoad.Tip" />
                                     <CheckBox x:Name="Field_performance__useDiskCache"
-                                        Content="使用磁盘缓存"
+                                        panels:Loc.Content="Cfg.G7.DiskCacheLabel"
                                         IsChecked="True"
-                                        ToolTipService.ToolTip="把角色卡缓存到磁盘，卡片很多时加载更快。对应 performance.useDiskCache。" />
+                                        panels:Loc.ToolTip="Cfg.G7.DiskCache.Tip" />
                                 </StackPanel>
                             </Border>
 
@@ -1815,14 +1815,14 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="内存缓存容量" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="解析后的角色卡最多能占多少内存，0 表示关闭内存缓存。对应 performance.memoryCacheCapacity。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G7.MemoryCache.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G7.MemoryCache.Hint" />
                                     </StackPanel>
 
                                     <NumberBox
                                         Grid.Column="1"
                                         Width="150"
-                                        AutomationProperties.Name="内存缓存容量"
+                                        panels:Loc.Name="Cfg.G7.MemoryCache.Title"
                                         Minimum="0"
                                         SpinButtonPlacementMode="Compact"
                                         Value="100" />
@@ -1837,7 +1837,7 @@
                     <StackPanel>
                         <ToggleButton
                             x:Name="LogHeader"
-                            AutomationProperties.Name="日志"
+                            panels:Loc.Name="Cfg.G8.Title"
                             Style="{StaticResource SectionHeaderToggleStyle}"
                             Tag="Log"
                             Checked="Section_Toggled"
@@ -1861,8 +1861,8 @@
                                     <TextBlock
                                         FontSize="15"
                                         Style="{StaticResource CellTitleTextStyle}"
-                                        Text="日志" />
-                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="访问日志与最低输出级别" />
+                                        panels:Loc.Text="Cfg.G8.Title" />
+                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G8.Hint" />
                                 </StackPanel>
 
                                 <FontIcon
@@ -1887,9 +1887,9 @@
 
                             <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
                                 <CheckBox x:Name="Field_logging__enableAccessLog"
-                                    Content="启用访问日志"
+                                    panels:Loc.Content="Cfg.G8.AccessLogLabel"
                                     IsChecked="True"
-                                    ToolTipService.ToolTip="把每次访问写进 access.log 并输出到控制台。对应 logging.enableAccessLog。" />
+                                    panels:Loc.ToolTip="Cfg.G8.AccessLog.Tip" />
                             </Border>
 
                             <Border Style="{StaticResource SettingRowCardStyle}">
@@ -1900,8 +1900,8 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="最低日志级别" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="终端里显示的最低日志级别：DEBUG = 0、INFO = 1、WARN = 2、ERROR = 3。对应 logging.minLogLevel。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G8.MinLevel.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G8.MinLevel.Hint" />
                                     </StackPanel>
 
                                     <ComboBox
@@ -1909,7 +1909,7 @@
                                         Width="150"
                                         x:Name="FieldEnum_logging__minLogLevel"
                                         Tag="0,1,2,3"
-                                        AutomationProperties.Name="最低日志级别"
+                                        panels:Loc.Name="Cfg.G8.MinLevel.Title"
                                         SelectedIndex="1">
                                         <ComboBoxItem Content="Debug" />
                                         <ComboBoxItem Content="Info" />
@@ -1927,7 +1927,7 @@
                     <StackPanel>
                         <ToggleButton
                             x:Name="SessionHeader"
-                            AutomationProperties.Name="会话与安全"
+                            panels:Loc.Name="Cfg.G9.Title"
                             Style="{StaticResource SectionHeaderToggleStyle}"
                             Tag="Session"
                             Checked="Section_Toggled"
@@ -1951,8 +1951,8 @@
                                     <TextBlock
                                         FontSize="15"
                                         Style="{StaticResource CellTitleTextStyle}"
-                                        Text="会话与安全" />
-                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="会话行为、扩展与若干高风险开关" />
+                                        panels:Loc.Text="Cfg.G9.Title" />
+                                    <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G9.Hint" />
                                 </StackPanel>
 
                                 <FontIcon
@@ -1983,14 +1983,14 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="输入框占位文案" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="新对话输入框里的占位提示文字。对应 promptPlaceholder。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G9.Placeholder.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G9.Placeholder.Hint" />
                                     </StackPanel>
 
                                     <TextBox
                                         Grid.Column="1"
                                         x:Name="Field_promptPlaceholder"
-                                        AutomationProperties.Name="输入框占位文案"
+                                        panels:Loc.Name="Cfg.G9.Placeholder.Title"
                                         Text="[Start a new chat]" />
                                 </Grid>
                             </Border>
@@ -2003,15 +2003,15 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="会话超时" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="用户会话超时（秒）：正数 = 闲置多久后登出；0 = 关闭浏览器即失效；负数 = 永不登出。对应 sessionTimeout。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G9.SessionTimeout.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G9.SessionTimeout.Hint" />
                                     </StackPanel>
 
                                     <NumberBox
                                         Grid.Column="1"
                                         Width="150"
                                         x:Name="Field_sessionTimeout"
-                                        AutomationProperties.Name="会话超时"
+                                        panels:Loc.Name="Cfg.G9.SessionTimeout.Title"
                                         SmallChange="1"
                                         SpinButtonPlacementMode="Compact"
                                         Value="-1" />
@@ -2034,57 +2034,57 @@
                                     </Grid.RowDefinitions>
 
                                     <CheckBox x:Name="Field_extensions__enabled"
-                                        Content="启用扩展"
+                                        panels:Loc.Content="Cfg.G9.ExtensionsLabel"
                                         IsChecked="True"
-                                        ToolTipService.ToolTip="启用界面扩展。对应 extensions.enabled。" />
+                                        panels:Loc.ToolTip="Cfg.G9.Extensions.Tip" />
                                     <CheckBox x:Name="Field_extensions__autoUpdate"
                                         Grid.Column="1"
-                                        Content="扩展自动更新" ToolTipService.ToolTip="扩展发布新版本时自动更新。对应 extensions.autoUpdate。"
+                                        panels:Loc.Content="Cfg.G9.ExtAutoUpdateLabel" panels:Loc.ToolTip="Cfg.G9.ExtAutoUpdate.Tip"
                                         IsChecked="True" />
                                     <CheckBox x:Name="Field_enableServerPlugins"
                                         Grid.Row="1"
-                                        Content="启用服务器插件"
-                                        ToolTipService.ToolTip="启用服务器插件。对应 enableServerPlugins。" />
+                                        panels:Loc.Content="Cfg.G9.ServerPluginsLabel"
+                                        panels:Loc.ToolTip="Cfg.G9.ServerPlugins.Tip" />
                                     <CheckBox x:Name="Field_enableServerPluginsAutoUpdate"
                                         Grid.Row="1"
                                         Grid.Column="1"
-                                        Content="插件自动更新" ToolTipService.ToolTip="启动时自动更新服务器插件。对应 enableServerPluginsAutoUpdate。"
+                                        panels:Loc.Content="Cfg.G9.ServerPluginsAutoLabel" panels:Loc.ToolTip="Cfg.G9.ServerPluginsAuto.Tip"
                                         IsChecked="True" />
                                     <CheckBox x:Name="Field_sso__autheliaAuth"
                                         Grid.Row="2"
-                                        Content="Authelia 单点登录"
-                                        ToolTipService.ToolTip="在反向代理上装好 Authelia 后再开：用同名账号（小写）自动登录。对应 sso.autheliaAuth。" />
-                                    <CheckBox x:Name="Field_sso__authentikAuth" Grid.Row="2" Grid.Column="1" Content="Authentik 单点登录" ToolTipService.ToolTip="在反向代理上装好 Authentik 后再开：用同名账号（小写）自动登录。对应 sso.authentikAuth。" />
+                                        panels:Loc.Content="Cfg.G9.AutheliaLabel"
+                                        panels:Loc.ToolTip="Cfg.G9.Authelia.Tip" />
+                                    <CheckBox x:Name="Field_sso__authentikAuth" Grid.Row="2" Grid.Column="1" panels:Loc.Content="Cfg.G9.AuthentikLabel" panels:Loc.ToolTip="Cfg.G9.Authentik.Tip" />
                                     <CheckBox x:Name="Field_cacheBuster__enabled"
                                         Grid.Row="3"
-                                        Content="启用缓存破坏"
-                                        ToolTipService.ToolTip="首次加载或上传图片后清除浏览器缓存；需要 localhost 或 HTTPS 域名才生效。对应 cacheBuster.enabled。" />
-                                    <CheckBox x:Name="Field_enableCorsProxy" Grid.Row="3" Grid.Column="1" Content="启用 CORS 代理" ToolTipService.ToolTip="启用 CORS 代理中间件。对应 enableCorsProxy。" />
+                                        panels:Loc.Content="Cfg.G9.CacheBusterLabel"
+                                        panels:Loc.ToolTip="Cfg.G9.CacheBuster.Tip" />
+                                    <CheckBox x:Name="Field_enableCorsProxy" Grid.Row="3" Grid.Column="1" panels:Loc.Content="Cfg.G9.CorsProxyLabel" panels:Loc.ToolTip="Cfg.G9.CorsProxy.Tip" />
                                     <CheckBox x:Name="Field_enableDownloadableTokenizers"
                                         Grid.Row="4"
-                                        Content="允许下载分词器"
-                                        ToolTipService.ToolTip="按需下载额外的模型分词器；关闭时回退到本机已有的分词器。对应 enableDownloadableTokenizers。" />
+                                        panels:Loc.Content="Cfg.G9.TokenizersLabel"
+                                        panels:Loc.ToolTip="Cfg.G9.Tokenizers.Tip" />
                                     <CheckBox x:Name="Field_disableCsrfProtection"
                                         Grid.Row="4"
                                         Grid.Column="1"
-                                        Content="禁用 CSRF 校验"
-                                        ToolTipService.ToolTip="关闭 CSRF 防护，官方标注「不推荐」。对应 disableCsrfProtection。" />
+                                        panels:Loc.Content="Cfg.G9.DisableCsrfLabel"
+                                        panels:Loc.ToolTip="Cfg.G9.DisableCsrf.Tip" />
                                     <CheckBox x:Name="Field_skipContentCheck"
                                         Grid.Row="5"
-                                        Content="跳过内容检查"
-                                        ToolTipService.ToolTip="跳过新默认内容的检查。对应 skipContentCheck。" />
+                                        panels:Loc.Content="Cfg.G9.SkipContentCheckLabel"
+                                        panels:Loc.ToolTip="Cfg.G9.SkipContentCheck.Tip" />
                                     <CheckBox x:Name="Field_allowKeysExposure"
                                         Grid.Row="5"
                                         Grid.Column="1"
-                                        Content="允许导出密钥"
-                                        ToolTipService.ToolTip="允许通过 API 导出密钥。对应 allowKeysExposure。" />
+                                        panels:Loc.Content="Cfg.G9.AllowKeyExportLabel"
+                                        panels:Loc.ToolTip="Cfg.G9.AllowKeyExport.Tip" />
                                 </Grid>
                             </Border>
 
                             <Border Padding="14,12" Style="{StaticResource SubPanelStyle}">
                                 <CheckBox x:Name="Field_securityOverride"
-                                    Content="忽略启动安全检查"
-                                    ToolTipService.ToolTip="关闭启动时的安全检查，官方标注「不推荐」。对应 securityOverride。" />
+                                    panels:Loc.Content="Cfg.G9.SecurityOverrideLabel"
+                                    panels:Loc.ToolTip="Cfg.G9.SecurityOverride.Tip" />
                             </Border>
 
                             <Border Style="{StaticResource SettingRowCardStyle}">
@@ -2095,16 +2095,16 @@
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
-                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" Text="缓存破坏规则" />
-                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="只对匹配该正则的浏览器 UA 清缓存，例如 firefox|safari（不区分大小写）。对应 cacheBuster.userAgentPattern。" />
+                                        <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G9.CacheBusterRule.Title" />
+                                        <TextBlock Style="{StaticResource FieldHintTextStyle}" panels:Loc.Text="Cfg.G9.CacheBusterRule.Hint" />
                                     </StackPanel>
 
                                     <TextBox
                                         Grid.Column="1"
                                         x:Name="Field_cacheBuster__userAgentPattern"
-                                        AutomationProperties.Name="缓存破坏规则"
+                                        panels:Loc.Name="Cfg.G9.CacheBusterRule.Title"
                                         FontFamily="Consolas"
-                                        PlaceholderText="可选" />
+                                        panels:Loc.Placeholder="Cfg.Optional.Placeholder" />
                                 </Grid>
                             </Border>
                         </StackPanel>
@@ -2116,7 +2116,7 @@
             <TextBlock
                 x:Name="DirtyHint"
                 Style="{StaticResource FootnoteTextStyle}"
-                Text="改动会自动保存到 config.yaml，下次启动服务时生效" />
+                panels:Loc.Text="Cfg.Footer" />
 
         </StackPanel>
     </ScrollViewer>
@@ -2149,17 +2149,17 @@
                             FontSize="18"
                             FontWeight="SemiBold"
                             Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                            Text="还没有酒馆配置文件" />
+                            panels:Loc.Text="Cfg.Empty.Title" />
                         <TextBlock
                             Style="{StaticResource FieldHintTextStyle}"
-                            Text="首次使用需要先准备一份配置。启动器会下载 SillyTavern 官方默认配置，并顺手调好：端口 11451、开启 IPv6、允许局域网访问、白名单只保留本机。"
+                            panels:Loc.Text="Cfg.Empty.Body"
                             TextAlignment="Center"
                             TextWrapping="Wrap" />
                     </StackPanel>
 
                     <Border Padding="12,10" Style="{StaticResource SubPanelStyle}">
                         <StackPanel Spacing="4">
-                            <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="配置将保存到" />
+                            <TextBlock Style="{StaticResource MetaChipTextStyle}" panels:Loc.Text="Cfg.Empty.Path" />
                             <TextBlock
                                 x:Name="MaskPathText"
                                 FontFamily="Consolas"
@@ -2176,7 +2176,7 @@
                         Style="{StaticResource AccentActionButtonStyle}">
                         <StackPanel Orientation="Horizontal" Spacing="7">
                             <FontIcon FontSize="13" Glyph="&#xE896;" />
-                            <TextBlock Text="获取默认配置" />
+                            <TextBlock panels:Loc.Text="Cfg.Empty.Action" />
                         </StackPanel>
                     </Button>
 

@@ -38,7 +38,7 @@ namespace AstraBrew_Launcher.Services
 
                 // 没装选中的浏览器：让系统按默认处理，至少能把页面打开
                 Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-                detail = "系统默认浏览器";
+                detail = L.Get("Set.Browser.System");
                 return true;
             }
             catch (Exception ex)

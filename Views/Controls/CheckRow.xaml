@@ -3,6 +3,7 @@
     x:Class="AstraBrew_Launcher.Views.Controls.CheckRow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
@@ -68,7 +69,7 @@
                     VerticalAlignment="Center"
                     FontSize="11"
                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                    Text="检测中" />
+                    controls:Loc.Text="Ck.State.Pending" />
             </StackPanel>
 
             <!--  已就绪  -->
@@ -89,7 +90,7 @@
                         FontSize="11"
                         FontWeight="SemiBold"
                         Foreground="{ThemeResource SystemFillColorSuccessBrush}"
-                        Text="已就绪" />
+                        controls:Loc.Text="Ck.State.Ready" />
                 </StackPanel>
             </Border>
 
@@ -111,7 +112,7 @@
                         FontSize="11"
                         FontWeight="SemiBold"
                         Foreground="{ThemeResource SystemFillColorCautionBrush}"
-                        Text="可更新" />
+                        controls:Loc.Text="Ck.State.Updatable" />
                 </StackPanel>
             </Border>
 
@@ -133,7 +134,7 @@
                         FontSize="11"
                         FontWeight="SemiBold"
                         Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                        Text="未安装" />
+                        controls:Loc.Text="Ck.State.Missing" />
                 </StackPanel>
             </Border>
         </Grid>

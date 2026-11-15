@@ -133,6 +133,11 @@ namespace AstraBrew_Launcher.Views.Controls
         {
             InitializeComponent();
 
+            // 这几条是 ContentDialog / InfoBar 的 object 型属性，Loc.Property 够不着
+            Title = L.Get("Sdd.Title");
+            HddNotice.Title = L.Get("Sdd.Hdd.Title");
+            HddNotice.Message = L.Get("Sdd.Hdd.Message");
+
             Opened += (_, _) =>
             {
                 InstanceScan.Changed -= OnScanChanged;
@@ -161,33 +166,33 @@ namespace AstraBrew_Launcher.Views.Controls
 
             PhaseText.Text = state.Phase switch
             {
-                ScanPhase.Scanning => "正在扫描本地磁盘…",
-                ScanPhase.Done => "扫描完成",
-                ScanPhase.Cancelled => "已停止扫描",
-                ScanPhase.Failed => "扫描失败",
-                _ => "尚未开始扫描",
+                ScanPhase.Scanning => L.Get("Sdd.Phase.Scanning"),
+                ScanPhase.Done => L.Get("Sdd.Phase.Done"),
+                ScanPhase.Cancelled => L.Get("Sdd.Phase.Cancelled"),
+                ScanPhase.Failed => L.Get("Sdd.Phase.Failed"),
+                _ => L.Get("Sdd.Phase.Idle"),
             };
 
             PhaseHintText.Text = state.Phase switch
             {
-                ScanPhase.Scanning => $"已用时 {state.ElapsedLabel}",
-                ScanPhase.Idle => "正在列出磁盘…",
-                _ => $"用时 {state.ElapsedLabel}",
+                ScanPhase.Scanning => L.F("Sdd.Elapsed.Running", state.ElapsedLabel),
+                ScanPhase.Idle => L.Get("Sdd.Elapsed.Listing"),
+                _ => L.F("Sdd.Elapsed.Done", state.ElapsedLabel),
             };
 
             RangeText.Text = state.Drives.Count == 0
                 ? string.Empty
-                : $"{state.Threads} 条线程 · {InstanceScanner.DescribeBudget()}";
+                : L.F("Sdd.Threads", state.Threads, InstanceScanner.DescribeBudget());
 
             CancelScanBtn.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
 
             // 关窗文案跟着状态走：扫完再写「后台运行」会让人以为关掉还有事在跑
-            CloseButtonText = running ? "后台运行" : "关闭";
+            CloseButtonText = L.Get(running ? "Sdd.Action.Background" : "Common.Action.Close.Content");
 
             // 「新增」只有扫完才算得准（列表在扫的过程中一直在长），扫的时候只报已发现数
             AddedText.Text = running
-                ? state.Found == 0 ? string.Empty : $"已发现 {state.Found} 个"
-                : state.Added > 0 ? $"本次新增 {state.Added} 个" : "没有新增";
+                ? state.Found == 0 ? string.Empty : L.F("Sdd.Found", state.Found)
+                : state.Added > 0 ? L.F("Sdd.Added", state.Added) : L.Get("Sdd.NoNew");
 
             // 只有机械盘才需要那句「要多等一会儿」：固态盘十几秒就完了，
             // 一提示反而让人以为出了什么问题
@@ -208,21 +213,18 @@ namespace AstraBrew_Launcher.Views.Controls
             HitEmptyText.Visibility = Hits.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             HitEmptyText.Text = state.Phase switch
             {
-                ScanPhase.Scanning => "还没有找到酒馆目录，继续扫描中…",
-                ScanPhase.Failed => "扫描没有完成，没有拿到结果。",
-                _ => "没有找到 package.json 里 name 为 sillytavern 的目录。",
+                ScanPhase.Scanning => L.Get("Sdd.Empty.Scanning"),
+                ScanPhase.Failed => L.Get("Sdd.Empty.Failed"),
+                _ => L.Get("Sdd.Empty.None"),
             };
 
             FootHintText.Text = state.Phase switch
             {
-                ScanPhase.Scanning =>
-                    "关掉这个窗口不会中断扫描：进度一直显示在右下角的消息里，点它的「查看详情」就能回到这里。",
-                ScanPhase.Done =>
-                    "找到的目录已加入「本地实例」列表；关掉目录或删掉文件的实例会在下次刷新时自动移除。",
-                ScanPhase.Cancelled =>
-                    "已停止扫描，已经找到的实例保留在列表中。重新点「扫描」会从头再扫一遍。",
+                ScanPhase.Scanning => L.Get("Sdd.Note.Running"),
+                ScanPhase.Done => L.Get("Sdd.Note.Done"),
+                ScanPhase.Cancelled => L.Get("Sdd.Note.Cancelled"),
                 ScanPhase.Failed =>
-                    string.IsNullOrWhiteSpace(state.Error) ? "扫描时出错，请重试。" : state.Error!,
+                    string.IsNullOrWhiteSpace(state.Error) ? L.Get("Sdd.Failed.Body") : state.Error!,
                 _ => string.Empty,
             };
         }
@@ -299,26 +301,26 @@ namespace AstraBrew_Launcher.Views.Controls
             // 还在扫的盘顺带给出「几条线程在扫」：固态盘扫完后它的线程会过来支援，
             // 这儿的数字会涨上去，用户看得见空闲核心没有闲着
             row.DirsText = running && !finished && drive.Workers > 0
-                ? $"已查 {drive.Directories:N0} 个 · {drive.Workers} 线程"
-                : $"已查 {drive.Directories:N0} 个";
+                ? L.F("Sdd.Drive.Dirs", drive.Directories.ToString("N0"), drive.Workers)
+                : L.F("Sdd.Drive.DirsOnly", drive.Directories.ToString("N0"));
             row.Current = drive.Current;
 
             row.StateText = phase switch
             {
-                ScanPhase.Scanning when finished => "已完成",
-                ScanPhase.Scanning when guessing => "正在估算时间…",
+                ScanPhase.Scanning when finished => L.Get("Sdd.Drive.Finished"),
+                ScanPhase.Scanning when guessing => L.Get("Scan.Eta.Estimating"),
                 ScanPhase.Scanning when drive.RemainingSeconds is { } seconds =>
-                    "预计剩余 " + ScanSnapshot.DurationLabel(seconds),
-                ScanPhase.Scanning when drive.Rate < 1 => "正在估算…",
+                    L.F("Scan.Eta.Remaining", ScanSnapshot.DurationLabel(seconds)),
+                ScanPhase.Scanning when drive.Rate < 1 => L.Get("Sdd.Drive.Sampling"),
                 ScanPhase.Scanning => string.Empty,
-                ScanPhase.Cancelled => "已停止",
-                _ => "已完成",
+                ScanPhase.Cancelled => L.Get("Sdd.Drive.Stopped"),
+                _ => L.Get("Sdd.Drive.Finished"),
             };
 
             (row.KindText, row.KindVisibility) = drive.Kind switch
             {
-                DriveKind.Hdd => ("机械硬盘", Visibility.Visible),
-                DriveKind.Ssd => ("固态硬盘", Visibility.Visible),
+                DriveKind.Hdd => (L.Get("Sdd.Drive.Kind.Hdd"), Visibility.Visible),
+                DriveKind.Ssd => (L.Get("Sdd.Drive.Kind.Ssd"), Visibility.Visible),
                 _ => (string.Empty, Visibility.Collapsed),
             };
         }
@@ -348,7 +350,7 @@ namespace AstraBrew_Launcher.Views.Controls
             {
                 Hits.Add(new ScanHitRow
                 {
-                    Version = hit.Version.Length == 0 ? "版本未知" : "v" + hit.Version,
+                    Version = hit.Version.Length == 0 ? L.Get("Instance.State.VersionUnknown") : "v" + hit.Version,
                     Path = hit.Path,
                 });
             }

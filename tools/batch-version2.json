@@ -1,0 +1,13 @@
+{
+  "Version.Local.Dialog.Deps.TitlePlain": ["安装 Node 依赖", "Install Node dependencies"],
+  "Version.Local.Dialog.Deps.BodyBuiltin": ["代码已经在本地了，只缺 Node 依赖。依赖装完才算安装完成。", "The code is already here; only the Node dependencies are missing. The install counts as finished once they are in."],
+
+  "Channel.Name.Gitee": ["Gitee 镜像", "Gitee mirror"],
+  "Channel.Name.GitCode": ["GitCode 镜像", "GitCode mirror"],
+  "Channel.Name.Github": ["GitHub 直连", "GitHub direct"],
+
+  "Npm.Name.Huawei": ["华为云", "Huawei Cloud"],
+  "Npm.Name.Tencent": ["腾讯云", "Tencent Cloud"],
+  "Npm.Name.Official": ["npm 官方", "npm official"],
+  "Npm.Name.Npmmirror": ["npmmirror", "npmmirror"]
+}

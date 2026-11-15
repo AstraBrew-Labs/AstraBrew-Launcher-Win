@@ -1,0 +1,39 @@
+{
+  "Settings.Row.Font.Description.Loading": ["加载本机已安装的字体…", "Loading fonts installed on this PC…"],
+  "Settings.Row.NpmRegistry.DescriptionPlain": ["安装扩展与 PM2 时使用的包源。", "The package registry used to install extensions and PM2."],
+  "Settings.Row.SystemProxy.Reading": ["正在读取 Windows 的 Internet 选项…", "Reading the Windows Internet options…"],
+  "Settings.Row.AutoLaunch.Tip.OpenSettings": ["打开系统「启动应用」设置", "Open Windows' startup apps settings"],
+  "Common.RevealInExplorer": ["在资源管理器中打开", "Show in Explorer"],
+  "Common.CopyFullPath": ["复制完整路径", "Copy the full path"],
+  "Common.OpenLocation": ["打开所在目录", "Open the containing folder"],
+  "Settings.Proxy.Tip.Refresh": ["重新读取 Windows 的 Internet 选项", "Re-read the Windows Internet options"],
+  "Settings.Proxy.Tip.OpenSettings": ["打开 Windows 的代理设置页", "Open the Windows proxy settings page"],
+  "Settings.Row.GithubConnectivity.Idle": ["未测试", "Not tested"],
+  "Settings.Row.LauncherVersion.Description": ["当前安装的启动器版本，稳定通道。", "The installed launcher version, on the stable channel."],
+
+  "Ck.State.Pending": ["检测中", "Checking"],
+  "Ck.State.Ready": ["已就绪", "Ready"],
+  "Ck.State.Updatable": ["可更新", "Update available"],
+  "Ck.State.Missing": ["未安装", "Not installed"],
+
+  "Eid.Tab.Git": ["Git 仓库", "Git repository"],
+  "Eid.Tab.Offline": ["离线包", "Offline package"],
+  "Eid.Field.Url": ["仓库地址", "Repository address"],
+  "Eid.Field.Url.Placeholder": ["https://github.com/用户/扩展.git", "https://github.com/user/extension.git"],
+  "Eid.Field.Branch": ["分支", "Branch"],
+  "Eid.Note.Git": ["支持 GitHub、Gitee 的 HTTPS 地址；只有 GitHub 域名会按「GitHub 加速」开关经中转访问，其余直连。同名目录已存在时会加后缀另装一份，不会覆盖已有扩展。", "HTTPS addresses from GitHub and Gitee work; only GitHub hosts follow the GitHub acceleration switch and go through the relay, everything else connects directly. If a folder with the same name already exists, a suffix is added and a separate copy is installed — existing extensions are never overwritten."],
+  "Eid.Label.PickOffline": ["选择 .zip 离线包（可多选）", "Choose .zip offline packages (multiple allowed)"],
+  "Eid.Note.Offline": ["离线包需包含 manifest.json；压缩包里套了一层目录也能认出来。同一批里有两个同名的包会整组标为无效——装出来会是 x 和 x-2，分不清哪个才是要的。装完会自动启用，可在列表中关闭。", "An offline package must contain manifest.json; a single wrapping folder inside the archive is fine. If two packages in the batch share a name, the whole batch is marked invalid — they would install as x and x-2 and there is no telling which one is wanted. Extensions are enabled automatically after installing and can be turned off in the list."],
+  "Eid.Phase.Step1": ["第 1/2 步 · 下载扩展代码", "Step 1 of 2 · downloading the extension code"],
+  "Eid.Hint.HoldFull": ["安装期间请勿关闭窗口；完成后扩展会自动启用并出现在列表中。", "Do not close the window while installing; the extension is enabled automatically and appears in the list when done."],
+
+  "Sdd.Cancel": ["取消扫描", "Cancel scan"],
+  "Sdd.Section.Progress": ["扫描进度", "Scan progress"],
+  "Sdd.Section.Found": ["找到的实例", "Instances found"],
+  "Sdd.ThreadsPending": ["正在统计线程分配…", "Working out the thread split…"],
+  "Sdd.Empty.Pending": ["还没有找到酒馆目录…", "No tavern folder found yet…"],
+  "Sdd.Hdd.Title": ["这块机械硬盘需要多等一会儿", "This hard drive will take a while longer"],
+  "Sdd.Hdd.Message": ["扫描速度与等待时间受设备配置影响；机械硬盘的读取速度较慢，请耐心等待。", "Scan speed and wait time depend on the hardware; mechanical drives read more slowly, so please be patient."],
+
+  "Setup.S1.Migration.PickTip": ["选酒馆根目录里的 config.yaml", "Pick config.yaml in the tavern root folder"]
+}

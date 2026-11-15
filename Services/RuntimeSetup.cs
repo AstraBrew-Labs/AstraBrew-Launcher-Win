@@ -69,13 +69,40 @@ namespace AstraBrew_Launcher.Services
         double Weight);
 
     /// <summary>一行任务的进度：百分比是这一行自己的，总进度由界面按 weight 合成。</summary>
+    /// <summary>
+    /// 一条安装任务此刻处在哪一步。
+    /// **判断状态一律看这个枚举，不要拿 <see cref="RuntimeTaskUpdate.Message"/> 的文字去比**——
+    /// 界面文案要翻译，文字一比就断（原来写的是 <c>Message == "完成"</c>，切英文后进度条就停在原地）。
+    /// </summary>
+    public enum RuntimeTaskState
+    {
+        /// <summary>还没轮到 / 被取消，界面显示「等着」。</summary>
+        Pending,
+
+        /// <summary>轮到它了，正在准备（还没开始下载）。</summary>
+        Preparing,
+
+        /// <summary>正在下载 / 解压 / 校验。</summary>
+        Running,
+
+        /// <summary>装好了。</summary>
+        Completed,
+
+        /// <summary>装失败了。</summary>
+        Failed,
+    }
+
     public sealed record RuntimeTaskUpdate(
         string Key,
         string Message,
         double Percent,
         bool Indeterminate,
         string? LogLine,
-        bool Failed = false);
+        RuntimeTaskState State = RuntimeTaskState.Pending)
+    {
+        /// <summary>失败。保留这个属性是为了不惊动老的读取方，真身是 <see cref="State"/>。</summary>
+        public bool Failed => State == RuntimeTaskState.Failed;
+    }
 
     /// <summary>一批安装的结果。<see cref="Cancelled"/> 与失败分开，界面文案不一样。</summary>
     public sealed record RuntimeBatchResult(
@@ -115,8 +142,8 @@ namespace AstraBrew_Launcher.Services
                     env.Node,
                     env.Node is not null,
                     RequiredForBasic: true,
-                    "酒馆本身就是靠它跑起来的",
-                    "没有它，酒馆打不开"),
+                    L.Get("Rts.Node.Why"),
+                    L.Get("Rts.Node.Need")),
 
                 new(
                     RuntimeComponentKey.Npm,
@@ -125,18 +152,18 @@ namespace AstraBrew_Launcher.Services
                     env.Npm,
                     env.Npm is not null,
                     RequiredForBasic: true,
-                    "给酒馆装零件，也用来装后台工具",
-                    "没有它，零件装不上，酒馆跑不起来"),
+                    L.Get("Rts.Npm.Why"),
+                    L.Get("Rts.Npm.Need")),
 
                 new(
                     RuntimeComponentKey.Git,
-                    builtin ? "Git（内置 MinGit）" : "Git",
+                    builtin ? L.Get("Rts.Git.Builtin") : "Git",
                     "\uE8E5",
                     env.Git,
                     env.Git is not null,
                     RequiredForBasic: false,
-                    "下载和更新酒馆代码、装扩展",
-                    "没有它，装不了酒馆，也装不了扩展"),
+                    L.Get("Rts.Git.Why"),
+                    L.Get("Rts.Git.Need")),
 
                 new(
                     RuntimeComponentKey.Caddy,
@@ -145,8 +172,8 @@ namespace AstraBrew_Launcher.Services
                     env.Caddy,
                     env.Caddy is not null,
                     RequiredForBasic: false,
-                    "让别人用网址访问你的酒馆时用",
-                    "没有它只影响外网访问，自己用不受影响"),
+                    L.Get("Rts.Caddy.Why"),
+                    L.Get("Rts.Caddy.Need")),
 
                 new(
                     RuntimeComponentKey.Pm2,
@@ -155,8 +182,8 @@ namespace AstraBrew_Launcher.Services
                     env.Pm2,
                     env.Pm2 is not null,
                     RequiredForBasic: false,
-                    "关掉窗口后还能继续跑",
-                    "没有它，一关启动器酒馆就停"),
+                    L.Get("Rts.Pm2.Why"),
+                    L.Get("Rts.Pm2.Need")),
 
                 new(
                     RuntimeComponentKey.WebView2,
@@ -165,8 +192,8 @@ namespace AstraBrew_Launcher.Services
                     env.WebView2,
                     env.WebView2 is not null,
                     RequiredForBasic: false,
-                    "在启动器里直接开一个窗口",
-                    "没有它，会自动改用浏览器打开"),
+                    L.Get("Rts.Desktop.Why"),
+                    L.Get("Rts.Desktop.Need")),
             };
 
             bool basic = components
@@ -178,8 +205,8 @@ namespace AstraBrew_Launcher.Services
                 .All(component => component.Ready);
 
             string summary = basic
-                ? full ? "全齐了" : "能跑酒馆了"
-                : "还缺东西";
+                ? full ? L.Get("Rts.Status.Complete") : L.Get("Rts.Status.CanRun")
+                : L.Get("Rts.Status.Missing");
 
             return new RuntimeProfile(side, components, basic, full, summary);
         }
@@ -207,7 +234,7 @@ namespace AstraBrew_Launcher.Services
                     "Node",
                     "Node.js",
                     node is { Ready: true }
-                        ? $"缺少 npm，重装 Node.js {NodejsInstaller.Version}"
+                        ? L.F("Rts.Node.MissingNpm", NodejsInstaller.Version)
                         : $"Node.js {NodejsInstaller.Version}",
                     "\uE7F4",
                     40));
@@ -269,7 +296,7 @@ namespace AstraBrew_Launcher.Services
 
             if (!await Gate.WaitAsync(0, token).ConfigureAwait(false))
             {
-                return new RuntimeBatchResult(false, false, results, "另一个安装任务正在进行");
+                return new RuntimeBatchResult(false, false, results, L.Get("Rts.Busy"));
             }
 
             try
@@ -281,7 +308,13 @@ namespace AstraBrew_Launcher.Services
                         return new RuntimeBatchResult(false, true, results);
                     }
 
-                    progress?.Report(new RuntimeTaskUpdate(task.Key, "准备中…", 0, false, null));
+                    progress?.Report(new RuntimeTaskUpdate(
+                        task.Key,
+                        L.Get("Rts.Stage.Preparing"),
+                        0,
+                        false,
+                        null,
+                        RuntimeTaskState.Preparing));
 
                     IProgress<InstallProgress>? adapter = progress is null
                         ? null
@@ -290,18 +323,23 @@ namespace AstraBrew_Launcher.Services
                             StageLabel(value.Stage, value.Message),
                             value.Percent,
                             value.Percent <= 0,
-                            value.Message)));
+                            value.Message,
+                            RuntimeTaskState.Running)));
 
                     InstallResult result = await InstallOneAsync(task.Key, adapter, token).ConfigureAwait(false);
                     results.Add((task.Key, result));
 
                     progress?.Report(new RuntimeTaskUpdate(
                         task.Key,
-                        result.Success ? "完成" : result.Message,
+                        result.Success ? L.Get("Rts.Stage.Done") : result.Message,
                         result.Success ? 100 : 0,
                         false,
                         result.Message,
-                        Failed: !result.Success && result.Error != InstallError.Cancelled));
+                        result.Success
+                            ? RuntimeTaskState.Completed
+                            : result.Error == InstallError.Cancelled
+                                ? RuntimeTaskState.Pending   // 主动取消不算失败，界面上仍是「等着」
+                                : RuntimeTaskState.Failed));
 
                     if (result.Error == InstallError.Cancelled)
                     {
@@ -311,7 +349,7 @@ namespace AstraBrew_Launcher.Services
                     // Node 失败后面全都没意义：PM2 靠 npm，依赖也靠它
                     if (!result.Success && task.Key == "Node")
                     {
-                        return new RuntimeBatchResult(false, false, results, "Node.js 没装好，后面的先跳过");
+                        return new RuntimeBatchResult(false, false, results, L.Get("Rts.SkipAfterNode"));
                     }
                 }
 
@@ -333,16 +371,16 @@ namespace AstraBrew_Launcher.Services
                 "Git" => MingitInstaller.InstallAsync(progress, token),
                 "Caddy" => CaddyInstaller.InstallAsync(progress, token),
                 "Pm2" => Pm2Installer.InstallAsync(progress, token),
-                _ => Task.FromResult(new InstallResult(false, InstallError.Unknown, "未知组件", key, null)),
+                _ => Task.FromResult(new InstallResult(false, InstallError.Unknown, L.Get("Rts.UnknownComponent"), key, null)),
             };
 
         private static string StageLabel(InstallStage stage, string message) => stage switch
         {
-            InstallStage.Preparing => "准备中…",
-            InstallStage.Downloading => message.Length > 0 ? message : "下载中…",
-            InstallStage.Extracting => "解压中…",
-            InstallStage.Verifying => "校验中…",
-            InstallStage.Done => "完成",
+            InstallStage.Preparing => L.Get("Rts.Stage.Preparing"),
+            InstallStage.Downloading => message.Length > 0 ? message : L.Get("Rts.Stage.Downloading"),
+            InstallStage.Extracting => L.Get("Rts.Stage.Extracting"),
+            InstallStage.Verifying => L.Get("Rts.Stage.Verifying"),
+            InstallStage.Done => L.Get("Rts.Stage.Done"),
             _ => message,
         };
     }

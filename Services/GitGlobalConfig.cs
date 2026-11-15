@@ -54,7 +54,7 @@ namespace AstraBrew_Launcher.Services
             {
                 // 没有 Git：开着时规则写不上，得说一声；关着时本来就没东西可撤
                 return enabled
-                    ? new GitConfigResult(false, "没有找到 Git，全局加速规则没能写入；命令行与酒馆更新里的 GitHub 拉取仍是直连。")
+                    ? new GitConfigResult(false, L.Get("Miss.GitCfg.NoGitSoft"))
                     : null;
             }
 
@@ -71,7 +71,7 @@ namespace AstraBrew_Launcher.Services
         {
             if (RuntimeProbe.LocateGit() is not { Length: > 0 } git)
             {
-                return new GitConfigResult(false, "没有找到 Git，请先在「运行环境」里安装后再打开这个开关。");
+                return new GitConfigResult(false, L.Get("Miss.GitCfg.NoGitHard"));
             }
 
             (int code, _, string stderr) = await RunAsync(
@@ -84,13 +84,13 @@ namespace AstraBrew_Launcher.Services
 
             if (code != 0)
             {
-                return new GitConfigResult(false, Explain(stderr, "写入全局 git 配置失败。"));
+                return new GitConfigResult(false, Explain(stderr, L.Get("Miss.GitCfg.WriteFail")));
             }
 
             // 写完复核一次：git config 偶尔会因文件被占用而静默失败，只看退出码不够
             return await IsAppliedAsync().ConfigureAwait(false) == true
                 ? new GitConfigResult(true, string.Empty)
-                : new GitConfigResult(false, "配置写完后没能读到，可能是 .gitconfig 被其它程序占用，请重试。");
+                : new GitConfigResult(false, L.Get("Miss.GitCfg.ReadBack"));
         }
 
         /// <summary>移除这条规则，恢复到直连。</summary>
@@ -112,7 +112,7 @@ namespace AstraBrew_Launcher.Services
             // git config --unset 在键不存在时返回 5：本来就没写，等于已经是目标状态
             if (code != 0 && code != 5)
             {
-                return new GitConfigResult(false, Explain(stderr, "移除全局 git 配置失败。"));
+                return new GitConfigResult(false, Explain(stderr, L.Get("Miss.GitCfg.RemoveFail")));
             }
 
             return new GitConfigResult(true, string.Empty);
@@ -180,7 +180,7 @@ namespace AstraBrew_Launcher.Services
             using Process? process = Process.Start(startInfo);
             if (process is null)
             {
-                return (-1, string.Empty, "无法启动 git 进程。");
+                return (-1, string.Empty, L.Get("Miss.GitCfg.CannotStart"));
             }
 
             // 两个流必须同时读，只读一个会在另一个写满管道时互锁

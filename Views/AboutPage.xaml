@@ -3,6 +3,7 @@
     x:Class="AstraBrew_Launcher.Views.AboutPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
@@ -138,12 +139,6 @@
                         <AdaptiveTrigger MinWindowWidth="0" />
                     </VisualState.StateTriggers>
                     <VisualState.Setters>
-                        <!--  页头动作落到标题下方  -->
-                        <Setter Target="HeaderActions.(Grid.Row)" Value="2" />
-                        <Setter Target="HeaderActions.(Grid.Column)" Value="0" />
-                        <Setter Target="HeaderActions.HorizontalAlignment" Value="Left" />
-                        <Setter Target="HeaderActions.Margin" Value="0,12,0,0" />
-
                         <!--  Hero：版本胶囊落到品牌标识下方  -->
                         <Setter Target="HeroBadges.(Grid.Row)" Value="1" />
                         <Setter Target="HeroBadges.(Grid.Column)" Value="0" />
@@ -162,39 +157,10 @@
             <StackPanel x:Name="PageRoot" Style="{StaticResource PageRootStyle}">
 
                 <!--  ==================== 页头 ====================  -->
-                <Grid ColumnSpacing="16" RowSpacing="0">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-
-                    <StackPanel Spacing="4">
-                        <TextBlock Style="{StaticResource PageTitleTextStyle}" Text="关于" />
-                        <TextBlock Style="{StaticResource PageSubtitleTextStyle}" Text="版本信息、运行环境、安装位置与开源许可。" />
-                    </StackPanel>
-
-                    <StackPanel
-                        x:Name="HeaderActions"
-                        Grid.Column="1"
-                        VerticalAlignment="Center"
-                        Orientation="Horizontal"
-                        Spacing="8">
-                        <Button
-                            Click="CopyVersionInfo_Click"
-                            CornerRadius="8"
-                            ToolTipService.ToolTip="把版本与运行环境复制到剪贴板">
-                            <StackPanel Orientation="Horizontal" Spacing="7">
-                                <FontIcon x:Name="CopyIcon" FontSize="13" Glyph="&#xE8C8;" />
-                                <TextBlock x:Name="CopyLabel" Text="复制版本信息" />
-                            </StackPanel>
-                        </Button>
-                    </StackPanel>
-                </Grid>
+                <StackPanel Spacing="4">
+                    <TextBlock Style="{StaticResource PageTitleTextStyle}" controls:Loc.Text="About.Page.Title" />
+                    <TextBlock Style="{StaticResource PageSubtitleTextStyle}" controls:Loc.Text="About.Page.Subtitle" />
+                </StackPanel>
 
                 <!--  ==================== 品牌主卡 ====================  -->
                 <Border Style="{StaticResource HeroCardStyle}">
@@ -231,17 +197,28 @@
 
                                 <StackPanel Spacing="10">
                                     <!--  横版标识：随主题切换深色/浅色两版  -->
+                                    <!--
+                                        横版标识是图片，图里带着中文「星酿启动器」——英文界面下换成纯文字，
+                                        中文仍用图（拉丁字母版的品牌图没有现成资产，别硬拉伸中文图）。
+                                    -->
                                     <Image
+                                        x:Name="HeroBrandImage"
                                         Height="40"
                                         HorizontalAlignment="Left"
-                                        AutomationProperties.Name="星酿启动器 AstraBrew Launcher"
+                                        controls:Loc.Name="Shell.AppName.Full"
                                         Source="{ThemeResource BrandLockupSource}"
                                         Stretch="Uniform" />
+                                    <TextBlock
+                                        x:Name="HeroBrandText"
+                                        FontSize="24"
+                                        FontWeight="SemiBold"
+                                        Visibility="Collapsed"
+                                        controls:Loc.Name="Shell.AppName.Full" />
                                     <TextBlock
                                         MaxWidth="520"
                                         HorizontalAlignment="Left"
                                         Style="{StaticResource CardBodyTextStyle}"
-                                        Text="为星酿酒馆准备的桌面启动器：装环境、管版本、看日志，全部在本地完成。" />
+                                        controls:Loc.Text="About.Hero.Tagline" />
                                 </StackPanel>
 
                                 <StackPanel
@@ -264,12 +241,11 @@
                                             x:Name="HeroVersionChipText"
                                             FontSize="11"
                                             FontWeight="SemiBold"
-                                            Foreground="#FF2B88D8"
-                                            Text="v0.3.0" />
+                                            Foreground="#FF2B88D8" />
                                     </Border>
                                     <!--  渠道标记：预览版 / 测试版 / 开发版；正式版是「稳定通道」  -->
                                     <Border x:Name="ChannelChip" Style="{StaticResource MetaChipStyle}">
-                                        <TextBlock x:Name="ChannelChipText" Style="{StaticResource MetaChipTextStyle}" Text="稳定通道" />
+                                        <TextBlock x:Name="ChannelChipText" Style="{StaticResource MetaChipTextStyle}" />
                                     </Border>
                                     <Border Style="{StaticResource MetaChipStyle}">
                                         <TextBlock x:Name="ArchChipText" Style="{StaticResource MetaChipTextStyle}" Text="x64" /></Border>
@@ -297,17 +273,17 @@
                                         CornerRadius="8">
                                         <StackPanel Orientation="Horizontal" Spacing="7">
                                             <FontIcon FontSize="13" Glyph="&#xE72C;" />
-                                            <TextBlock x:Name="CheckUpdateText" FontSize="13" Text="检查更新" />
+                                            <TextBlock x:Name="CheckUpdateText" FontSize="13" controls:Loc.Text="About.Action.CheckUpdate" />
                                         </StackPanel>
                                     </Button>
                                     <Button
                                         Click="OpenLink_Click"
-                                        Content="项目主页"
+                                        controls:Loc.Content="About.Link.Home"
                                         Style="{StaticResource HeroActionStyle}"
-                                        Tag="https://astrabrew.cn" />
+                                        Tag="https://launcher.astrabrew.cn" />
                                     <Button
                                         Click="OpenLink_Click"
-                                        Content="反馈问题"
+                                        controls:Loc.Content="About.Link.Issues"
                                         Style="{StaticResource HeroActionStyle}"
                                         Tag="mailto:support@astrabrew.cn" />
                                 </StackPanel>
@@ -318,7 +294,7 @@
                                     HorizontalAlignment="Right"
                                     VerticalAlignment="Center"
                                     Style="{StaticResource FootnoteTextStyle}"
-                                    Text="尚未检查更新" />
+                                    controls:Loc.Text="About.Update.Never" />
                             </Grid>
                         </StackPanel>
                     </Grid>
@@ -338,8 +314,8 @@
                             Grid.Column="1"
                             VerticalAlignment="Center"
                             Spacing="2">
-                            <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" Text="版本与构建" />
-                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="当前安装的版本、构建来源与更新通道。" />
+                            <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" controls:Loc.Text="About.Group.Version.Title" />
+                            <TextBlock Style="{StaticResource FieldHintTextStyle}" controls:Loc.Text="About.Group.Version.Hint" />
                         </StackPanel>
                     </Grid>
 
@@ -351,12 +327,11 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource InfoLabelStyle}" Text="当前版本" />
+                                <TextBlock Style="{StaticResource InfoLabelStyle}" controls:Loc.Text="About.Field.Current" />
                                 <TextBlock
                                     x:Name="VersionValue"
                                     Grid.Column="1"
-                                    Style="{StaticResource MonoValueStyle}"
-                                    Text="v0.3.0" />
+                                    Style="{StaticResource MonoValueStyle}" />
                                 <Border
                                     Grid.Column="2"
                                     Padding="8,1,8,2"
@@ -366,7 +341,7 @@
                                     <TextBlock
                                         FontSize="10"
                                         Foreground="#FF16A34A"
-                                        Text="已是最新" />
+                                        controls:Loc.Text="About.Update.Latest" />
                                 </Border>
                             </Grid>
 
@@ -377,33 +352,11 @@
                                     <ColumnDefinition Width="140" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource InfoLabelStyle}" Text="构建" />
+                                <TextBlock Style="{StaticResource InfoLabelStyle}" controls:Loc.Text="About.Field.Build" />
                                 <TextBlock
                                     x:Name="BuildValue"
                                     Grid.Column="1"
-                                    Style="{StaticResource MonoValueStyle}"
-                                    Text="2026-10-27 · #241027.1" />
-                            </Grid>
-
-                            <Rectangle Style="{StaticResource RowDividerStyle}" />
-
-                            <Grid Style="{StaticResource InfoRowStyle}">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="140" />
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource InfoLabelStyle}" Text="更新通道" />
-                                <TextBlock
-                                    x:Name="ChannelValue"
-                                    Grid.Column="1"
-                                    Style="{StaticResource InfoValueStyle}"
-                                    Text="稳定通道" />
-                                <TextBlock
-                                    Grid.Column="2"
-                                    VerticalAlignment="Center"
-                                    Style="{StaticResource FootnoteTextStyle}"
-                                    Text="可在「设置 · 更新」中切换" />
+                                    Style="{StaticResource MonoValueStyle}" />
                             </Grid>
 
                             <Rectangle Style="{StaticResource RowDividerStyle}" />
@@ -413,11 +366,11 @@
                                     <ColumnDefinition Width="140" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource InfoLabelStyle}" Text="产品系列" />
+                                <TextBlock Style="{StaticResource InfoLabelStyle}" controls:Loc.Text="About.Field.ProductLine" />
                                 <TextBlock
                                     Grid.Column="1"
                                     Style="{StaticResource InfoValueStyle}"
-                                    Text="星酿工坊 AstraBrew Labs" />
+                                    controls:Loc.Text="About.ProductLine.Value" />
                             </Grid>
                         </StackPanel>
                     </Border>
@@ -437,8 +390,8 @@
                             Grid.Column="1"
                             VerticalAlignment="Center"
                             Spacing="2">
-                            <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" Text="运行环境" />
-                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="启动器自身的框架与系统环境；与酒馆内核的运行环境无关。" />
+                            <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" controls:Loc.Text="About.Group.Runtime.Title" />
+                            <TextBlock Style="{StaticResource FieldHintTextStyle}" controls:Loc.Text="About.Group.Runtime.Hint" />
                         </StackPanel>
                     </Grid>
 
@@ -449,7 +402,7 @@
                                     <ColumnDefinition Width="140" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource InfoLabelStyle}" Text="应用框架" />
+                                <TextBlock Style="{StaticResource InfoLabelStyle}" controls:Loc.Text="About.Field.Framework" />
                                 <TextBlock
                                     Grid.Column="1"
                                     Style="{StaticResource InfoValueStyle}"
@@ -463,12 +416,11 @@
                                     <ColumnDefinition Width="140" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource InfoLabelStyle}" Text="托管运行时" />
+                                <TextBlock Style="{StaticResource InfoLabelStyle}" controls:Loc.Text="About.Field.DotNet" />
                                 <TextBlock
                                     x:Name="RuntimeValue"
                                     Grid.Column="1"
-                                    Style="{StaticResource MonoValueStyle}"
-                                    Text=".NET 8.0" />
+                                    Style="{StaticResource MonoValueStyle}" />
                             </Grid>
 
                             <Rectangle Style="{StaticResource RowDividerStyle}" />
@@ -478,11 +430,11 @@
                                     <ColumnDefinition Width="140" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource InfoLabelStyle}" Text="图形渲染" />
+                                <TextBlock Style="{StaticResource InfoLabelStyle}" controls:Loc.Text="About.Field.Graphics" />
                                 <TextBlock
                                     Grid.Column="1"
                                     Style="{StaticResource InfoValueStyle}"
-                                    Text="DirectX 11 · 硬件加速" />
+                                    controls:Loc.Text="About.Graphics.Value" />
                             </Grid>
 
                             <Rectangle Style="{StaticResource RowDividerStyle}" />
@@ -492,12 +444,11 @@
                                     <ColumnDefinition Width="140" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource InfoLabelStyle}" Text="操作系统" />
+                                <TextBlock Style="{StaticResource InfoLabelStyle}" controls:Loc.Text="About.Field.Os" />
                                 <TextBlock
                                     x:Name="OsValue"
                                     Grid.Column="1"
-                                    Style="{StaticResource InfoValueStyle}"
-                                    Text="Windows 11" />
+                                    Style="{StaticResource InfoValueStyle}" />
                             </Grid>
 
                             <Rectangle Style="{StaticResource RowDividerStyle}" />
@@ -507,12 +458,11 @@
                                     <ColumnDefinition Width="140" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource InfoLabelStyle}" Text="进程架构" />
+                                <TextBlock Style="{StaticResource InfoLabelStyle}" controls:Loc.Text="About.Field.Arch" />
                                 <TextBlock
                                     x:Name="ArchValue"
                                     Grid.Column="1"
-                                    Style="{StaticResource InfoValueStyle}"
-                                    Text="x64" />
+                                    Style="{StaticResource InfoValueStyle}" />
                             </Grid>
                         </StackPanel>
                     </Border>
@@ -532,8 +482,8 @@
                             Grid.Column="1"
                             VerticalAlignment="Center"
                             Spacing="2">
-                            <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" Text="安装位置" />
-                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="程序、数据与日志的位置；卸载时请一并备份数据目录。" />
+                            <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" controls:Loc.Text="About.Group.Paths.Title" />
+                            <TextBlock Style="{StaticResource FieldHintTextStyle}" controls:Loc.Text="About.Group.Paths.Hint" />
                         </StackPanel>
                     </Grid>
 
@@ -545,21 +495,20 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource InfoLabelStyle}" Text="程序目录" />
+                                <TextBlock Style="{StaticResource InfoLabelStyle}" controls:Loc.Text="About.Field.Program" />
                                 <TextBlock
                                     x:Name="AppDirValue"
                                     Grid.Column="1"
-                                    Style="{StaticResource PathValueStyle}"
-                                    Text="C:\Users\用户名\AppData\Local\AstraBrew Launcher" />
+                                    Style="{StaticResource PathValueStyle}" />
                                 <Button
                                     Grid.Column="2"
                                     Click="OpenFolder_Click"
                                     CornerRadius="8"
-                                    ToolTipService.ToolTip="在资源管理器中打开"
+                                    controls:Loc.ToolTip="About.Action.Open.ToolTip"
                                     Tag="app">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <FontIcon FontSize="12" Glyph="&#xE8A7;" />
-                                        <TextBlock FontSize="13" Text="打开" />
+                                        <TextBlock FontSize="13" controls:Loc.Text="About.Action.Open.Label" />
                                     </StackPanel>
                                 </Button>
                             </Grid>
@@ -572,21 +521,20 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource InfoLabelStyle}" Text="数据目录" />
+                                <TextBlock Style="{StaticResource InfoLabelStyle}" controls:Loc.Text="About.Field.Data" />
                                 <TextBlock
                                     x:Name="DataDirValue"
                                     Grid.Column="1"
-                                    Style="{StaticResource PathValueStyle}"
-                                    Text="C:\Users\用户名\AppData\Roaming\AstraBrew Launcher" />
+                                    Style="{StaticResource PathValueStyle}" />
                                 <Button
                                     Grid.Column="2"
                                     Click="OpenFolder_Click"
                                     CornerRadius="8"
-                                    ToolTipService.ToolTip="在资源管理器中打开"
+                                    controls:Loc.ToolTip="About.Action.Open.ToolTip"
                                     Tag="data">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <FontIcon FontSize="12" Glyph="&#xE8A7;" />
-                                        <TextBlock FontSize="13" Text="打开" />
+                                        <TextBlock FontSize="13" controls:Loc.Text="About.Action.Open.Label" />
                                     </StackPanel>
                                 </Button>
                             </Grid>
@@ -599,21 +547,20 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource InfoLabelStyle}" Text="日志目录" />
+                                <TextBlock Style="{StaticResource InfoLabelStyle}" controls:Loc.Text="About.Field.Logs" />
                                 <TextBlock
                                     x:Name="LogDirValue"
                                     Grid.Column="1"
-                                    Style="{StaticResource PathValueStyle}"
-                                    Text="C:\Users\用户名\AppData\Roaming\AstraBrew Launcher\logs" />
+                                    Style="{StaticResource PathValueStyle}" />
                                 <Button
                                     Grid.Column="2"
                                     Click="OpenFolder_Click"
                                     CornerRadius="8"
-                                    ToolTipService.ToolTip="在资源管理器中打开"
+                                    controls:Loc.ToolTip="About.Action.Open.ToolTip"
                                     Tag="logs">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <FontIcon FontSize="12" Glyph="&#xE8A7;" />
-                                        <TextBlock FontSize="13" Text="打开" />
+                                        <TextBlock FontSize="13" controls:Loc.Text="About.Action.Open.Label" />
                                     </StackPanel>
                                 </Button>
                             </Grid>
@@ -635,8 +582,8 @@
                             Grid.Column="1"
                             VerticalAlignment="Center"
                             Spacing="2">
-                            <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" Text="链接与支持" />
-                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="文档、源码与反馈渠道，均在浏览器中打开。" />
+                            <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" controls:Loc.Text="About.Group.Links.Title" />
+                            <TextBlock Style="{StaticResource FieldHintTextStyle}" controls:Loc.Text="About.Group.Links.Hint" />
                         </StackPanel>
                     </Grid>
 
@@ -645,7 +592,7 @@
                             <Button
                                 Click="OpenLink_Click"
                                 Style="{StaticResource LinkRowStyle}"
-                                Tag="https://astrabrew.cn">
+                                Tag="https://launcher.astrabrew.cn">
                                 <Grid ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
@@ -654,8 +601,8 @@
                                     </Grid.ColumnDefinitions>
                                     <FontIcon FontSize="15" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE774;" />
                                     <StackPanel Grid.Column="1" Spacing="1">
-                                        <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="项目主页" />
-                                        <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="astrabrew.cn" />
+                                        <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="About.Link.Home" />
+                                        <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="launcher.astrabrew.cn" />
                                     </StackPanel>
                                     <FontIcon
                                         Grid.Column="2"
@@ -668,9 +615,10 @@
                             <Rectangle Style="{StaticResource LinkRowDividerStyle}" />
 
                             <Button
+                                x:Name="DocsRowButton"
                                 Click="OpenLink_Click"
                                 Style="{StaticResource LinkRowStyle}"
-                                Tag="https://docs.astrabrew.cn">
+                                Tag="https://launcher.astrabrew.cn/zh/guide">
                                 <Grid ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
@@ -679,8 +627,8 @@
                                     </Grid.ColumnDefinitions>
                                     <FontIcon FontSize="15" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE8A5;" />
                                     <StackPanel Grid.Column="1" Spacing="1">
-                                        <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="使用文档" />
-                                        <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="docs.astrabrew.cn" />
+                                        <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="About.Link.Docs" />
+                                        <TextBlock x:Name="DocsRowUrl" Style="{StaticResource FootnoteTextStyle}" Text="launcher.astrabrew.cn/zh/guide" />
                                     </StackPanel>
                                     <FontIcon
                                         Grid.Column="2"
@@ -695,7 +643,7 @@
                             <Button
                                 Click="OpenLink_Click"
                                 Style="{StaticResource LinkRowStyle}"
-                                Tag="https://github.com/AstraBrew">
+                                Tag="https://github.com/AstraBrew-Labs/AstraBrew-Launcher-Win">
                                 <Grid ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
@@ -704,8 +652,59 @@
                                     </Grid.ColumnDefinitions>
                                     <FontIcon FontSize="15" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE943;" />
                                     <StackPanel Grid.Column="1" Spacing="1">
-                                        <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="源码仓库" />
-                                        <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="github.com/AstraBrew" />
+                                        <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="About.Link.Source" />
+                                        <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="github.com/AstraBrew-Labs/AstraBrew-Launcher-Win" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <FontIcon
+                                        Grid.Column="2"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Glyph="&#xE8A7;" />
+                                </Grid>
+                            </Button>
+
+                            <Rectangle Style="{StaticResource LinkRowDividerStyle}" />
+
+                            <!--  GitCode 镜像：国内直连 GitHub 不稳，给一个能打开的备用入口  -->
+                            <Button
+                                Click="OpenLink_Click"
+                                Style="{StaticResource LinkRowStyle}"
+                                Tag="https://gitcode.com/AstraBrew-Labs/AstraBrew-Launcher-Win">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon FontSize="15" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE8F1;" />
+                                    <StackPanel Grid.Column="1" Spacing="1">
+                                        <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="About.Link.Mirror" />
+                                        <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="gitcode.com/AstraBrew-Labs/AstraBrew-Launcher-Win" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <FontIcon
+                                        Grid.Column="2"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Glyph="&#xE8A7;" />
+                                </Grid>
+                            </Button>
+
+                            <Rectangle Style="{StaticResource LinkRowDividerStyle}" />
+
+                            <Button
+                                Click="OpenLink_Click"
+                                Style="{StaticResource LinkRowStyle}"
+                                Tag="https://github.com/AstraBrew-Labs/AstraBrew-Launcher-Win/issues">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon FontSize="15" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE90A;" />
+                                    <StackPanel Grid.Column="1" Spacing="1">
+                                        <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="About.Link.Issues" />
+                                        <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="github.com/AstraBrew-Labs/AstraBrew-Launcher-Win/issues" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
                                     <FontIcon
                                         Grid.Column="2"
@@ -729,7 +728,7 @@
                                     </Grid.ColumnDefinitions>
                                     <FontIcon FontSize="15" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xE715;" />
                                     <StackPanel Grid.Column="1" Spacing="1">
-                                        <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="问题反馈" />
+                                        <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="About.Link.Contact" />
                                         <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="support@astrabrew.cn" />
                                     </StackPanel>
                                     <FontIcon
@@ -745,7 +744,7 @@
                             <Button
                                 Click="OpenLink_Click"
                                 Style="{StaticResource LinkRowStyle}"
-                                Tag="https://astrabrew.cn/legal">
+                                Tag="https://github.com/AstraBrew-Labs/AstraBrew-Launcher-Win/blob/v2/LICENSE.txt">
                                 <Grid ColumnSpacing="12">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
@@ -754,8 +753,8 @@
                                     </Grid.ColumnDefinitions>
                                     <FontIcon FontSize="15" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xEA18;" />
                                     <StackPanel Grid.Column="1" Spacing="1">
-                                        <TextBlock Style="{StaticResource CellTitleTextStyle}" Text="用户协议与隐私" />
-                                        <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="astrabrew.cn/legal" />
+                                        <TextBlock Style="{StaticResource CellTitleTextStyle}" controls:Loc.Text="About.Link.License" />
+                                        <TextBlock Style="{StaticResource FootnoteTextStyle}" Text="Apache-2.0 · LICENSE.txt" />
                                     </StackPanel>
                                     <FontIcon
                                         Grid.Column="2"
@@ -782,13 +781,24 @@
                             Grid.Column="1"
                             VerticalAlignment="Center"
                             Spacing="2">
-                            <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" Text="开源许可" />
-                            <TextBlock Style="{StaticResource FieldHintTextStyle}" Text="启动器所用到的第三方组件与其许可证。" />
+                            <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" controls:Loc.Text="About.Group.License.Title" />
+                            <TextBlock Style="{StaticResource FieldHintTextStyle}" controls:Loc.Text="About.Group.License.Hint" />
                         </StackPanel>
                     </Grid>
 
                     <Border Style="{StaticResource SectionCardStyle}">
                         <StackPanel Padding="16,10,16,14">
+                            <!--  启动器自己：仓库根目录的 LICENSE.txt 是 Apache-2.0  -->
+                            <Grid Style="{StaticResource LicenseRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Style="{StaticResource CellTextStyle}" Text="AstraBrew Launcher" />
+                                <Border Grid.Column="1" Style="{StaticResource MetaChipStyle}">
+                                    <TextBlock Style="{StaticResource MetaChipTextStyle}" controls:Loc.Text="About.License.Self" />
+                                </Border>
+                            </Grid>
                             <Grid Style="{StaticResource LicenseRowStyle}">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -814,7 +824,7 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Style="{StaticResource CellTextStyle}" Text="SiliconTavern 酒馆内核" />
+                                <TextBlock Style="{StaticResource CellTextStyle}" controls:Loc.Text="About.License.Tavern" />
                                 <Border Grid.Column="1" Style="{StaticResource MetaChipStyle}">
                                     <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="AGPL-3.0" />
                                 </Border>
@@ -824,9 +834,19 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
+                                <TextBlock Style="{StaticResource CellTextStyle}" Text="QRCoder" />
+                                <Border Grid.Column="1" Style="{StaticResource MetaChipStyle}">
+                                    <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="MIT" />
+                                </Border>
+                            </Grid>
+                            <Grid Style="{StaticResource LicenseRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
                                 <TextBlock Style="{StaticResource CellTextStyle}" Text="Segoe Fluent Icons" />
                                 <Border Grid.Column="1" Style="{StaticResource MetaChipStyle}">
-                                    <TextBlock Style="{StaticResource MetaChipTextStyle}" Text="Microsoft 资产许可" />
+                                    <TextBlock Style="{StaticResource MetaChipTextStyle}" controls:Loc.Text="About.License.Microsoft" />
                                 </Border>
                             </Grid>
 
@@ -835,7 +855,7 @@
                             <TextBlock
                                 Margin="0,10,0,0"
                                 Style="{StaticResource FootnoteTextStyle}"
-                                Text="本软件按「原样」提供，不附带任何明示或暗示的担保。"
+                                controls:Loc.Text="About.License.Disclaimer"
                                 TextWrapping="Wrap" />
                         </StackPanel>
                     </Border>
@@ -846,7 +866,7 @@
                     HorizontalAlignment="Center"
                     Margin="0,4,0,0"
                     Style="{StaticResource FootnoteTextStyle}"
-                    Text="© 2026 星酿工坊 AstraBrew Labs · 保留所有权利" />
+                    controls:Loc.Text="About.Copyright" />
             </StackPanel>
         </ScrollViewer>
     </Grid>

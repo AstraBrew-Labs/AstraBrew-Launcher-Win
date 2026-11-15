@@ -261,7 +261,7 @@ namespace AstraBrew_Launcher.Services
                             System.IO.Path.GetFileName(file), file, bytes, modified,
                             System.IO.Path.GetFileNameWithoutExtension(file), string.Empty, string.Empty,
                             string.Empty, string.Empty, string.Empty, string.Empty,
-                            Array.Empty<string>(), "无元数据", width, height,
+                            Array.Empty<string>(), L.Get("Lib.NoMetadata"), width, height,
                             null, Array.Empty<LibraryEntry>(), Unreadable: true);
                     }
 
@@ -355,7 +355,7 @@ namespace AstraBrew_Launcher.Services
                     System.IO.Path.GetFileName(file), file, bytes, modified,
                     System.IO.Path.GetFileNameWithoutExtension(file), string.Empty, string.Empty,
                     string.Empty, string.Empty, string.Empty, string.Empty,
-                    Array.Empty<string>(), "解析失败", width, height,
+                    Array.Empty<string>(), L.Get("Lib.ParseFailed"), width, height,
                     null, Array.Empty<LibraryEntry>(), Unreadable: true);
             }
         }
@@ -515,7 +515,7 @@ namespace AstraBrew_Launcher.Services
                 bool isUser = root.TryGetProperty("is_user", out JsonElement userFlag)
                     && userFlag.ValueKind == JsonValueKind.True;
 
-                string speaker = Text(root, "name") ?? "未知";
+                string speaker = Text(root, "name") ?? L.Get("Lib.Unknown");
                 string body = Text(root, "mes") ?? string.Empty;
 
                 if (body.Length == 0)
@@ -612,9 +612,9 @@ namespace AstraBrew_Launcher.Services
                         int depth = Int(prompt, "injection_depth") ?? 0;
 
                         prompts.Add(new PresetPrompt(
-                            Text(prompt, "name") ?? $"提示词 {index}",
+                            Text(prompt, "name") ?? L.F("Lib.PromptN", index),
                             Text(prompt, "role") ?? "system",
-                            $"{(position == 1 ? "绝对" : "相对")}深度 {depth} · 序号 {index}",
+                            L.F("Lib.DepthLine", position == 1 ? L.Get("Lib.DepthAbs") : L.Get("Lib.DepthRel"), depth, index),
                             enabled));
                     }
                 }
@@ -631,7 +631,7 @@ namespace AstraBrew_Launcher.Services
                     stream,
                     maxContext,
                     maxTokens,
-                    enabledMap.Count > 0 ? "完整" : "简化",
+                    enabledMap.Count > 0 ? L.Get("Lib.Full") : L.Get("Lib.Simplified"),
                     prompts,
                     prompts.Count(prompt => prompt.Enabled));
             }
@@ -729,14 +729,14 @@ namespace AstraBrew_Launcher.Services
 
                         if (!File.Exists(file))
                         {
-                            failed.Add(new ImportFailure(name, "文件不存在"));
+                            failed.Add(new ImportFailure(name, L.Get("Miss.Wb.NoFile")));
                             continue;
                         }
 
                         ResourceCheck check = ResourceValidator.Validate(kind, file);
                         if (!check.Ok)
                         {
-                            failed.Add(new ImportFailure(name, check.Error ?? "结构检查未通过"));
+                            failed.Add(new ImportFailure(name, check.Error ?? L.Get("Lib.StructureFail")));
                             continue;
                         }
 
@@ -994,7 +994,7 @@ namespace AstraBrew_Launcher.Services
 
             if (title.Length == 0)
             {
-                title = keys.Count > 0 ? keys[0] : "未命名条目";
+                title = keys.Count > 0 ? keys[0] : L.Get("Lib.UntitledEntry");
             }
 
             // 世界书用 disable，角色卡内嵌条目用 enabled，两边语义相反
@@ -1010,7 +1010,7 @@ namespace AstraBrew_Launcher.Services
 
             return new LibraryEntry(
                 title,
-                keys.Count > 0 ? "关键词：" + string.Join('、', keys) : "无关键词",
+                keys.Count > 0 ? L.F("Lib.KeysLine", string.Join(L.Get("Common.List.And"), keys)) : L.Get("Wb.Entry.NoKeys"),
                 Text(entry, "content") ?? string.Empty,
                 enabled);
         }

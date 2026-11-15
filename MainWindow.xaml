@@ -36,7 +36,7 @@
                     Height="17"
                     Margin="0,0,0,0"
                     VerticalAlignment="Center"
-                    AutomationProperties.Name="星酿启动器"
+                    controls:Loc.Name="Shell.AppName.Short"
                     Source="{ThemeResource BrandIconSource}"
                     Stretch="Uniform" />
                 <TextBlock
@@ -69,10 +69,10 @@
                     VerticalAlignment="Center"
                     Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
                 <TextBlock
+                    controls:Loc.Text="Shell.Title.Subtitle.Text"
                     VerticalAlignment="Center"
                     FontSize="12"
-                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                    Text="酒馆启动器" />
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
 
                 <!--  全局状态：当前酒馆实例的来源与版本（内置-1.19.2 / 本地-1.19.0），任何页面都可见  -->
                 <Rectangle
@@ -90,8 +90,7 @@
                         x:Name="InstanceChipText"
                         FontSize="11.5"
                         FontWeight="SemiBold"
-                        Foreground="{ThemeResource InstanceChipForegroundBrush}"
-                        Text="内置-1.19.2" />
+                        Foreground="{ThemeResource InstanceChipForegroundBrush}" />
                 </Border>
             </StackPanel>
         </Grid>
@@ -120,22 +119,22 @@
                     SelectionChanged="NavView_SelectionChanged">
 
                     <NavigationView.MenuItems>
-                        <NavigationViewItem Content="仪表盘" Tag="dashboard">
+                        <NavigationViewItem controls:Loc.Content="Shell.Nav.Dashboard.Content" Tag="dashboard">
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xE80F;" />
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
-                        <NavigationViewItem Content="酒馆配置" Tag="tavern">
+                        <NavigationViewItem controls:Loc.Content="Shell.Nav.Tavern.Content" Tag="tavern">
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xE9F5;" />
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
-                        <NavigationViewItem Content="版本管理" Tag="versions">
+                        <NavigationViewItem controls:Loc.Content="Shell.Nav.Versions.Content" Tag="versions">
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xE81C;" />
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
-                        <NavigationViewItem Content="扩展管理" Tag="extensions">
+                        <NavigationViewItem controls:Loc.Content="Shell.Nav.Extensions.Content" Tag="extensions">
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xE74C;" />
                             </NavigationViewItem.Icon>
@@ -147,7 +146,7 @@
                                     Visibility="Collapsed" />
                             </NavigationViewItem.InfoBadge>
                         </NavigationViewItem>
-                        <NavigationViewItem Content="资源管理" Tag="resources">
+                        <NavigationViewItem controls:Loc.Content="Shell.Nav.Resources.Content" Tag="resources">
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xE8B7;" />
                             </NavigationViewItem.Icon>
@@ -155,17 +154,17 @@
                     </NavigationView.MenuItems>
 
                     <NavigationView.FooterMenuItems>
-                        <NavigationViewItem Content="控制台" Tag="console">
+                        <NavigationViewItem controls:Loc.Content="Shell.Nav.Console.Content" Tag="console">
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xE756;" />
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
-                        <NavigationViewItem Content="设置" Tag="settings">
+                        <NavigationViewItem controls:Loc.Content="Shell.Nav.Settings.Content" Tag="settings">
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xE713;" />
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
-                        <NavigationViewItem Content="关于" Tag="about">
+                        <NavigationViewItem controls:Loc.Content="Shell.Nav.About.Content" Tag="about">
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xE946;" />
                             </NavigationViewItem.Icon>

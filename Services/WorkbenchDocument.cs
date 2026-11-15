@@ -85,7 +85,7 @@ namespace AstraBrew_Launcher.Services
         {
             if (!File.Exists(path))
             {
-                throw new FileNotFoundException("文件不存在", path);
+                throw new FileNotFoundException(L.Get("Miss.Wb.NoFile"), path);
             }
 
             bool isPng = path.EndsWith(".png", StringComparison.OrdinalIgnoreCase);
@@ -120,7 +120,7 @@ namespace AstraBrew_Launcher.Services
 
             if (node is not JsonObject file)
             {
-                throw new InvalidDataException("文件内容不是 JSON 对象");
+                throw new InvalidDataException(L.Get("Miss.Wb.NotJson"));
             }
 
             // 角色卡可能包在 { spec, data } 里；世界书与预设是平铺的
@@ -251,7 +251,7 @@ namespace AstraBrew_Launcher.Services
         {
             if (Format != WorkbenchFormat.PngCard)
             {
-                throw new InvalidOperationException("只有 PNG 角色卡可以更换卡面");
+                throw new InvalidOperationException(L.Get("Miss.Wb.PngOnly"));
             }
 
             List<PngChunk> image = ReadChunks(File.ReadAllBytes(newImagePath));
@@ -310,7 +310,7 @@ namespace AstraBrew_Launcher.Services
             if (bytes.Length < 8
                 || bytes[0] != 0x89 || bytes[1] != 0x50 || bytes[2] != 0x4E || bytes[3] != 0x47)
             {
-                throw new InvalidDataException("这不是一个 PNG 文件");
+                throw new InvalidDataException(L.Get("Miss.Wb.NotPng"));
             }
 
             var chunks = new List<PngChunk>();
@@ -338,7 +338,7 @@ namespace AstraBrew_Launcher.Services
 
             if (chunks.Count == 0)
             {
-                throw new InvalidDataException("PNG 里没有可用的块");
+                throw new InvalidDataException(L.Get("Miss.Wb.NoChunks"));
             }
 
             return chunks;

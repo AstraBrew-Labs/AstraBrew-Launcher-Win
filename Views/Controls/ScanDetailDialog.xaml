@@ -6,8 +6,8 @@
     xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    Title="扫描本地实例"
-    CloseButtonText="后台运行"
+    Title=""
+    controls:Loc.Property="CloseButtonText:Sdd.Action.Background"
     mc:Ignorable="d">
 
     <!--
@@ -54,11 +54,11 @@
                         FontSize="14"
                         FontWeight="SemiBold"
                         Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                        Text="正在扫描本地磁盘…" />
+                        controls:Loc.Text="Sdd.Phase.Scanning" />
                     <TextBlock
                         x:Name="PhaseHintText"
                         Style="{StaticResource MetaChipTextStyle}"
-                        Text="正在统计线程分配…" />
+                        controls:Loc.Text="Sdd.ThreadsPending" />
                 </StackPanel>
 
                 <HyperlinkButton
@@ -67,12 +67,12 @@
                     Padding="8,4"
                     VerticalAlignment="Center"
                     Click="CancelScan_Click"
-                    Content="取消扫描" />
+                    controls:Loc.Content="Sdd.Cancel" />
             </Grid>
 
             <!--  逐盘进度：每块盘一个环 + 还要多久  -->
             <Grid>
-                <TextBlock Style="{StaticResource SubSectionTitleTextStyle}" Text="扫描进度" />
+                <TextBlock Style="{StaticResource SubSectionTitleTextStyle}" controls:Loc.Text="Sdd.Section.Progress" />
                 <TextBlock
                     x:Name="RangeText"
                     HorizontalAlignment="Right"
@@ -178,13 +178,11 @@
                 x:Name="HddNotice"
                 IsClosable="False"
                 IsOpen="False"
-                Message="扫描速度与等待时间受设备配置影响；机械硬盘的读取速度较慢，请耐心等待。"
-                Severity="Warning"
-                Title="这块机械硬盘需要多等一会儿" />
+                Severity="Warning" />
 
             <!--  找到的实例：扫到一个就加一条，不用等全盘扫完  -->
             <Grid>
-                <TextBlock Style="{StaticResource SubSectionTitleTextStyle}" Text="找到的实例" />
+                <TextBlock Style="{StaticResource SubSectionTitleTextStyle}" controls:Loc.Text="Sdd.Section.Found" />
                 <TextBlock
                     x:Name="AddedText"
                     HorizontalAlignment="Right"
@@ -227,7 +225,7 @@
                         Padding="0,6"
                         Style="{StaticResource FieldHintTextStyle}"
                         Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        Text="还没有找到酒馆目录…" />
+                        controls:Loc.Text="Sdd.Empty.Pending" />
                 </Grid>
             </Border>
 
@@ -235,7 +233,7 @@
                 x:Name="FootHintText"
                 Style="{StaticResource FieldHintTextStyle}"
                 Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                Text="关掉这个窗口不会中断扫描：进度一直显示在右下角的消息里，点它的「查看详情」就能回到这里。"
+                controls:Loc.Text="Sdd.Note.Running"
                 TextWrapping="Wrap" />
         </StackPanel>
     </Grid>

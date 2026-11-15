@@ -13,24 +13,24 @@
         <StackPanel Spacing="2">
             <controls:CheckRow
                 x:Name="RowPing"
-                Detail="连 8.8.8.8 试一下"
+                DetailKey="Setup.S2.Row.Ping.Detail"
                 Glyph="&#xE701;"
-                Title="能上网吗" />
+                TitleKey="Setup.S2.Row.Ping.Title" />
             <controls:CheckRow
                 x:Name="RowDns"
-                Detail="打开 www.baidu.com"
+                DetailKey="Setup.S2.Row.Dns.Detail"
                 Glyph="&#xE774;"
-                Title="能打开网页吗" />
+                TitleKey="Setup.S2.Row.Dns.Title" />
             <controls:CheckRow
                 x:Name="RowApi"
-                Detail="GitHub 接口 · 被限流会回 403"
+                DetailKey="Setup.S2.Row.Api.Detail"
                 Glyph="&#xE8B7;"
-                Title="能取到酒馆列表吗" />
+                TitleKey="Setup.S2.Row.Api.Title" />
             <controls:CheckRow
                 x:Name="RowRaw"
-                Detail="GitHub 文件地址"
+                DetailKey="Setup.S2.Row.Raw.Detail"
                 Glyph="&#xE8A5;"
-                Title="能下载酒馆文件吗" />
+                TitleKey="Setup.S2.Row.Raw.Title" />
         </StackPanel>
 
         <!--  API 被限流的专属提示  -->
@@ -56,8 +56,7 @@
                         x:Name="RateLimitText"
                         Grid.Column="1"
                         FontSize="12.5"
-                        TextWrapping="Wrap"
-                        Text="酒馆列表暂时取不到，GitHub 让你先等等。开加速就能继续。" />
+                        TextWrapping="Wrap" />
                 </Grid>
                 <StackPanel
                     Orientation="Horizontal"
@@ -67,8 +66,8 @@
                         x:Name="FixRouteButton"
                         Click="FixRoute_Click"
                         Style="{StaticResource AccentActionButtonStyle}"
-                        Content="开加速再试" />
-                    <Button x:Name="SkipGithubButton" Click="SkipGithub_Click" Content="跳过这项" />
+                        controls:Loc.Content="Setup.S2.Fix.EnableAccel" />
+                    <Button x:Name="SkipGithubButton" Click="SkipGithub_Click" controls:Loc.Content="Setup.S2.Skip" />
                 </StackPanel>
             </StackPanel>
         </Border>
@@ -85,11 +84,11 @@
                 <TextBlock
                     FontSize="13"
                     FontWeight="SemiBold"
-                    Text="从哪下载最快" />
+                    controls:Loc.Text="Setup.S2.Mirror.Title" />
                 <TextBlock
                     FontSize="11.5"
                     Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                    Text="四条线各真拉一次仓库（约 100 MB），谁先拉完用谁" />
+                    controls:Loc.Text="Setup.S2.Mirror.Hint" />
             </StackPanel>
         </Grid>
 

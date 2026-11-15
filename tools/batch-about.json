@@ -1,0 +1,6 @@
+{
+  "About.Link.Mirror": ["镜像仓库", "Mirror repository"],
+  "About.Link.Contact": ["联系方式", "Contact"],
+  "About.Link.License": ["开源许可证", "Open-source license"],
+  "About.License.Self": ["Apache-2.0", "Apache-2.0"]
+}

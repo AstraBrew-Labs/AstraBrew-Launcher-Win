@@ -54,7 +54,7 @@ namespace AstraBrew_Launcher.Services
 
         /// <summary>形如 <c>C:\  ·  D:\</c>，列表顶部那一行「扫描范围」用。</summary>
         public string RootsText => Drives.Count == 0
-            ? "尚未确定扫描范围"
+            ? L.Get("Scan.Range.Undetermined")
             : string.Join("  ·  ", Drives.Select(drive => drive.Root));
 
         /// <summary>形如「42 秒」；不到一秒说「不到 1 秒」，不显示 0 秒。</summary>
@@ -94,27 +94,27 @@ namespace AstraBrew_Launcher.Services
 
         /// <summary>形如「预计剩余 1 分 12 秒」；算不出来时给「正在估算…」。</summary>
         public string RemainingLabel => RemainingSeconds is { } seconds
-            ? "预计剩余 " + DurationLabel(seconds)
-            : "正在估算时间…";
+            ? L.F("Scan.Eta.Remaining", DurationLabel(seconds))
+            : L.Get("Scan.Eta.Estimating");
 
         public static string DurationLabel(double seconds)
         {
             if (seconds < 1)
             {
-                return "不到 1 秒";
+                return L.Get("Scan.Duration.SubSecond");
             }
 
             if (seconds < 60)
             {
-                return $"{seconds:0} 秒";
+                return L.F("Scan.Duration.Seconds", seconds.ToString("0"));
             }
 
             if (seconds < 3600)
             {
-                return $"{(int)(seconds / 60)} 分 {(int)(seconds % 60)} 秒";
+                return L.F("Scan.Duration.Minutes", (int)(seconds / 60), (int)(seconds % 60));
             }
 
-            return $"{(int)(seconds / 3600)} 小时 {(int)(seconds % 3600 / 60)} 分";
+            return L.F("Scan.Duration.Hours", (int)(seconds / 3600), (int)(seconds % 3600 / 60));
         }
     }
 
@@ -243,7 +243,7 @@ namespace AstraBrew_Launcher.Services
             }
             catch (OperationCanceledException)
             {
-                Post(() => Finish(null, "扫描已取消。", ScanPhase.Cancelled));
+                Post(() => Finish(null, L.Get("Scan.Cancelled.Body"), ScanPhase.Cancelled));
                 return;
             }
             catch (Exception ex)
@@ -297,15 +297,20 @@ namespace AstraBrew_Launcher.Services
 
             // 第二行给「还要多久」而不是「已经用了多久」：等的人关心的是还剩多少
             string tail = _state.RemainingSeconds is null
-                ? $"用时 {_state.ElapsedLabel}"
+                ? L.F("Scan.Progress.Elapsed", _state.ElapsedLabel)
                 : _state.RemainingLabel;
 
             AppNotify.Live(
                 LiveKey,
-                "正在扫描本地实例",
-                $"扫描范围　{_state.RootsText}{Environment.NewLine}"
-                    + $"已检查 {_state.Directories:N0} 个 · 找到 {_state.Found} 个 · {tail}",
-                OpenDetail is null ? null : "查看详情",
+                L.Get("Scan.Progress.Title"),
+                L.F(
+                    "Scan.Progress.Body",
+                    _state.RootsText,
+                    Environment.NewLine,
+                    _state.Directories.ToString("N0"),
+                    _state.Found,
+                    tail),
+                OpenDetail is null ? null : L.Get("Scan.Progress.Detail"),
                 OpenDetail);
         }
 
@@ -344,34 +349,35 @@ namespace AstraBrew_Launcher.Services
             {
                 case ScanPhase.Done when _state.Found == 0:
                     AppNotify.Info(
-                        "扫描完成，没有找到酒馆目录",
-                        $"已检查 {_state.Directories:N0} 个文件夹，用时 {_state.ElapsedLabel}。"
-                            + "如果酒馆装在移动硬盘或网络盘上，请用「导入」直接指定它的 package.json。");
+                        L.Get("Scan.Done.None.Title"),
+                        L.F(
+                            "Scan.Done.None.Body",
+                            _state.Directories.ToString("N0"),
+                            _state.ElapsedLabel));
                     break;
 
                 case ScanPhase.Done when added == 0:
                     AppNotify.Info(
-                        "扫描完成，没有新增实例",
-                        $"找到 {_state.Found} 个酒馆目录，它们都已经在列表里了；用时 {_state.ElapsedLabel}。");
+                        L.Get("Scan.Done.AllKnown.Title"),
+                        L.F("Scan.Done.AllKnown.Body", _state.Found, _state.ElapsedLabel));
                     break;
 
                 case ScanPhase.Done:
                     AppNotify.Success(
-                        "扫描完成",
-                        $"找到 {_state.Found} 个酒馆目录，其中 {added} 个是新实例，已加入列表；"
-                            + $"用时 {_state.ElapsedLabel}。");
+                        L.Get("Scan.Done.Added.Title"),
+                        L.F("Scan.Done.Added.Body", _state.Found, added, _state.ElapsedLabel));
                     break;
 
                 case ScanPhase.Cancelled:
                     AppNotify.Info(
-                        "已取消扫描",
-                        $"已检查 {_state.Directories:N0} 个文件夹，找到的 {_state.Found} 个实例仍保留在列表中。");
+                        L.Get("Scan.Cancelled.Title"),
+                        L.F("Scan.Cancelled.Kept", _state.Directories.ToString("N0"), _state.Found));
                     break;
 
                 case ScanPhase.Failed:
                     AppNotify.Error(
-                        "扫描失败",
-                        string.IsNullOrWhiteSpace(_state.Error) ? "扫描时出错，请重试。" : _state.Error);
+                        L.Get("Scan.Failed.Title"),
+                        string.IsNullOrWhiteSpace(_state.Error) ? L.Get("Scan.Failed.Body") : _state.Error);
                     break;
             }
         }

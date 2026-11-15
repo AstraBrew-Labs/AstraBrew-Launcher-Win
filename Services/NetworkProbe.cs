@@ -69,7 +69,7 @@ namespace AstraBrew_Launcher.Services
 
                 if (!process.Start())
                 {
-                    return new NetProbeResult(NetProbeKind.Ping, false, null, "无法启动 ping", null);
+                    return new NetProbeResult(NetProbeKind.Ping, false, null, L.Get("Np.PingCannotStart"), null);
                 }
 
                 Task<string> output = process.StandardOutput.ReadToEndAsync();
@@ -89,8 +89,8 @@ namespace AstraBrew_Launcher.Services
                             NetProbeKind.Ping,
                             false,
                             null,
-                            $"超时（{PingTimeout.TotalSeconds:0} 秒）",
-                            "系统自带的 ping 没有在预期时间内返回");
+                            L.F("Np.Timeout", PingTimeout.TotalSeconds.ToString("0")),
+                            L.Get("Np.PingTimeoutDetail"));
                     }
 
                     Thread.Sleep(50);
@@ -104,12 +104,12 @@ namespace AstraBrew_Launcher.Services
                     && text.Contains("TTL=", StringComparison.OrdinalIgnoreCase);
 
                 return ok
-                    ? new NetProbeResult(NetProbeKind.Ping, true, latency, null, $"PING {PingTarget} 正常")
+                    ? new NetProbeResult(NetProbeKind.Ping, true, latency, null, L.F("Np.PingOk", PingTarget))
                     : new NetProbeResult(
                         NetProbeKind.Ping,
                         false,
                         latency,
-                        "PING 不通",
+                        L.Get("Np.PingFail"),
                         GitCommand.FirstLine(text));
             }
             catch (OperationCanceledException)
@@ -118,7 +118,7 @@ namespace AstraBrew_Launcher.Services
             }
             catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
             {
-                return new NetProbeResult(NetProbeKind.Ping, false, null, "无法启动 ping", ex.Message);
+                return new NetProbeResult(NetProbeKind.Ping, false, null, L.Get("Np.PingCannotStart"), ex.Message);
             }
         }, token);
 
@@ -138,13 +138,13 @@ namespace AstraBrew_Launcher.Services
                 int latency = (int)Math.Clamp(clock.ElapsedMilliseconds, 1, 99999);
 
                 return response.IsSuccessStatusCode
-                    ? new NetProbeResult(NetProbeKind.Dns, true, latency, null, $"打开 {DnsUrl} 正常")
+                    ? new NetProbeResult(NetProbeKind.Dns, true, latency, null, L.F("Np.DnsOk", DnsUrl))
                     : new NetProbeResult(
                         NetProbeKind.Dns,
                         false,
                         latency,
                         $"HTTP {(int)response.StatusCode}",
-                        $"{DnsUrl} 返回了异常状态码");
+                        L.F("Np.DnsBadStatus", DnsUrl));
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
@@ -152,7 +152,7 @@ namespace AstraBrew_Launcher.Services
             }
             catch (TaskCanceledException)
             {
-                return new NetProbeResult(NetProbeKind.Dns, false, null, $"超时（{DnsTimeout.TotalSeconds:0} 秒）", null);
+                return new NetProbeResult(NetProbeKind.Dns, false, null, L.F("Np.Timeout", DnsTimeout.TotalSeconds.ToString("0")), null);
             }
             catch (HttpRequestException ex)
             {
@@ -166,22 +166,22 @@ namespace AstraBrew_Launcher.Services
 
             if (lower.Contains("no such host") || lower.Contains("name or service not known") || lower.Contains("nodename"))
             {
-                return "DNS 解析失败";
+                return L.Get("Np.DnsFail");
             }
 
             if (lower.Contains("ssl") || lower.Contains("tls"))
             {
-                return "TLS 握手失败";
+                return L.Get("Np.TlsFail");
             }
 
             if (lower.Contains("refused"))
             {
-                return "连接被拒绝";
+                return L.Get("Gh.Err.Refused");
             }
 
             if (lower.Contains("reset"))
             {
-                return "连接被重置";
+                return L.Get("Gh.Err.Reset");
             }
 
             return GitCommand.FirstLine(ex.Message);

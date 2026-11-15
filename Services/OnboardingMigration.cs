@@ -148,7 +148,7 @@ namespace AstraBrew_Launcher.Services
 
             if (!Directory.Exists(sourceRoot))
             {
-                return MigrationPlan.NotFound(MigrationSource.LauncherGui, target, "找不到这个目录");
+                return MigrationPlan.NotFound(MigrationSource.LauncherGui, target, L.Get("Mg.NotFound"));
             }
 
             string sourceFull = Path.GetFullPath(sourceRoot).TrimEnd(Path.DirectorySeparatorChar);
@@ -161,7 +161,7 @@ namespace AstraBrew_Launcher.Services
                 return MigrationPlan.NotFound(
                     MigrationSource.LauncherGui,
                     target,
-                    "源目录与目标目录重叠，不能从这里迁移");
+                    L.Get("Mg.Overlap"));
             }
 
             var entries = new List<MigrationEntry>();
@@ -237,10 +237,10 @@ namespace AstraBrew_Launcher.Services
 
             if (overwritten > 0)
             {
-                notices.Add($"目标目录里已有 {overwritten} 个同名文件，确认迁移后会被覆盖（覆盖前会先备份）。");
+                notices.Add(L.F("Mg.Overwrite", overwritten));
             }
 
-            notices.Add($"迁移目标：{target}");
+            notices.Add(L.F("Mg.Target", target));
 
             return new MigrationPlan(
                 MigrationSource.LauncherGui,
@@ -267,7 +267,7 @@ namespace AstraBrew_Launcher.Services
 
             if (!Directory.Exists(root))
             {
-                return MigrationPlan.NotFound(MigrationSource.LegacyAstraBrew, target, "未检测到旧版本数据");
+                return MigrationPlan.NotFound(MigrationSource.LegacyAstraBrew, target, L.Get("Mg.LegacyNotFound"));
             }
 
             string lib = Path.Combine(root, "lib");
@@ -281,7 +281,7 @@ namespace AstraBrew_Launcher.Services
 
             if (!hasLib && !hasNestedData && !hasLegacyConfig)
             {
-                return MigrationPlan.NotFound(MigrationSource.LegacyAstraBrew, target, "未检测到旧版本数据");
+                return MigrationPlan.NotFound(MigrationSource.LegacyAstraBrew, target, L.Get("Mg.LegacyNotFound"));
             }
 
             var moves = new List<LegacyMove>();
@@ -301,11 +301,11 @@ namespace AstraBrew_Launcher.Services
 
                     if (!claimed.Add(name))
                     {
-                        notices.Add($"{Path.GetFileName(dir)} 与另一个目录都被识别成 {name}，这一份会移入备份目录。");
+                        notices.Add(L.F("Mg.Duplicate", Path.GetFileName(dir), name));
                     }
                     else if (Directory.Exists(destination))
                     {
-                        notices.Add($"bin\\{name} 已存在，旧目录会移入备份目录（不覆盖）。");
+                        notices.Add(L.F("Mg.BinExists", name));
                     }
 
                     moves.Add(new LegacyMove(dir, destination, name, willMove, name));
@@ -326,7 +326,7 @@ namespace AstraBrew_Launcher.Services
 
                     if (!willMove)
                     {
-                        notices.Add($"data\\sillytavern\\{name} 已存在，这一项不移动（旧数据留在原处）。");
+                        notices.Add(L.F("Mg.DataExists", name));
                     }
 
                     moves.Add(new LegacyMove(entry, destination, "data", willMove, name));
@@ -335,16 +335,16 @@ namespace AstraBrew_Launcher.Services
 
             if (hasLegacyConfig)
             {
-                notices.Add("旧版 config.json 不会被解析：启动器设置沿用当前默认值（数据与实例照常迁移）。");
+                notices.Add(L.Get("Mg.ConfigIgnored"));
             }
 
             string instanceRoot = Path.Combine(root, "sillytavern");
             if (Directory.Exists(instanceRoot) && !Directory.Exists(Path.Combine(instanceRoot, "node_modules")))
             {
-                notices.Add("旧内置实例缺少 node_modules：迁移后需要在版本管理里补装依赖。");
+                notices.Add(L.Get("Mg.NoNodeModules"));
             }
 
-            notices.Add($"数据目录：{target}");
+            notices.Add(L.F("Mg.DataDir", target));
 
             return new MigrationPlan(
                 MigrationSource.LegacyAstraBrew,
@@ -492,7 +492,7 @@ namespace AstraBrew_Launcher.Services
 
                 progress?.Report(new MigrationProgress(
                     MigrationStage.Done,
-                    "迁移完成",
+                    L.Get("Mg.Done.Title"),
                     done,
                     pending.Count,
                     bytesDone,
@@ -503,7 +503,7 @@ namespace AstraBrew_Launcher.Services
             catch (OperationCanceledException)
             {
                 RollbackGui(target, backupRoot, journal, journalPath);
-                return new MigrationResult(false, 0, 0, 0, 0, backupRoot, "已取消，已回滚");
+                return new MigrationResult(false, 0, 0, 0, 0, backupRoot, L.Get("Mg.RolledBack"));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -517,7 +517,7 @@ namespace AstraBrew_Launcher.Services
                     0,
                     backupRoot,
                     IsFileInUse(ex)
-                        ? "有文件正被占用：请先在控制台停止酒馆服务，再重试迁移"
+                        ? L.Get("Mg.Busy.Tavern")
                         : GitCommand.FirstLine(ex.Message));
             }
         }, token);
@@ -621,7 +621,7 @@ namespace AstraBrew_Launcher.Services
 
                 progress?.Report(new MigrationProgress(
                     MigrationStage.Done,
-                    "旧数据已按新规范整理",
+                    L.Get("Mg.Organized"),
                     moves.Count,
                     moves.Count,
                     moves.Count,
@@ -632,7 +632,7 @@ namespace AstraBrew_Launcher.Services
             catch (OperationCanceledException)
             {
                 RollbackLegacy(done);
-                return new MigrationResult(false, 0, 0, 0, 0, backupRoot, "已取消，已回滚");
+                return new MigrationResult(false, 0, 0, 0, 0, backupRoot, L.Get("Mg.RolledBack"));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -646,7 +646,7 @@ namespace AstraBrew_Launcher.Services
                     0,
                     backupRoot,
                     IsFileInUse(ex)
-                        ? "有文件正被占用：请关闭正在运行的酒馆 / Node.js 进程后重试"
+                        ? L.Get("Mg.Busy.Process")
                         : GitCommand.FirstLine(ex.Message));
             }
         }, token);
@@ -721,8 +721,8 @@ namespace AstraBrew_Launcher.Services
                 return new InstallResult(
                     false,
                     InstallError.Verify,
-                    "旧版 Node.js 正在使用，无法替换",
-                    "请先在控制台停止酒馆服务，再重试迁移。",
+                    L.Get("Mg.NodeInUse.Title"),
+                    L.Get("Mg.NodeInUse.Hint"),
                     null);
             }
 
@@ -805,6 +805,12 @@ namespace AstraBrew_Launcher.Services
             return int.TryParse(dot > 0 ? trimmed[..dot] : trimmed, out int major) ? major : -1;
         }
 
+        /// <summary>
+        /// 是不是「文件被占用」。
+        ///
+        /// 这里匹配的是 **Windows 自己的异常消息**，不是本软件的界面文案，所以两套语言都认；
+        /// 界面语言切换不会改变系统抛出的这句话。
+        /// </summary>
         private static bool IsFileInUse(Exception ex)
         {
             string message = ex.Message;

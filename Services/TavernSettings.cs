@@ -218,24 +218,30 @@ namespace AstraBrew_Launcher.Services
         }
 
         /// <summary>服务范围的中文名，进日志与提示用。</summary>
-        public static string ScopeName => _scope == ServiceScope.Wan ? "互联网" : "局域网";
+        public static string ScopeName => _scope == ServiceScope.Wan ? L.Get("Set.Scope.Wan") : L.Get("Set.Scope.Lan");
 
         /// <summary>只有普通模式才和浏览器相关，其余模式相关选项应当隐藏。</summary>
         public static bool IsNormalMode => Mode == LaunchMode.Normal;
 
-        public static string ModeName => Mode switch
+        public static string ModeName => L.Get(ModeKey);
+
+        /// <summary>
+        /// 启动模式对应的资源键。需要**存起来稍后再显示**的地方（比如控制台状态条）
+        /// 要存这个而不是 <see cref="ModeName"/>，否则换语言后那一格会停在旧语言。
+        /// </summary>
+        public static string ModeKey => Mode switch
         {
-            LaunchMode.Desktop => "桌面模式",
-            LaunchMode.Server => "服务器模式",
-            _ => "普通模式",
+            LaunchMode.Desktop => "Set.Mode.Desktop",
+            LaunchMode.Server => "Set.Mode.Server",
+            _ => "Set.Mode.Normal",
         };
 
         public static string BrowserName => _browser switch
         {
             BrowserKind.Edge => "Edge",
-            BrowserKind.Firefox => "火狐浏览器",
-            BrowserKind.System => "系统默认浏览器",
-            _ => "谷歌浏览器",
+            BrowserKind.Firefox => L.Get("Set.Browser.Firefox"),
+            BrowserKind.System => L.Get("Set.Browser.System"),
+            _ => L.Get("Set.Browser.Chrome"),
         };
 
         /// <summary>
@@ -454,7 +460,7 @@ namespace AstraBrew_Launcher.Services
         {
             if (WhitelistLocked)
             {
-                error = "服务器模式下白名单由「服务范围」自动生成，不能手动修改。";
+                error = L.Get("Set.Whitelist.Locked");
                 return false;
             }
 
@@ -462,7 +468,7 @@ namespace AstraBrew_Launcher.Services
 
             if (value is null)
             {
-                error = $"「{(raw ?? string.Empty).Trim()}」不是有效的 IP 或网段（例如 192.168.1.20、192.168.1.0/24）。";
+                error = L.F("Set.Whitelist.Invalid", (raw ?? string.Empty).Trim());
                 return false;
             }
 
@@ -470,14 +476,14 @@ namespace AstraBrew_Launcher.Services
             {
                 if (string.Equals(existing, value, StringComparison.OrdinalIgnoreCase))
                 {
-                    error = $"「{value}」已在白名单中，无需重复添加。";
+                    error = L.F("Set.Whitelist.Exists", value);
                     return false;
                 }
 
                 // 已有 192.168.8.0/24 时再填 192.168.8.21 是重复的：它本来就被放行了
                 if (Covers(existing, value))
                 {
-                    error = $"「{value}」已被 {existing} 覆盖，无需重复添加。";
+                    error = L.F("Set.Whitelist.Covered", value, existing);
                     return false;
                 }
             }
@@ -714,6 +720,6 @@ namespace AstraBrew_Launcher.Services
         /// <summary>锁定项显示锁，自定义项显示地球，一眼区分默认与手动添加。</summary>
         public string Glyph => IsLocked ? "\uE72E" : "\uE774";
 
-        public string AutomationName => IsLocked ? $"{Value}（已锁定）" : Value;
+        public string AutomationName => IsLocked ? L.F("Set.Whitelist.LockedValue", Value) : Value;
     }
 }

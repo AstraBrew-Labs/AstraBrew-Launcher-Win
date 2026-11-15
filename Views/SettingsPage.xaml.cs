@@ -14,7 +14,6 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage.Pickers;
 using Windows.UI;
 using WinRT.Interop;
@@ -23,8 +22,9 @@ using WinRT.Interop;
 namespace AstraBrew_Launcher.Views
 {
     /// <summary>
-    /// 设置：按「界面 / 基础 / 控制台 / 运行环境 / 下载 / 网络 / 更新」分组。
+    /// 设置：按「界面 / 基础 / 控制台 / 运行环境 / 下载 / 网络」分组。
     ///
+    /// 版本与更新只在关于页出现，这里不再重复摆一份。
     /// 分组结构照 AstraBrew-Launcher-Win 的 settings.rs：每组一个 38 图标座 + 标题 + 一句说明，
     /// 组内是一张卡片，每行「图标 + 标题/说明 + 右侧控件」，行间用 1px 分隔线。
     /// 条件行（桌面模式 / 服务器模式 / 自定义代理）连同它上面的分隔线一起收起，
@@ -76,43 +76,66 @@ namespace AstraBrew_Launcher.Views
             // 保存态徽章反映的是「真的写进 settings.toml 了没有」，由 SettingsStore 通知
             SettingsStore.Saved += OnSettingsSaved;
 
+            // 语言是实时切换的：换完由 LanguageSwitch 发一条通知，本页把自定控件的文案刷一遍
+            LanguageSwitch.LanguageChanged += OnLanguageChanged;
+
             Unloaded += (_, _) =>
             {
                 LauncherSettings.Changed -= OnSettingsChanged;
                 SettingsStore.Saved -= OnSettingsSaved;
+                LanguageSwitch.LanguageChanged -= OnLanguageChanged;
             };
 
             // 每次进页面重新探测一遍：可能刚在别的页面装完东西，也可能是后台装完回来的
             Loaded += OnPageLoaded;
 
             // 徽章的悬浮提示兼做「配置文件在哪」的入口：路径必须是展开后的真实路径
-            ToolTipService.SetToolTip(SavePill, $"设置文件{Environment.NewLine}{SettingsStore.FilePath}");
+            ToolTipService.SetToolTip(SavePill, L.F("Setp.SaveTip", Environment.NewLine, SettingsStore.FilePath));
 
-            ShowPath(OnboardingPathText, OnboardingState.FilePath);
-            VersionChipText.Text = ReadAppVersion();
-            ApplyBuildChannel();
+            // XAML 里的「已保存」只是设计时占位：首帧就得是当前语言
+            SaveStateText.Text = L.Get("Settings.Save.Saved");
+            RefreshPickerLabels();
         }
 
         /// <summary>
-        /// 版本行上的渠道标记，与关于页同一套判断（<see cref="BuildChannelInfo"/>）：
-        /// 正式版写「稳定通道」、中性配色；预览 / 测试 / 开发版写各自的标记与强调色，
-        /// 这一行的说明也跟着改，免得「预览版」旁边写着「稳定通道」。
+        /// <summary>
+        /// 自定控件的文案走 <c>TitleKey</c> / <c>DescriptionKey</c>，控件自己在换语言时重取；
+        /// 这里只剩分段器——它的选项是代码 new 出来的 TextBlock，Loc 摸不到，得让它重建一遍。
         /// </summary>
-        private void ApplyBuildChannel()
-        {
-            VersionChannelChipText.Text = BuildChannelInfo.Badge ?? "稳定通道";
-            LauncherVersionRow.Description = BuildChannelInfo.Badge is { Length: > 0 }
-                ? $"当前安装的启动器版本，{BuildChannelInfo.Badge}（{BuildChannelInfo.Channel} 构建）。"
-                : "当前安装的启动器版本，稳定通道。";
+        private void RefreshPickerLabels() => LanguagePicker.RefreshText();
 
-            if (BuildChannelInfo.Badge is not { Length: > 0 })
+        /// <summary>语言已切换：本页由代码赋值的那几处文案跟着换。</summary>
+        private void OnLanguageChanged(object? sender, EventArgs e)
+        {
+            // 级别卡片、各分组说明都按当前级别取文案，重跑一次即可
+            ApplyLevel();
+            RefreshPickerLabels();
+            SaveStateText.Text = L.Get("Settings.Save.Saved");
+
+            // 字体下拉的项名（「软件默认」「xx（软件默认）」）也是文案，得整列表重建；
+            // 重建会触发 SelectionChanged，用 _sync 挡住，别把用户的选择当成新输入
+            bool wasSyncing = _sync;
+            _sync = true;
+            try
             {
-                return;
+                BuildFontList();
+                SelectConfiguredFont();
+            }
+            finally
+            {
+                _sync = wasSyncing;
             }
 
-            var (r, g, b) = BuildChannelInfo.Accent;
-            VersionChannelChipText.Foreground = new SolidColorBrush(Color.FromArgb(0xFF, r, g, b));
-            VersionChannelChip.Background = new SolidColorBrush(Color.FromArgb(0x1F, r, g, b));
+            ApplyFontPreviews();
+            UpdateFontHint();
+
+            // 下面几行的说明不是固定文案，而是「当前状态 + 文案」拼出来的（哪个环境、
+            // 缺哪几项、走的哪个代理）。SettingRow 换语言时只会重取 TitleKey，
+            // 说明必须由页面按状态重写一遍，否则会停在上一种语言。
+            ApplyEnvironment();
+            ApplyRuntimeSummary();
+            UpdateChannelUi();
+            UpdateProxyUi();
         }
 
         private bool IsLight => ActualTheme == ElementTheme.Light;
@@ -321,24 +344,33 @@ namespace AstraBrew_Launcher.Views
                 AdvancedLevelRadio.IsChecked = !simple;
             }
 
-            LevelTitle.Text = simple ? "小白版 · 常用设置" : "高手版 · 全部选项";
-            LevelHint.Text = simple
-                ? "只保留日常会用到的分组：界面、基础、运行环境、下载、网络与更新；其余按推荐值运行。"
-                : "完整展开 8 个分组，含控制台、代理、服务器模式与原型工具等排障与进阶选项。";
-            LevelCount.Text = simple ? "6 组" : "8 组";
+            // 级别卡片与分组说明都随级别变，文案全在资源里；换语言时 ApplyLevel 会再跑一遍
+            LevelTitle.Text = L.Get(simple
+                ? "Settings.Level.Simple.Title"
+                : "Settings.Level.Advanced.Title");
 
-            UiSectionHint.Text = simple
-                ? "语言与主题；这些选项只影响启动器本身。"
-                : "语言、主题、缩放与字体；这些选项只影响启动器本身。";
-            BasicSectionHint.Text = simple
-                ? "启动时机与酒馆的默认启动方式。"
-                : "启动时机、资源分配与酒馆的默认启动方式。";
-            RuntimeSectionHint.Text = simple
-                ? "只需确认 Git、Node.js 与 WebView2 三项就位；缺什么点「修复」补齐。"
-                : "酒馆依赖的 Git、Node.js、PM2 等组件；下面显示的是本机实际检测到的版本，没装就是「未安装」。";
-            NetworkSectionHint.Text = simple
-                ? "检查与 GitHub 的连通情况；下载走哪条通道请到「下载」分组调整。"
-                : "访问 GitHub 与 npm 时使用的代理；系统代理跟随 Windows 的 Internet 选项。";
+            LevelHint.Text = L.Get(simple
+                ? "Settings.Level.Simple.Hint"
+                : "Settings.Level.Advanced.Hint");
+
+            // 组数写死在这里：小白版藏掉「控制台」，其余 5 组全在；高手版 6 组全显示
+            LevelCount.Text = L.F("Settings.Level.Count", simple ? 5 : 6);
+
+            UiSectionHint.Text = L.Get(simple
+                ? "Settings.Group.Appearance.Hint.Simple"
+                : "Settings.Group.Appearance.Hint.Advanced");
+
+            BasicSectionHint.Text = L.Get(simple
+                ? "Settings.Group.Basics.Hint.Simple"
+                : "Settings.Group.Basics.Hint.Advanced");
+
+            RuntimeSectionHint.Text = L.Get(simple
+                ? "Settings.Group.Runtime.Hint.Simple"
+                : "Settings.Group.Runtime.Hint.Advanced");
+
+            NetworkSectionHint.Text = L.Get(simple
+                ? "Settings.Group.Network.Hint.Simple"
+                : "Settings.Group.Network.Hint.Advanced");
 
             // 界面：留语言、主题、记住窗口位置
             SetShown(DividerBeforeScale, !simple);
@@ -356,7 +388,6 @@ namespace AstraBrew_Launcher.Views
 
             // 整组收起
             SetShown(ConsoleSection, !simple);
-            SetShown(PrototypeSection, !simple);
 
             // 运行环境：小白版一行结论，高手版保留明细
             SetShown(RuntimeSummaryRow, simple);
@@ -534,7 +565,7 @@ namespace AstraBrew_Launcher.Views
                 alwaysInstall: true);
 
             // 已装也能重装：换版本 / 换架构（比如换了机器）都靠这一步
-            CaddyInstallLabel.Text = env?.Caddy is null ? "安装" : "重装";
+            CaddyInstallLabel.Text = L.Get(env?.Caddy is null ? "Common.Install" : "Common.Reinstall");
 
             // 系统环境里不提供安装入口；内置环境里 PM2 还要等 Node.js 先就位
             var pm2Blocked = probed && env!.Node is null;
@@ -547,20 +578,22 @@ namespace AstraBrew_Launcher.Views
                 !isSystem && !pm2Blocked,
                 alwaysInstall: true);
 
-            Pm2InstallLabel.Text = env?.Pm2 is null ? "安装" : "重装";
+            Pm2InstallLabel.Text = L.Get(env?.Pm2 is null ? "Common.Install" : "Common.Reinstall");
             Pm2NoteText.Visibility = pm2Blocked && !isSystem ? Visibility.Visible : Visibility.Collapsed;
 
             ApplyDependency(WebView2VersionText, WebView2InstallButton, null, env?.WebView2, probed, !isSystem);
 
-            GitRow.Description = isSystem
-                ? "读取系统 PATH 里的 Git，启动器不负责安装与升级。"
-                : "拉取与更新酒馆源码，随启动器一起搬走。";
-            NodeRow.Description = isSystem
-                ? "读取系统环境里的 Node.js，缺失时请自行到官网安装。"
-                : "运行酒馆与全部扩展的 JavaScript 运行时。";
-            CaddyRow.Description = LauncherSettings.ServerMode
-                ? "服务器模式必需：负责反向代理与 HTTPS。"
-                : "服务器模式下才需要：负责反向代理与 HTTPS。";
+            GitRow.Description = L.Get(isSystem
+                ? "Settings.Row.Git.Description.System"
+                : "Settings.Row.Git.Description.Bundled");
+
+            NodeRow.Description = L.Get(isSystem
+                ? "Settings.Row.Node.Description.System"
+                : "Settings.Row.Node.Description.Bundled");
+
+            CaddyRow.Description = L.Get(LauncherSettings.ServerMode
+                ? "Settings.Row.Caddy.Description.Server"
+                : "Settings.Row.Caddy.Description.Optional");
             // npm 挂在 Node.js 下面：Node 没装（含还在探测）时这两行都没有意义，
             // 连同分隔线一起收起，免得留个「给不存在的运行时选包源」的空档
             var nodeReady = env?.Node is not null;
@@ -568,11 +601,13 @@ namespace AstraBrew_Launcher.Views
             SetShown(NpmRow, nodeReady);
             SetShown(DividerBeforeNpmRegistry, nodeReady);
             SetShown(NpmRegistryRow, nodeReady);
-            NpmRegistryRow.Description = $"安装扩展与 PM2 时的包源，当前 {LauncherSettings.NpmRegistryName}。";
+            NpmRegistryRow.Description = L.F(
+                "Settings.Row.NpmRegistry.Description",
+                LauncherSettings.NpmRegistryName);
 
             // npm 版本取自 <nodejs>\node_modules\npm\package.json：Node 在却读不到，
             // 说明这份 Node 不完整（或 npm 装在别处），直接说「未检测到」，别空着让人等
-            NpmVersionText.Text = env?.Npm ?? "未检测到";
+            NpmVersionText.Text = env?.Npm ?? L.Get("Setp.NotDetected");
             NpmVersionText.Foreground = env?.Npm is null ? Tertiary() : Primary();
 
             ApplyRuntimeSummary();
@@ -590,26 +625,26 @@ namespace AstraBrew_Launcher.Views
             if (env is null)
             {
                 // 还没探测完：既不说正常也不说缺失，避免先闪一下假的结论
-                RuntimeStateText.Text = "检测中…";
+                RuntimeStateText.Text = L.Get("Settings.Runtime.State.Pending");
                 RuntimeStateText.Foreground = Tertiary();
                 RuntimeStatePill.Background = Tint(0x8A, 0x8A, 0x8A);
                 RepairRuntimeButton.Visibility = Visibility.Collapsed;
-                RuntimeSummaryRow.Description = "Git、Node.js 与 WebView2 三项齐全即可正常启动。";
+                RuntimeSummaryRow.Description = L.Get("Settings.Runtime.Summary.Pending");
                 return;
             }
 
             List<string> missing = MissingComponents(env);
             if (missing.Count == 0)
             {
-                RuntimeStateText.Text = "正常";
+                RuntimeStateText.Text = L.Get("Settings.Runtime.State.Ready");
                 RuntimeStateText.Foreground = Success();
                 RuntimeStatePill.Background = Tint(0x16, 0xA3, 0x4A);
                 RepairRuntimeButton.Visibility = Visibility.Collapsed;
-                RuntimeSummaryRow.Description = "Git、Node.js 与 WebView2 三项齐全，酒馆可以正常启动。";
+                RuntimeSummaryRow.Description = L.Get("Settings.Runtime.Summary.Ready");
                 return;
             }
 
-            RuntimeStateText.Text = "环境缺失";
+            RuntimeStateText.Text = L.Get("Settings.Runtime.State.Missing");
             RuntimeStateText.Foreground = Caution();
             RuntimeStatePill.Background = Tint(0x9D, 0x5D, 0x00);
 
@@ -617,9 +652,13 @@ namespace AstraBrew_Launcher.Views
             // 启动器不该插手。系统环境缺组件时给出去哪装的说明，不给一个点了没反应的按钮。
             var builtin = LauncherSettings.Runtime == RuntimeSource.Builtin;
             RepairRuntimeButton.Visibility = builtin ? Visibility.Visible : Visibility.Collapsed;
-            RuntimeSummaryRow.Description = builtin
-                ? $"缺少 {string.Join("、", missing)}；点「修复」自动下载并安装。"
-                : $"系统环境缺少 {string.Join("、", missing)}，请自行安装；或把运行环境切到「内置」由启动器代装。";
+            // 组件名用中文顿号拼在句子里，英文下面用逗号：整句交给资源，避免语序错位
+            string list = string.Join(L.IsEnglish ? ", " : "、", missing);
+            RuntimeSummaryRow.Description = L.F(
+                builtin
+                    ? "Settings.Runtime.Summary.MissingBuiltin"
+                    : "Settings.Runtime.Summary.MissingSystem",
+                list);
         }
 
         /// <summary>小白版只认这三项：Git 拉源码、Node.js 跑酒馆、WebView2 撑桌面窗口。</summary>
@@ -662,7 +701,7 @@ namespace AstraBrew_Launcher.Views
             if (!probed)
             {
                 // 还没探测完：不写「未安装」，否则会先闪一下假的缺失状态
-                versionText.Text = "检测中…";
+                versionText.Text = L.Get("Setp.Checking");
                 versionText.Foreground = Tertiary();
                 installButton.Visibility = Visibility.Collapsed;
                 if (outdatedPill is not null)
@@ -673,7 +712,7 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            versionText.Text = version ?? "未安装";
+            versionText.Text = version ?? L.Get("Setp.NotInstalled");
             versionText.Foreground = version is null ? Tertiary() : Primary();
 
             // alwaysInstall：装好了也给一个入口（PM2 要从「非全局装」升级成全局装，只能靠重装）
@@ -720,29 +759,21 @@ namespace AstraBrew_Launcher.Views
         {
             if (!accelerated)
             {
-                return "GitHub 请求一律直连；镜像与 npm 源本来就不走加速。"
-                    + "全局 git 配置里的加速规则也已移除，终端与酒馆更新同样直连。";
+                return L.Get("Settings.Row.GithubAccel.Description.Off");
             }
 
             // 没有 Git 就没有 insteadOf 可写，先说清这一点，否则「正在核对」会一直挂着
             if (RuntimeProbe.LocateGit() is not { Length: > 0 })
             {
-                return $"应用内 GitHub 请求（版本列表、安装包、扩展克隆）经 {GithubAccel.Prefix} 中转；"
-                    + "没找到 Git，命令行与酒馆更新里的 GitHub 拉取无法加速（装好 Git 后重开这个开关即可写入）。"
-                    + "镜像与 npm 源一律直连。";
+                return L.Get("Settings.Row.GithubAccel.Description.OnNoGit");
             }
 
-            string globalGit = _gitRewriteApplied switch
+            return L.Get(_gitRewriteApplied switch
             {
-                true => "全局 git 配置已写入 insteadOf，终端、酒馆自动更新与扩展安装里的 github.com 拉取也走加速。",
-                false => "全局 git 规则还没写进配置（写入失败），命令行里的 GitHub 拉取仍是直连。",
-                _ => "正在核对全局 git 配置…",
-            };
-
-            return $"应用内 GitHub 请求（版本列表、安装包、扩展克隆）经 {GithubAccel.Prefix} 中转；"
-                + "中转端有自己的 API 额度，版本列表不必挤直连那 60 次/小时；"
-                + globalGit
-                + "镜像与 npm 源一律直连。";
+                true => "Settings.Row.GithubAccel.Description.OnGitApplied",
+                false => "Settings.Row.GithubAccel.Description.OnGitFailed",
+                _ => "Settings.Row.GithubAccel.Description.OnChecking",
+            });
         }
 
         // ==================== 全局 git 规则 ====================
@@ -775,14 +806,14 @@ namespace AstraBrew_Launcher.Views
                 if (enabled)
                 {
                     AppNotify.Warning(
-                        "全局 git 规则没写上",
-                        failed.Message + " 应用内下载仍然走加速，只有命令行里的 git 拉取还是直连。");
+                        L.Get("Setp.GitCfgFail.Title"),
+                        L.F("Setp.GitCfgFail.Body", failed.Message));
                 }
                 else
                 {
                     AppNotify.Error(
-                        "全局 git 规则没能移除",
-                        failed.Message + " 应用内已恢复直连，但终端里的 git 仍会被这条规则带去加速。");
+                        L.Get("Setp.GitCfgRemoveFail.Title"),
+                        L.F("Setp.GitCfgRemoveFail.Body", failed.Message));
                 }
 
                 return;
@@ -794,20 +825,18 @@ namespace AstraBrew_Launcher.Views
             }
 
             AppNotify.Success(
-                enabled ? "GitHub 加速服务已开启" : "GitHub 加速服务已关闭",
-                enabled
-                    ? "应用内请求已走中转；全局 git 配置也写好了，终端与酒馆更新里的 GitHub 拉取同样加速。"
-                    : "应用内请求恢复直连，全局 git 配置里的加速规则也已移除。");
+                L.Get(enabled ? "Setp.AccelOn.Title" : "Setp.AccelOff.Title"),
+                L.Get(enabled ? "Setp.AccelOn.Body" : "Setp.AccelOff.Body"));
         }
 
         private void UpdateProxyUi()
         {
-            ProxyRow.Description = LauncherSettings.Proxy switch
+            ProxyRow.Description = L.Get(LauncherSettings.Proxy switch
             {
-                ProxyModeSetting.None => "直连，不经过任何代理；GitHub 访问失败时请改成系统或自定义。",
-                ProxyModeSetting.Custom => "使用下面填写的地址，仅对本启动器生效。",
-                _ => "跟随 Windows「Internet 选项」里的代理设置。",
-            };
+                ProxyModeSetting.None => "Settings.Proxy.None",
+                ProxyModeSetting.Custom => "Settings.Proxy.Custom",
+                _ => "Settings.Proxy.System",
+            });
 
             // 只在值真的变了才回写：否则每敲一个字都会被重置，光标会跳回开头
             if (CustomProxyBox.Text != LauncherSettings.CustomProxy)
@@ -855,7 +884,9 @@ namespace AstraBrew_Launcher.Views
             SystemProxyState state = SystemProxy.Read();
             AppNotify.Post(
                 state.Enabled ? NotifySeverity.Success : NotifySeverity.Informational,
-                state.Enabled ? "系统代理已开启" : "系统代理未开启",
+                L.Get(state.Enabled
+                    ? "Settings.SystemProxy.Notify.On"
+                    : "Settings.SystemProxy.Notify.Off"),
                 state.Detail);
         }
 
@@ -868,15 +899,15 @@ namespace AstraBrew_Launcher.Views
             }
             catch (System.ComponentModel.Win32Exception ex)
             {
-                AppNotify.Warning("打不开 Windows 设置", ex.Message);
+                AppNotify.Warning(L.Get("Setp.OpenWindowsSettingsFail"), ex.Message);
             }
         }
 
         private void UpdateGithubTestUi()
         {
             GithubTestText.Text = LauncherSettings.GithubBestLatency is { } latency
-                ? $"最佳 {latency} ms"
-                : "未测试";
+                ? L.F("Settings.GithubTest.Best", latency)
+                : L.Get("Settings.GithubTest.Untested");
         }
 
         /// <summary>字体行说明。</summary>
@@ -890,25 +921,29 @@ namespace AstraBrew_Launcher.Views
 
             if (choice.Missing is { Length: > 0 } missing)
             {
-                FontRow.Description = $"「{missing}」不在本机，已回退到{FontCatalog.EmbeddedLabel}字体；本机可选 {total} 种。";
+                FontRow.Description = L.F(
+                    "Settings.Row.Font.Description.Missing",
+                    missing,
+                    FontCatalog.EmbeddedLabel,
+                    total);
                 return;
             }
 
             FontRow.Description = choice.Kind switch
             {
                 FontChoiceKind.Embedded =>
-                    $"{FontCatalog.EmbeddedLabel}：随包内置的 {FontCatalog.EmbeddedFamily}，不依赖本机安装；另有 {total} 种可选。",
+                    L.F("Settings.Row.Font.Description.Embedded", FontCatalog.EmbeddedLabel, total),
                 FontChoiceKind.SystemFamily =>
-                    $"当前：{choice.Family}；缺字时自动回退，仅影响观感。",
+                    L.F("Settings.Row.Font.Description.System", choice.Family),
                 _ =>
-                    $"跟随 Windows 系统字体；本机可选 {total} 种。",
+                    L.F("Settings.Row.Font.Description.Follow", total),
             };
         }
 
         /// <summary>改动后先显示「保存中…」，真正落盘后由 <see cref="OnSettingsSaved"/> 收回。</summary>
         private void MarkDirty()
         {
-            SaveStateText.Text = "保存中…";
+            SaveStateText.Text = L.Get("Settings.Save.Saving");
             SaveDot.Fill = Caution();
         }
 
@@ -917,7 +952,7 @@ namespace AstraBrew_Launcher.Views
         {
             DispatcherQueue.TryEnqueue(() =>
             {
-                SaveStateText.Text = "已保存";
+                SaveStateText.Text = L.Get("Settings.Save.Saved");
                 SaveDot.Fill = Success();
             });
         }
@@ -931,7 +966,16 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            LauncherSettings.SetLanguage((AppLanguage)LanguagePicker.SelectedIndex);
+            var choice = (AppLanguage)LanguagePicker.SelectedIndex;
+            if (LauncherSettings.Language == choice)
+            {
+                return;
+            }
+
+            // 实时切换：改资源上下文 + 重刷文案，窗口与页面都原地不动
+            LanguageSwitch.Apply(choice);
+
+            // 语言本身也是一项设置，同样要经过「保存中…→ 已保存」这条反馈
             MarkDirty();
         }
 
@@ -996,7 +1040,7 @@ namespace AstraBrew_Launcher.Views
             {
                 // 本机也装了同款时标出来，用户才知道这一项和「软件默认」是同一套字
                 var display = FontCatalog.IsEmbeddedFamily(family)
-                    ? $"{family}（{FontCatalog.EmbeddedLabel}）"
+                    ? L.F("Settings.Font.Item.WithEmbedded", family, FontCatalog.EmbeddedLabel)
                     : family;
 
                 FontCombo.Items.Add(CreateFontItem(display, family, new FontFamily(family)));
@@ -1007,7 +1051,8 @@ namespace AstraBrew_Launcher.Views
                 && !FontCatalog.IsEmbeddedId(configured)
                 && !FontCatalog.IsInstalled(configured))
             {
-                FontCombo.Items.Add(CreateFontItem($"{configured}（未安装）", configured, null));
+                FontCombo.Items.Add(CreateFontItem(
+                    L.F("Settings.Font.Item.Missing", configured), configured, null));
             }
         }
 
@@ -1029,9 +1074,9 @@ namespace AstraBrew_Launcher.Views
 
             ToolTipService.SetToolTip(item, tag switch
             {
-                null => "不覆盖界面字体",
+                null => L.Get("Settings.Font.ToolTip.Follow"),
                 _ when FontCatalog.IsEmbeddedId(tag) =>
-                    $"随包内置的 {FontCatalog.EmbeddedFamily}，本机装没装都不影响",
+                    L.F("Settings.Font.ToolTip.Embedded", FontCatalog.EmbeddedFamily),
                 _ => tag,
             });
 
@@ -1276,7 +1321,7 @@ namespace AstraBrew_Launcher.Views
             await InstallAsync("PM2", "6.0.5", "Pm2");
 
         private async void InstallWebView2_Click(object sender, RoutedEventArgs e) =>
-            await InstallAsync("WebView2 运行时", "Evergreen Standalone", "WebView2");
+            await InstallAsync(L.Get("Setp.WebView2Name"), "Evergreen Standalone", "WebView2");
 
         /// <summary>
         /// 小白版的「修复」：把缺失的必要组件逐个补齐。
@@ -1307,7 +1352,7 @@ namespace AstraBrew_Launcher.Views
 
                 if (CurrentEnvironment?.WebView2 is null)
                 {
-                    await InstallAsync("WebView2 运行时", "Evergreen Standalone", "WebView2");
+                    await InstallAsync(L.Get("Setp.WebView2Name"), "Evergreen Standalone", "WebView2");
                 }
 
                 await RefreshEnvironmentAsync(force: true);
@@ -1390,45 +1435,7 @@ namespace AstraBrew_Launcher.Views
         private async void TestGithub_Click(object sender, RoutedEventArgs e) =>
             await ShowGithubTestAsync();
 
-        // ==================== 更新 ====================
-
-        private async void CheckUpdate_Click(object sender, RoutedEventArgs e)
-        {
-            CheckUpdateButton.IsEnabled = false;
-            CheckUpdateLabel.Text = "检查中…";
-
-            try
-            {
-                await Task.Delay(900);
-            }
-            finally
-            {
-                CheckUpdateButton.IsEnabled = true;
-                CheckUpdateLabel.Text = "检查更新";
-            }
-
-            await ShowUpdateDialogAsync();
-        }
-
         private void RestoreDefaults_Click(object sender, RoutedEventArgs e) => _ = ShowRestoreDialogAsync();
-
-        // ==================== 原型工具 ====================
-
-        private void ReplayOnboarding_Click(object sender, RoutedEventArgs e)
-        {
-            OnboardingState.Reset();
-            App.MainWindow?.ShowOnboarding();
-        }
-
-        private void CopyOnboardingPath_Click(object sender, RoutedEventArgs e)
-        {
-            var package = new DataPackage();
-            package.SetText(OnboardingState.FilePath);
-            Clipboard.SetContent(package);
-        }
-
-        private void OpenConfigDir_Click(object sender, RoutedEventArgs e) =>
-            RevealInExplorer(Path.GetDirectoryName(OnboardingState.FilePath));
 
         private void OpenStartupSettings_Click(object sender, RoutedEventArgs e) =>
             Process.Start(new ProcessStartInfo { FileName = "ms-settings:startupapps", UseShellExecute = true });
@@ -1505,9 +1512,6 @@ namespace AstraBrew_Launcher.Views
             {
             }
         }
-
-        /// <summary>启动器版本，含渠道后缀（0.3.0-Debug.0 / 0.3.0），与关于页同源。</summary>
-        private static string ReadAppVersion() => BuildChannelInfo.DisplayVersion;
 
         // ==================== 弹窗外壳 ====================
 
@@ -1674,13 +1678,13 @@ namespace AstraBrew_Launcher.Views
             var (dialog, body, footer) = CreateShell(
                 "\uE896",
                 accent,
-                $"安装 {name}",
-                $"{version} · 下载并解压到内置环境",
+                L.F("Setp.Install.Title", name),
+                L.F("Setp.Install.Subtitle", version),
                 560);
 
             var phaseText = new TextBlock
             {
-                Text = "准备下载…",
+                Text = L.Get("Setp.PrepareDownload"),
                 FontSize = 13,
                 FontWeight = FontWeights.SemiBold,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -1717,7 +1721,7 @@ namespace AstraBrew_Launcher.Views
             body.Children.Add(bar);
             body.Children.Add(ShellPanel(logScroll));
 
-            var close = ShellButton("取消");
+            var close = ShellButton(L.Get("Setp.Cancel"));
             footer.Children.Add(close);
 
             var cancelled = new CancellationTokenSource();
@@ -1731,9 +1735,9 @@ namespace AstraBrew_Launcher.Views
             var steps = new[]
             {
                 $"GET {GithubAccel.Apply("https://github.com/")}…/{name} · 12.4 MB",
-                "校验 SHA-256 与发布清单一致",
-                $"解压到 {Path.Combine(AppPaths.RoamingRoot, "lib")}",
-                "写入版本标记，注册到 PATH 前置目录",
+                L.Get("Setp.Step.Verify"),
+                L.F("Setp.Step.Extract", Path.Combine(AppPaths.RoamingRoot, "lib")),
+                L.Get("Setp.Step.Register"),
             };
 
             // 装完三秒自动收起，和真实安装弹窗保持同一套节奏
@@ -1777,7 +1781,7 @@ namespace AstraBrew_Launcher.Views
 
                 bar.Value = 100;
                 percentText.Text = "100%";
-                phaseText.Text = "安装完成，正在重新检测…";
+                phaseText.Text = L.Get("Setp.Done.Redetecting");
                 logText.Text = string.Join(Environment.NewLine, lines);
                 logScroll.ChangeView(null, logScroll.ScrollableHeight, null);
 
@@ -1785,14 +1789,14 @@ namespace AstraBrew_Launcher.Views
                 await RefreshEnvironmentAsync(force: true);
 
                 string? detected = CurrentEnvironment?.VersionOf(field);
-                phaseText.Text = detected is null ? "安装完成，但未能检测到" : "安装完成";
+                phaseText.Text = detected is null ? L.Get("Setp.Done.NotDetected") : L.Get("Setp.Done.Ok");
                 lines.Add(detected is null
-                    ? $"[{DateTime.Now:HH:mm:ss}] 未检测到 {name}，请检查安装目录与上方下载日志"
-                    : $"[{DateTime.Now:HH:mm:ss}] 检测到 {name} {detected}");
+                    ? L.F("Setp.Log.NotDetected", DateTime.Now.ToString("HH:mm:ss"), name)
+                    : L.F("Setp.Log.Detected", DateTime.Now.ToString("HH:mm:ss"), name, detected));
 
                 logText.Text = string.Join(Environment.NewLine, lines);
                 logScroll.ChangeView(null, logScroll.ScrollableHeight, null);
-                close.Content = "完成";
+                close.Content = L.Get("Setp.DoneButton");
 
                 autoClose.Stop();
                 autoClose.Start();
@@ -1824,7 +1828,7 @@ namespace AstraBrew_Launcher.Views
         private Task InstallComponentAsync(InstallSpec spec, string glyph) =>
             InstallDialogAsync(new InstallJob(
                 spec.DisplayName,
-                $"{spec.VersionLabel} · 镜像优先，失败回退直连",
+                L.F("Setp.Install.MirrorHint", spec.VersionLabel),
                 glyph,
                 spec.ProbeKey,
                 (progress, token) => ComponentInstaller.InstallAsync(spec, progress, token),
@@ -1837,11 +1841,11 @@ namespace AstraBrew_Launcher.Views
         private Task InstallPm2Async() =>
             InstallDialogAsync(new InstallJob(
                 "PM2",
-                $"v{Pm2Installer.Version} · 全局安装，内置与系统共用一份",
+                L.F("Setp.Install.Pm2Hint", Pm2Installer.Version),
                 "\uE950",
                 "Pm2",
                 (progress, token) => Pm2Installer.InstallAsync(progress, token),
-                detected => $"PM2 {detected} 已就位 · 命令 {Pm2Installer.CommandPath}",
+                detected => L.F("Setp.Install.Pm2Done", detected, Pm2Installer.CommandPath),
                 HasProgress: false));
 
         /// <summary>真实安装弹窗里要用到的全部信息。</summary>
@@ -1871,13 +1875,13 @@ namespace AstraBrew_Launcher.Views
             var (dialog, body, footer) = CreateShell(
                 job.Glyph,
                 accent,
-                $"安装 {job.DisplayName}",
+                L.F("Setp.InstallHeading", job.DisplayName),
                 job.VersionLabel,
                 580);
 
             var phaseText = new TextBlock
             {
-                Text = "准备中…",
+                Text = L.Get("Setp.Preparing"),
                 FontSize = 13,
                 FontWeight = FontWeights.SemiBold,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -1923,7 +1927,7 @@ namespace AstraBrew_Launcher.Views
 
             var detailText = new TextBlock
             {
-                Text = "正在检查安装目录…",
+                Text = L.Get("Setp.CheckingFolder"),
                 FontSize = 11,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Tertiary(),
@@ -1958,11 +1962,11 @@ namespace AstraBrew_Launcher.Views
             body.Children.Add(hintText);
             body.Children.Add(ShellPanel(logScroll));
 
-            var logButton = ShellButton("查看日志");
+            var logButton = ShellButton(L.Get("Setp.ViewLog"));
             logButton.Visibility = Visibility.Collapsed;
-            var retryButton = ShellButton("重试", accent: true);
+            var retryButton = ShellButton(L.Get("Setp.Retry"), accent: true);
             retryButton.Visibility = Visibility.Collapsed;
-            var close = ShellButton("取消");
+            var close = ShellButton(L.Get("Setp.Cancel"));
 
             // 右对齐底栏里「查看日志」放最左：它不是主操作，不该挨着关闭
             footer.Children.Add(logButton);
@@ -2032,13 +2036,13 @@ namespace AstraBrew_Launcher.Views
                             break;
                         case InstallStage.Extracting:
                             bar.IsIndeterminate = false;
-                            detailText.Text = "解压到内置环境…";
+                            detailText.Text = L.Get("Setp.ExtractToBundled");
                             break;
                         case InstallStage.Done:
                             bar.IsIndeterminate = false;
                             bar.Value = 100;
                             percentText.Text = "100%";
-                            detailText.Text = $"正在重新检测 {job.DisplayName}…";
+                            detailText.Text = L.F("Setp.Redetecting", job.DisplayName);
                             break;
                         default:
                             bar.IsIndeterminate = false;
@@ -2074,13 +2078,13 @@ namespace AstraBrew_Launcher.Views
                 ring.IsActive = !job.HasProgress;
 
                 // 有进度的从「准备中」起步；没有进度的直接写死一句话，别让它随日志抖
-                phaseText.Text = job.HasProgress ? "准备中…" : $"正在安装 {job.DisplayName}…";
+                phaseText.Text = job.HasProgress ? L.Get("Setp.Preparing") : L.F("Setp.Installing", job.DisplayName);
                 phaseText.Foreground = Primary();
-                detailText.Text = "正在检查安装目录…";
+                detailText.Text = L.Get("Setp.CheckingFolder");
                 hintText.Visibility = Visibility.Collapsed;
                 logButton.Visibility = Visibility.Collapsed;
                 retryButton.Visibility = Visibility.Collapsed;
-                close.Content = "取消";
+                close.Content = L.Get("Setp.Cancel");
                 lines.Clear();
                 logText.Text = string.Empty;
                 lastMessage = null;
@@ -2114,18 +2118,18 @@ namespace AstraBrew_Launcher.Views
                         percentText.Text = "100%";
                     }
 
-                    phaseText.Text = "安装完成";
-                    detailText.Text = $"正在重新检测 {job.DisplayName}…";
+                    phaseText.Text = L.Get("Setp.Done.Ok");
+                    detailText.Text = L.F("Setp.Redetecting", job.DisplayName);
 
                     await RefreshEnvironmentAsync(force: true);
 
                     string? detected = CurrentEnvironment?.VersionOf(job.ProbeKey);
                     detailText.Text = detected is null
-                        ? "安装跑完了，但没检测到可用的命令，请查看日志。"
+                        ? L.Get("Setp.FinishedNoCommand")
                         : job.SuccessDetail(detected);
                     Append(detected is null
-                        ? "安装完成，但没检测到可用的命令"
-                        : $"检测到 {job.DisplayName} {detected}");
+                        ? L.Get("Setp.FinishedNoCommandShort")
+                        : L.F("Setp.DetectedAs", job.DisplayName, detected));
 
                     autoClose.Stop();
                     autoClose.Start();
@@ -2151,7 +2155,7 @@ namespace AstraBrew_Launcher.Views
 
                     if (!string.IsNullOrWhiteSpace(result.LogPath))
                     {
-                        hints.Add($"详细信息见日志 {result.LogPath}");
+                        hints.Add(L.F("Setp.DetailsInLog", result.LogPath));
                     }
 
                     hintText.Text = string.Join(Environment.NewLine, hints);
@@ -2161,7 +2165,7 @@ namespace AstraBrew_Launcher.Views
                     retryButton.Visibility = Visibility.Visible;
                 }
 
-                close.Content = "关闭";
+                close.Content = L.Get("Setp.Close");
             }
 
             close.Click += (_, _) => dialog.Hide();
@@ -2209,8 +2213,8 @@ namespace AstraBrew_Launcher.Views
             }
 
             return progress.Received > 0
-                ? $"已下载 {SizeText(progress.Received)}"
-                : "正在等待服务器响应…";
+                ? L.F("Setp.Downloaded", SizeText(progress.Received))
+                : L.Get("Setp.AwaitingServer");
         }
 
         private static string SizeText(long bytes) => bytes switch
@@ -2257,8 +2261,8 @@ namespace AstraBrew_Launcher.Views
             var (dialog, body, footer) = CreateShell(
                 "\uEC4A",
                 accent,
-                "GitHub 连通性测试",
-                "真的去访问网页、API、Raw，再把仓库完整拉一份下来；数字是这次实测出来的。",
+                L.Get("Setp.Conn.Title"),
+                L.Get("Setp.Conn.Subtitle"),
                 640);
 
             // 出口由「代理方式 × 加速开关」四种组合决定，这里直说这一次测试实际走的哪条
@@ -2285,7 +2289,7 @@ namespace AstraBrew_Launcher.Views
                     cloneIndex = index;
                 }
 
-                TextBlock status = CreateStatus("等待");
+                TextBlock status = CreateStatus(L.Get("Setp.Conn.Waiting"));
                 statuses.Add(status);
                 body.Children.Add(ProbeRow(probe.Name, probe.Hint, status));
             }
@@ -2300,8 +2304,8 @@ namespace AstraBrew_Launcher.Views
 
             body.Children.Add(summary);
 
-            var close = ShellButton("关闭");
-            var retest = ShellButton("重新测试", accent: true);
+            var close = ShellButton(L.Get("Setp.Close"));
+            var retest = ShellButton(L.Get("Setp.Conn.Retest"), accent: true);
             footer.Children.Add(close);
             footer.Children.Add(retest);
 
@@ -2362,9 +2366,10 @@ namespace AstraBrew_Launcher.Views
 
         /// <summary>弹窗顶部那句说明：出口 + 四项怎么跑 + 克隆的时限。</summary>
         private static string DescribeExitLine() =>
-            GithubConnectivity.DescribeExit() + "。四项并发进行；克隆会真拉完整仓库"
-            + $"（约 100 MB）到临时目录，拉取时显示进度与速度，测完自动删除；"
-            + $"超过 {GithubConnectivity.CloneBudgetSeconds} 秒还没拉完就按超时算。";
+            L.F(
+                "Setp.Conn.Description",
+                GithubConnectivity.DescribeExit(),
+                GithubConnectivity.CloneBudgetSeconds);
 
         /// <summary>
         /// 并发探测所有节点：各自计时、各自回填那一行，最后汇总。
@@ -2380,12 +2385,12 @@ namespace AstraBrew_Launcher.Views
             CancellationToken token)
         {
             retest.IsEnabled = false;
-            summary.Text = "正在探测…";
+            summary.Text = L.Get("Setp.Conn.Probing");
             summary.Foreground = Secondary();
 
             foreach (TextBlock status in statuses)
             {
-                status.Text = "探测中…";
+                status.Text = L.Get("Setp.Conn.ProbingShort");
                 status.Foreground = Secondary();
             }
 
@@ -2495,30 +2500,30 @@ namespace AstraBrew_Launcher.Views
 
             if (results.FirstOrDefault(item => item.Probe.Key == "api") is { Ok: false })
             {
-                notes.Add("API 不通：版本列表只能用缓存。");
+                notes.Add(L.Get("Setp.Conn.ApiFail"));
             }
 
             if (results.FirstOrDefault(item => item.Probe.Key == "raw") is { Ok: false })
             {
-                notes.Add("Raw 不通：blob 转 raw 的下载会失败。");
+                notes.Add(L.Get("Setp.Conn.RawFail"));
             }
 
             if (results.FirstOrDefault(item => item.Probe.IsGit) is { Ok: false, Error: not null })
             {
-                notes.Add("克隆失败：安装与更新内置实例都会受影响。");
+                notes.Add(L.Get("Setp.Conn.CloneFail"));
             }
 
             if (results.FirstOrDefault(item => item.Probe.Key == "web") is { Ok: false })
             {
-                notes.Add("官网打不开：仓库页、文档跳转都不通。");
+                notes.Add(L.Get("Setp.Conn.WebsiteFail"));
             }
 
             if (measured.Count == 0)
             {
-                summary.Text = "四条都没通过。"
+                summary.Text = L.Get("Setp.Conn.AllFailed")
                     + (GithubAccel.Enabled
-                        ? "试试关掉加速服务改用直连，或检查代理设置。"
-                        : "检查代理设置，或打开「GitHub 加速服务」换一条出口。");
+                        ? L.Get("Setp.Conn.AdviceDirect")
+                        : L.Get("Setp.Conn.AdviceSwitch"));
                 summary.Foreground = Critical();
                 return;
             }
@@ -2533,72 +2538,15 @@ namespace AstraBrew_Launcher.Views
             string cloneNote = clone switch
             {
                 { Ok: true, LatencyMs: { } ms } =>
-                    $"克隆通道正常（{MirrorBenchmark.DescribeElapsed(ms)}）。",
+                    L.F("Setp.Conn.CloneOk", MirrorBenchmark.DescribeElapsed(ms)),
                 { Note: { Length: > 0 } note } => note + "。",
                 _ => string.Empty,
             };
 
-            summary.Text = $"最快 {fastest.LatencyMs} ms（{fastest.Probe.Name}）。"
+            summary.Text = L.F("Setp.Conn.Fastest", fastest.LatencyMs, fastest.Probe.Name)
                 + cloneNote
                 + (notes.Count == 0 ? string.Empty : string.Join(" ", notes));
             summary.Foreground = notes.Count == 0 ? Success() : Caution();
-        }
-
-        // ==================== 更新弹窗 ====================
-
-        private async Task ShowUpdateDialogAsync()
-        {
-            var accent = Color.FromArgb(0xFF, 0x2B, 0x88, 0xD8);
-            var (dialog, body, footer) = CreateShell(
-                "\uE896",
-                accent,
-                "发现新版本 v0.4.2",
-                $"当前 {VersionChipText.Text} · 2026-10-27 发布 · 12.6 MB",
-                540);
-
-            body.Children.Add(new TextBlock
-            {
-                Text = "更新内容",
-                FontSize = 12,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = Secondary(),
-            });
-            body.Children.Add(ShellPanel(new ScrollViewer
-            {
-                MaxHeight = 132,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Content = new TextBlock
-                {
-                    FontSize = 12,
-                    TextWrapping = TextWrapping.Wrap,
-                    Foreground = Primary(),
-                    Text = "· 控制台支持按关键字过滤日志\n"
-                        + "· 资源工作台新增世界书条目搜索\n"
-                        + "· 修复 125% 缩放下卡片网格列数算错的问题\n"
-                        + "· 启动失败时给出可复制的诊断信息",
-                },
-            }));
-
-            var later = ShellButton("稍后");
-            var install = ShellButton("立即安装", accent: true);
-            footer.Children.Add(later);
-            footer.Children.Add(install);
-
-            later.Click += (_, _) => dialog.Hide();
-            install.Click += async (_, _) =>
-            {
-                dialog.Hide();
-                CheckUpdateButton.IsEnabled = false;
-                for (var percent = 0; percent <= 100; percent += 10)
-                {
-                    CheckUpdateLabel.Text = $"下载中 {percent}%";
-                    await Task.Delay(90);
-                }
-
-                CheckUpdateLabel.Text = "已是最新";
-            };
-
-            await dialog.ShowAsync();
         }
 
         // ==================== 恢复默认 ====================
@@ -2609,20 +2557,20 @@ namespace AstraBrew_Launcher.Views
             var (dialog, body, footer) = CreateShell(
                 "\uE7A7",
                 accent,
-                "恢复默认设置",
-                "所有偏好回到首次启动时的状态，包括环境来源、代理与下载通道。",
+                L.Get("Setp.Reset.Title"),
+                L.Get("Setp.Reset.Body"),
                 480);
 
             body.Children.Add(new TextBlock
             {
-                Text = "已经安装的 Git / Node.js / PM2 不会被删除，只是设置不再指向它们。路径类选项会重置为默认目录。",
+                Text = L.Get("Setp.Reset.Note"),
                 FontSize = 12,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Secondary(),
             });
 
-            var cancel = ShellButton("取消");
-            var confirm = ShellButton("恢复默认", danger: true);
+            var cancel = ShellButton(L.Get("Setp.Cancel"));
+            var confirm = ShellButton(L.Get("Setp.Reset.Confirm"), danger: true);
             footer.Children.Add(cancel);
             footer.Children.Add(confirm);
 

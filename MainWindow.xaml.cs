@@ -43,6 +43,12 @@ namespace AstraBrew_Launcher
         /// <summary>外观执行者：主题 / 界面字体 / 界面缩放。</summary>
         private AppearanceController? _appearance;
 
+        /// <summary>
+        /// 交给 <see cref="InstanceScan.OpenDetail"/> 的委托。留着是为了关窗时能确认那个静态槽
+        /// 还指向自己——换语言重建会新建一个窗口，旧窗口不能把新窗口的挂载点清掉。
+        /// </summary>
+        private readonly Action _openDetailHandler;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -57,10 +63,14 @@ namespace AstraBrew_Launcher
             // 设置页改完立刻生效，本窗口不再自己算 DPI / 字体 / 主题。
             _appearance = new AppearanceController(Root, ContentHost, ContentRoot, ApplyTitleBarColors);
 
+            _openDetailHandler = OpenScanDetail;
+
             Closed += OnClosed;
 
-            // 标题栏的实例徽章是全局状态，切换实例后立刻更新
-            TavernInstances.Changed += (_, _) => ApplyInstanceChip();
+            // 标题栏的实例徽章是全局状态，切换实例后立刻更新。
+            // 必须用具名方法：lambda 捕获的是 this，退不掉；换语言重建窗口会一次留下一个死钩子。
+            TavernInstances.Changed -= OnInstancesChanged;
+            TavernInstances.Changed += OnInstancesChanged;
             ApplyInstanceChip();
             ApplyChannelBadge();
 
@@ -68,7 +78,7 @@ namespace AstraBrew_Launcher
             AppNotify.Raised += OnNotifyRaised;
 
             // 扫描进度卡的「查看详情」：服务层不认页面，这里把两边接起来
-            InstanceScan.OpenDetail = OpenScanDetail;
+            InstanceScan.OpenDetail = _openDetailHandler;
 
             // 默认选中「仪表盘」
             if (NavView.MenuItems.Count > 0 && NavView.MenuItems[0] is NavigationViewItem first)
@@ -135,20 +145,29 @@ namespace AstraBrew_Launcher
         public string CurrentTag => _currentTag;
 
         /// <summary>可供页面调用的全局导航入口。</summary>
-        public void NavigateTo(string tag)
+        public void NavigateTo(string tag) => NavigateTo(tag, force: false);
+
+        /// <summary>
+        /// <paramref name="force"/> 用于「换语言重建窗口后回到原来那一页」：
+        /// 常规导航里同页会被短路掉（避免重复建页面），而重建场景必须真的 Navigate 一次。
+        /// </summary>
+        public void NavigateTo(string tag, bool force)
         {
             if (!PageMap.TryGetValue(tag, out var pageType))
             {
                 return;
             }
 
-            if (_currentTag == tag && ContentFrame.Content?.GetType() == pageType)
+            if (!force && _currentTag == tag && ContentFrame.Content?.GetType() == pageType)
             {
                 return;
             }
 
             _currentTag = tag;
-            ContentFrame.Navigate(pageType, null, new EntranceNavigationTransitionInfo());
+            ContentFrame.Navigate(
+                pageType,
+                null,
+                force ? new SuppressNavigationTransitionInfo() : new EntranceNavigationTransitionInfo());
 
             // 工作台是资源管理的子页面，导航高亮留在入口那一项
             SyncSelection(tag == "workbench" ? "resources" : tag);
@@ -176,6 +195,18 @@ namespace AstraBrew_Launcher
             ExtensionsBadge.Value = pending;
             ExtensionsBadge.Visibility = Visibility.Visible;
         }
+
+        /// <summary>引导浮层是否盖在上面（换语言时据此退化成「重启生效」）。</summary>
+        public bool IsOnboardingVisible => Onboarding.Visibility == Visibility.Visible;
+
+        /// <summary>换语言重建前调用：把当前窗口几何静默写进设置，新窗口照着同一位置打开。</summary>
+        public void PersistGeometryForReload() => _placement?.PersistBounds();
+
+        /// <summary>
+        /// 换语言重建前调用：先卸掉内容树，触发页面的 Unloaded（页面在那里退订静态事件），
+        /// 再关窗口。少了这一步，页面可能还挂在静态事件的委托链上，持有已关闭窗口的控件。
+        /// </summary>
+        public void DetachContent() => ContentFrame.Content = null;
 
         /// <summary>让左侧导航的选中项与当前路由保持一致。</summary>
         private void SyncSelection(string tag)
@@ -271,6 +302,24 @@ namespace AstraBrew_Launcher
         private void OnClosed(object sender, WindowEventArgs args)
         {
             AppNotify.Raised -= OnNotifyRaised;
+            TavernInstances.Changed -= OnInstancesChanged;
+
+            // 只清自己挂上去的那一份，别把新窗口的挂载点抹掉
+            if (ReferenceEquals(InstanceScan.OpenDetail, _openDetailHandler))
+            {
+                InstanceScan.OpenDetail = null;
+            }
+
+            // 换语言重建：新窗口已经起来了，这时停酒馆 / 关桌面窗口都是误伤
+            if (LanguageSwitch.IsRebuilding)
+            {
+                _placement?.PersistBounds();
+                SettingsStore.SaveNow();
+                SettingsStore.Flush();
+                _placement?.Dispose();
+                _appearance?.Dispose();
+                return;
+            }
 
             // 桌面窗口是独立顶层窗口，主窗口关了它不会自己退：先收掉，免得留下孤儿窗口
             DesktopWindow.Close();
@@ -297,6 +346,8 @@ namespace AstraBrew_Launcher
         /// 标题栏徽章：显示当前选中的酒馆实例（内置-1.19.2 / 本地-1.19.0）。
         /// 常驻标题栏，用户在任意页面都能确认启动时用的是哪一份实例。
         /// </summary>
+        private void OnInstancesChanged(object? sender, EventArgs e) => ApplyInstanceChip();
+
         private void ApplyInstanceChip()
         {
             if (InstanceChipText is null)
@@ -307,7 +358,10 @@ namespace AstraBrew_Launcher
             InstanceChipText.Text = TavernInstances.Current.DisplayLabel;
             ToolTipService.SetToolTip(
                 InstanceChip,
-                $"当前酒馆实例 · {TavernInstances.Current.KindLabel} {TavernInstances.Current.KernelLabel}　在「版本管理」中切换");        }
+                L.F(
+                    "Shell.Instance.ToolTip",
+                    $"{TavernInstances.Current.KindLabel} {TavernInstances.Current.KernelLabel}"));
+        }
 
         /// <summary>
         /// 标题栏左上角的渠道标记：预览版 / 测试版 / 开发版。
@@ -337,7 +391,17 @@ namespace AstraBrew_Launcher
 
             ToolTipService.SetToolTip(
                 ChannelBadge,
-                $"{badge} · {BuildChannelInfo.Channel} 构建，不是正式版");
+                L.F("Channel.ToolTip", badge, BuildChannelInfo.Channel));
+        }
+
+        /// <summary>
+        /// 换语言后刷新标题栏里**由代码写进去**的文案（XAML 里的 loc:Loc.* 由 Loc.RefreshAll 负责）。
+        /// 实例胶囊、渠道标记的提示都在这里重取，否则切完语言它们还挂着旧语言的字。
+        /// </summary>
+        public void RefreshLocalizedText()
+        {
+            ApplyInstanceChip();
+            ApplyChannelBadge();
         }
 
         private void SetupWindow()

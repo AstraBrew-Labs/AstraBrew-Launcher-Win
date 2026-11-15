@@ -44,11 +44,11 @@ namespace AstraBrew_Launcher.Services
 
             (string Label, int From, int To) range = match.Groups["phase"].Value switch
             {
-                "Counting objects" or "Compressing objects" => ("准备", 0, 3),
-                "Receiving objects" => ("下载", 3, 85),
-                "Resolving deltas" => ("整理", 85, 95),
-                "Updating files" => ("写入", 95, 99),
-                _ => ("下载", 3, 85),
+                "Counting objects" or "Compressing objects" => (L.Get("Miss.GitStage.Prepare"), 0, 3),
+                "Receiving objects" => (L.Get("Miss.GitStage.Download"), 3, 85),
+                "Resolving deltas" => (L.Get("Miss.GitStage.Index"), 85, 95),
+                "Updating files" => (L.Get("Miss.GitStage.Write"), 95, 99),
+                _ => (L.Get("Miss.GitStage.Download"), 3, 85),
             };
 
             int overall = range.From + (int)Math.Round(percent * (range.To - range.From) / 100.0);

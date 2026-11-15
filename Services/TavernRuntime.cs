@@ -35,7 +35,31 @@ namespace AstraBrew_Launcher.Services
         Output,
     }
 
-    public sealed record TavernLogEntry(DateTime Time, TavernLogKind Kind, string Text);
+    /// <summary>
+    /// 控制台里的一行。
+    ///
+    /// <para>
+    /// 启动器自己写的日志**不存成品文字**，只存资源键与实参（<see cref="Key"/> / <see cref="Args"/>），
+    /// 显示时按当前界面语言现取。理由：日志是「记录」不是「快照」——同一份日志在切到英文后
+    /// 应该整屏跟着变，而不是上面几行中文、下面几行英文。
+    /// </para>
+    /// <para>
+    /// 酒馆进程自己的 stdout 没有键可存（那是 Node 打印的），走 <see cref="Text"/> 原样显示。
+    /// </para>
+    /// </summary>
+    public sealed record TavernLogEntry(DateTime Time, TavernLogKind Kind, string Text)
+    {
+        /// <summary>资源键；为空表示这行是外部输出，<see cref="Text"/> 就是最终文字。</summary>
+        public string? Key { get; init; }
+
+        /// <summary>与 <see cref="Key"/> 配套的占位符实参。</summary>
+        public object?[]? Args { get; init; }
+
+        /// <summary>界面上该显示的文字：有键就按当前语言取，没有就原样。</summary>
+        public string Display => Key is { Length: > 0 } key
+            ? Args is { Length: > 0 } args ? L.F(key, args) : L.Get(key)
+            : Text;
+    }
 
     /// <summary>运行时的对外快照，控制台与仪表盘读同一份。</summary>
     public sealed record TavernProcessState(
@@ -43,18 +67,25 @@ namespace AstraBrew_Launcher.Services
         int? Pid,
         int Port,
         string Url,
-        string Mode,
         string VersionLabel,
         string? Error,
         DateTime? StartedAt,
         double? StartupSeconds)
     {
+        /// <summary>
+        /// 启动模式与运行环境的**资源键**（不是成品文字）。
+        /// 控制台状态条要在显示时按当前语言拼，换语言才会跟着变。
+        /// </summary>
+        public string ModeKey { get; init; } = string.Empty;
+
+        /// <summary>运行环境（内置 / 系统）的资源键，与 <see cref="ModeKey"/> 配套。</summary>
+        public string EnvKey { get; init; } = string.Empty;
+
         public static TavernProcessState None { get; } = new(
             TavernRunState.NotStarted,
             null,
             0,
             string.Empty,
-            "—",
             string.Empty,
             null,
             null,
@@ -103,7 +134,7 @@ namespace AstraBrew_Launcher.Services
         static TavernRuntime()
         {
             // 一进来就有一行说明：空白日志区会让人以为「输出没接上」
-            _logs.Add(new TavernLogEntry(DateTime.Now, TavernLogKind.System, "控制台就绪，等待启动指令"));
+            _logs.Add(new TavernLogEntry(DateTime.Now, TavernLogKind.System, string.Empty) { Key = "Run.Log.Ready" });
         }
 
         private static Process? _process;
@@ -275,7 +306,7 @@ namespace AstraBrew_Launcher.Services
             }
             catch (Exception ex)
             {
-                Fail("启动时发生意外：" + ex.Message);
+                Fail("Run.Log.Unexpected", ex.Message);
             }
         }
 
@@ -283,36 +314,31 @@ namespace AstraBrew_Launcher.Services
         {
             var clock = Stopwatch.StartNew();
             bool builtin = LauncherSettings.Runtime == RuntimeSource.Builtin;
-            string envLabel = builtin ? "内置环境" : "系统环境";
+            string envLabel = builtin ? L.Get("Run.Env.Builtin") : L.Get("Run.Env.System");
 
             TavernInstance instance = TavernInstances.Current;
-            AddLog(TavernLogKind.System, $"正在启动酒馆 · {envLabel} · {instance.DisplayLabel}");
+            AddLogKey(TavernLogKind.System, "Run.Log.Starting", envLabel, instance.DisplayLabel);
 
             // ---------- 1. Node.js ----------
             string? node = RuntimeProbe.LocateNode(LauncherSettings.Runtime);
             if (node is null)
             {
-                Fail(
-                    builtin
-                        ? "内置环境里没有找到 Node.js。请到「设置 → 运行环境」点「修复」，或把环境来源切换成系统环境。"
-                        : "系统环境里没有找到 Node.js。请先安装 Node.js，或在设置里改用内置环境。");
+                Fail(builtin ? "Run.NoNode.Builtin" : "Run.NoNode.System");
                 return;
             }
 
             string? nodeVersion = await RunVersionAsync(node, "--version").ConfigureAwait(false);
             if (nodeVersion is null)
             {
-                Fail($"Node.js 在 {node}，但查询版本失败——文件可能已损坏。");
+                Fail("Run.Log.NodeBroken", node);
                 return;
             }
 
-            AddLog(TavernLogKind.Success, $"Node.js {nodeVersion} · {node}");
+            AddLogKey(TavernLogKind.Success, "Run.Log.Node", nodeVersion, node);
 
             if (RuntimeProbe.IsNodeOutdated(nodeVersion))
             {
-                AddLog(
-                    TavernLogKind.Warning,
-                    $"Node.js 版本低于酒馆要求的 v{RuntimeProbe.MinimumNodeMajor}，可能启动失败。");
+                AddLogKey(TavernLogKind.Warning, "Run.Log.NodeOld", RuntimeProbe.MinimumNodeMajor);
             }
 
             // ---------- 2. Git ----------
@@ -321,11 +347,9 @@ namespace AstraBrew_Launcher.Services
             string? git = RuntimeProbe.LocateGit(LauncherSettings.Runtime);
             if (git is null)
             {
-                AddLog(
+                AddLogKey(
                     TavernLogKind.Warning,
-                    builtin
-                        ? "没有找到 Git：酒馆能启动，但「安装扩展」会失败。可在「设置 → 运行环境」里补装。"
-                        : "没有找到 Git：酒馆能启动，但「安装扩展」会失败。请在系统里装 Git，或改用内置环境。");
+                    builtin ? "Run.NoGit.Builtin" : "Run.NoGit.System");
             }
             else
             {
@@ -338,41 +362,43 @@ namespace AstraBrew_Launcher.Services
                     gitVersion = gitVersion.Replace("git version ", string.Empty, StringComparison.OrdinalIgnoreCase);
                 }
 
-                AddLog(
+                AddLogKey(
                     TavernLogKind.Success,
-                    $"Git {gitVersion ?? "版本未知"} · {git}");
+                    "Run.Log.Git",
+                    gitVersion ?? L.Get("Cmp.Unknown"),
+                    git);
             }
 
             // ---------- 3. 实例与依赖 ----------
             if (!Directory.Exists(instance.Path))
             {
-                Fail($"实例目录不存在：{instance.Path}");
+                Fail("Run.Log.NoInstance", instance.Path);
                 return;
             }
 
             string server = Path.Combine(instance.Path, "server.js");
             if (!File.Exists(server))
             {
-                Fail($"{instance.Path} 里没有 server.js，这不像一份完整的酒馆代码。");
+                Fail("Run.Log.NoServer", instance.Path);
                 return;
             }
 
             if (!instance.DepsReady)
             {
-                Fail("这份实例缺少 Node 依赖（node_modules）。到「版本管理 → 本地实例」点「安装依赖」后再启动。");
+                Fail("Run.Log.NoDeps");
                 return;
             }
 
-            AddLog(TavernLogKind.Info, $"实例目录 {instance.Path}");
+            AddLogKey(TavernLogKind.Info, "Run.Log.InstanceDir", instance.Path);
 
             // ---------- 4. 配置与数据目录 ----------
             (string configPath, string? dataRoot) = ResolveData(instance);
             int port = ReadPort(configPath);
 
-            AddLog(TavernLogKind.Info, $"配置 {configPath}");
+            AddLogKey(TavernLogKind.Info, "Run.Log.Config", configPath);
             if (dataRoot is { Length: > 0 })
             {
-                AddLog(TavernLogKind.Info, $"数据目录 {dataRoot}");
+                AddLogKey(TavernLogKind.Info, "Run.Log.DataDir", dataRoot);
 
                 // 白名单跟着服务范围走：局域网放行本机网段，互联网全开放。
                 // 每次启动都对一遍，换过 Wi-Fi、改过服务范围之后不会留下过期的名单。
@@ -380,10 +406,11 @@ namespace AstraBrew_Launcher.Services
                 bool whitelistWritten = GlobalTavernConfig.ApplyWhitelist(whitelistHosts);
 
                 // 每次都打一行：白名单决定了谁能连上来，出问题时要能一眼看到当时放行了哪些
-                AddLog(
+                AddLogKey(
                     TavernLogKind.Info,
-                    $"白名单（{TavernSettings.ModeName}）：{string.Join("、", whitelistHosts)}"
-                        + (whitelistWritten ? " · 已写入 config.yaml" : string.Empty));
+                    whitelistWritten ? "Run.Log.WhitelistDone" : "Run.Log.Whitelist",
+                    TavernSettings.ModeName,
+                    string.Join(L.Get("Common.List.And"), whitelistHosts));
             }
 
             // ---------- 5. 端口 ----------
@@ -391,18 +418,18 @@ namespace AstraBrew_Launcher.Services
             if (owners.Count > 0)
             {
                 string detail = string.Join("、", owners.Select(item => $"PID {item.Pid} {item.Name}"));
-                AddLog(TavernLogKind.Error, $"端口 {port} 已被占用：{detail}");
+                AddLogKey(TavernLogKind.Error, "Run.Log.PortBusy", port, detail);
 
                 lock (Gate)
                 {
-                    _state = _state with { State = TavernRunState.Failed, Port = port, Error = $"端口 {port} 被占用" };
+                    _state = _state with { State = TavernRunState.Failed, Port = port, Error = L.F("Run.PortBusy.Short", port) };
                 }
 
                 Raise();
                 AppNotify.Error(
-                    "端口被占用，没能启动",
-                    $"端口 {port} 正被 {detail} 使用。可以关掉那个进程，或点这里强制结束它再启动。",
-                    "强制释放并启动",
+                    L.Get("Run.PortBusy.Title"),
+                    L.F("Run.PortBusy.Body", port, detail),
+                    L.Get("Run.PortBusy.Action"),
                     () => _ = ReleasePortAndStartAsync(owners, port));
                 return;
             }
@@ -485,7 +512,7 @@ namespace AstraBrew_Launcher.Services
             if (!process.Start())
             {
                 process.Dispose();
-                Fail("无法启动 Node.js 进程。");
+                Fail("Run.Log.NodeStartFail");
                 return;
             }
 
@@ -505,13 +532,14 @@ namespace AstraBrew_Launcher.Services
                     Pid = process.Id,
                     Port = port,
                     Url = $"http://127.0.0.1:{port}",
-                    Mode = $"{TavernSettings.ModeName} · {envLabel}",
+                    ModeKey = TavernSettings.ModeKey,
+                    EnvKey = builtin ? "Run.Env.Builtin" : "Run.Env.System",
                     VersionLabel = instance.KernelLabel,
                 };
             }
 
             Raise();
-            AddLog(TavernLogKind.Info, $"进程已启动（PID {process.Id}），等待端口 {port} 就绪…");
+            AddLogKey(TavernLogKind.Info, "Run.Log.Started", process.Id, port);
 
             await WaitReadyAsync(process, port, clock, watch.Token).ConfigureAwait(false);
         }
@@ -539,9 +567,11 @@ namespace AstraBrew_Launcher.Services
                 if (!warned && DateTime.UtcNow > deadline)
                 {
                     warned = true;
-                    AddLog(
+                    AddLogKey(
                         TavernLogKind.Warning,
-                        $"启动超过 {ReadyTimeout.TotalSeconds:0} 秒仍未监听端口 {port}，请查看上方输出。");
+                        "Run.Log.ReadyTimeout",
+                        ReadyTimeout.TotalSeconds.ToString("0"),
+                        port);
                 }
 
                 try
@@ -575,10 +605,10 @@ namespace AstraBrew_Launcher.Services
             }
 
             Raise();
-            AddLog(TavernLogKind.Success, $"启动完成，用时 {elapsed.TotalSeconds:0.0} 秒 · http://127.0.0.1:{port}");
+            AddLogKey(TavernLogKind.Success, "Run.Log.Up", elapsed.TotalSeconds.ToString("0.0"), port);
             AppNotify.Success(
-                "酒馆已启动",
-                $"{_state.VersionLabel} · http://127.0.0.1:{port}。运行日志可在控制台查看。");
+                L.Get("Run.Up.Title"),
+                L.F("Run.Up.Body", _state.VersionLabel, port));
 
             // 桌面模式：启动完成后自动开窗。建窗必须在 UI 线程，这里只负责投递。
             // 普通模式不做这一步——酒馆自己会拉起浏览器，再开一次就成两个页面了。
@@ -591,8 +621,8 @@ namespace AstraBrew_Launcher.Services
                     if (!DesktopWindow.Open(url, out string detail))
                     {
                         AppNotify.Warning(
-                            "桌面窗口没能打开",
-                            $"{detail}。可以改用普通模式，或点「访问酒馆」用浏览器看。");
+                            L.Get("Run.DesktopFail.Title"),
+                            L.F("Run.DesktopFail.Body", detail));
                     }
                 });
             }
@@ -632,7 +662,14 @@ namespace AstraBrew_Launcher.Services
             }
 
             Raise();
-            AddLog(TavernLogKind.Info, force ? "正在强制结束进程树…" : $"正在停止服务（PID {pid}）…");
+            if (force)
+            {
+                AddLogKey(TavernLogKind.Info, "Run.Log.KillingTree");
+            }
+            else
+            {
+                AddLogKey(TavernLogKind.Info, "Run.Log.Stopping", pid);
+            }
 
             if (force)
             {
@@ -643,7 +680,7 @@ namespace AstraBrew_Launcher.Services
             {
                 // 控制台程序没有窗口，taskkill 不带 /F 会直接报「无法终止」：
                 // 那就别再空等一轮超时，立刻升级成强制结束
-                AddLog(TavernLogKind.Info, "进程不响应关闭请求（控制台程序通常如此），改为强制结束。");
+                AddLogKey(TavernLogKind.Info, "Run.Log.NoCloseResponse");
                 KillTree(pid, force: true);
                 await WaitExitAsync(process, TimeSpan.FromSeconds(5)).ConfigureAwait(false);
             }
@@ -653,7 +690,7 @@ namespace AstraBrew_Launcher.Services
 
                 if (!SafeHasExited(process))
                 {
-                    AddLog(TavernLogKind.Warning, $"进程没有在 {GracefulStopTimeout.TotalSeconds:0} 秒内退出，改为强制结束。");
+                    AddLogKey(TavernLogKind.Warning, "Run.Log.StopTimeout", GracefulStopTimeout.TotalSeconds.ToString("0"));
                     KillTree(pid, force: true);
                     await WaitExitAsync(process, TimeSpan.FromSeconds(5)).ConfigureAwait(false);
                 }
@@ -807,7 +844,7 @@ namespace AstraBrew_Launcher.Services
                 && line.Contains("ERR_UNSUPPORTED_ESM_URL_SCHEME", StringComparison.Ordinal))
             {
                 _esmSchemeSeen = true;
-                AddLog(TavernLogKind.Error, ESM_SCHEME_HINT);
+                AddLogKey(TavernLogKind.Error, "Run.Esm.Hint");
             }
 
             // 酒馆自己的输出按「有内容的行」入日志；错误级别靠关键字粗判，
@@ -821,10 +858,7 @@ namespace AstraBrew_Launcher.Services
         }
 
         /// <summary>ESM 路径格式出错时给的说明：说清原因、来源与怎么改。</summary>
-        private const string ESM_SCHEME_HINT =
-            "Node 把 Windows 盘符当成了 URL 协议。ESM 加载器只认 file:// —— "
-            + "这来自某个 --import / --loader 参数传的是文件路径，常见来源是环境变量 NODE_OPTIONS 里"
-            + "别的 Node 工具留下的 --import。启动器会在启动前自动改写；仍报这个错就清掉它再启动。";
+        private static string EsmSchemeHint => L.Get("Run.Esm.Hint");
 
         private static void OnExited(Process process)
         {
@@ -858,7 +892,9 @@ namespace AstraBrew_Launcher.Services
                 if (intentional || code == 0)
                 {
                     FinishStopped();
-                    AddLog(TavernLogKind.Success, intentional ? "服务已停止，端口已释放" : "酒馆进程已退出（代码 0）");
+                    AddLogKey(
+                        TavernLogKind.Success,
+                        intentional ? "Run.Log.Stopped" : "Run.Log.ExitedZero");
                     return;
                 }
 
@@ -868,7 +904,7 @@ namespace AstraBrew_Launcher.Services
                     {
                         State = TavernRunState.Failed,
                         Pid = null,
-                        Error = $"进程退出（代码 {code}）",
+                        Error = L.F("Run.Exit.Error", code),
                         StartedAt = null,
                     };
                 }
@@ -876,21 +912,20 @@ namespace AstraBrew_Launcher.Services
                 DesktopWindow.Close();
 
                 Raise();
-                AddLog(TavernLogKind.Error, $"酒馆进程异常退出（代码 {code}），向上翻看最后几行输出。");
+                AddLogKey(TavernLogKind.Error, "Run.Log.ExitedAbnormal", code);
 
                 // 抓不到的成因就别硬猜：能识别的按真实原因给建议，其余保持通用说明
                 if (_esmSchemeSeen)
                 {
                     AppNotify.Error(
-                        "酒馆没能启动：Node 的模块路径格式不对",
-                        "ESM 加载器把 Windows 路径当成了 URL。检查系统环境变量 NODE_OPTIONS 里的 "
-                        + "--import / --loader，路径必须是 file:// URL；清掉它再启动即可。");
+                        L.Get("Run.Esm.Title"),
+                        L.Get("Run.Esm.Body"));
                     return;
                 }
 
                 AppNotify.Error(
-                    "酒馆异常退出",
-                    $"进程以代码 {code} 结束。控制台里有完整输出，常见原因是端口冲突或依赖缺失。");
+                    L.Get("Run.Crash.Title"),
+                    L.F("Run.Crash.Body", code));
             });
         }
 
@@ -915,8 +950,14 @@ namespace AstraBrew_Launcher.Services
             Raise();
         }
 
-        private static void Fail(string message)
+        /// <summary>
+        /// 启动失败：状态、日志、弹出提示三处一起写。
+        /// 参数是**资源键**而不是成品文字——日志里那一行要能跟着语言变。
+        /// </summary>
+        private static void Fail(string key, params object?[] args)
         {
+            string message = args.Length > 0 ? L.F(key, args) : L.Get(key);
+
             lock (Gate)
             {
                 _queue ??= DispatcherQueue.GetForCurrentThread();
@@ -930,8 +971,8 @@ namespace AstraBrew_Launcher.Services
             }
 
             Raise();
-            AddLog(TavernLogKind.Error, message);
-            AppNotify.Error("酒馆没能启动", message);
+            AddEntry(new TavernLogEntry(DateTime.Now, TavernLogKind.Error, message) { Key = key, Args = args });
+            AppNotify.Error(L.Get("Run.StartFail.Title"), message);
         }
 
         // ==================== 端口 ====================
@@ -942,7 +983,7 @@ namespace AstraBrew_Launcher.Services
         {
             foreach (PortOwner owner in owners)
             {
-                AddLog(TavernLogKind.Warning, $"强制结束占用 {port} 的进程 PID {owner.Pid}（{owner.Name}）");
+                AddLogKey(TavernLogKind.Warning, "Run.Log.KilledPortOwner", port, owner.Pid, owner.Name);
                 KillTree(owner.Pid, force: true);
             }
 
@@ -1009,7 +1050,7 @@ namespace AstraBrew_Launcher.Services
                         continue;
                     }
 
-                    string name = "未知进程";
+                    string name = L.Get("Run.UnknownProcess");
                     try
                     {
                         name = Process.GetProcessById(pid).ProcessName + ".exe";
@@ -1137,7 +1178,7 @@ namespace AstraBrew_Launcher.Services
                 return;
             }
 
-            AddLog(TavernLogKind.Info, $"继承的 NODE_OPTIONS：{inherited}");
+            AddLogKey(TavernLogKind.Info, "Run.Log.InheritedNodeOptions", inherited);
 
             (string? fixedOptions, string? note) = NodeEnvironment.SanitizeNodeOptions(inherited);
 
@@ -1147,8 +1188,8 @@ namespace AstraBrew_Launcher.Services
             }
 
             startInfo.Environment["NODE_OPTIONS"] = fixedOptions;
-            AddLog(TavernLogKind.Warning, note);
-            AddLog(TavernLogKind.Info, $"改写为：{fixedOptions}");
+            AddLogKey(TavernLogKind.Warning, "Miss.NodeEnvNote");
+            AddLogKey(TavernLogKind.Info, "Run.Log.Rewritten", fixedOptions);
         }
 
         /// <summary>回显用的命令行。参数里有空格就加引号，粘到终端里能直接跑。</summary>
@@ -1270,7 +1311,7 @@ namespace AstraBrew_Launcher.Services
         {
             _logs.Clear();
             Raise();
-            AddLog(TavernLogKind.System, "已清空本次会话日志");
+            AddLogKey(TavernLogKind.System, "Run.Log.Cleared");
         }
 
         /// <summary>
@@ -1285,19 +1326,29 @@ namespace AstraBrew_Launcher.Services
             Post(() =>
             {
                 _logs.Clear();
-                _logs.Add(new TavernLogEntry(
-                    DateTime.Now,
-                    TavernLogKind.System,
-                    $"新的启动 · {DateTime.Now:HH:mm:ss}"));
+                _logs.Add(new TavernLogEntry(DateTime.Now, TavernLogKind.System, string.Empty)
+                {
+                    Key = "Run.Log.NewSession",
+                    Args = new object?[] { DateTime.Now.ToString("HH:mm:ss") },
+                });
 
                 Cleared?.Invoke(null, EventArgs.Empty);
             });
         }
 
+        /// <summary>外部输出（酒馆进程的 stdout）：文字就是最终文字，不随语言变。</summary>
         private static void AddLog(TavernLogKind kind, string text)
-        {
-            var entry = new TavernLogEntry(DateTime.Now, kind, text);
+            => AddEntry(new TavernLogEntry(DateTime.Now, kind, text));
 
+        /// <summary>
+        /// 启动器自己写的一行：只记 key 与实参，显示时按当前语言取。
+        /// 换语言后历史日志会跟着重排，不会「上半屏中文下半屏英文」。
+        /// </summary>
+        private static void AddLogKey(TavernLogKind kind, string key, params object?[] args)
+            => AddEntry(new TavernLogEntry(DateTime.Now, kind, string.Empty) { Key = key, Args = args });
+
+        private static void AddEntry(TavernLogEntry entry)
+        {
             Post(() =>
             {
                 _logs.Add(entry);

@@ -25,10 +25,10 @@ namespace AstraBrew_Launcher.Views
 
         private static readonly (string Title, string Description)[] Steps =
         {
-            ("把旧数据搬过来", "以前的聊天和角色能一起搬过来。不搬也行。"),
-            ("先看网络通不通", "能上网、能开网页、能下载，才装得动酒馆。"),
-            ("装好要用的工具", "酒馆跑起来，得先有几个小工具撑着。"),
-            ("选一个酒馆用", "用你装好的，或者让启动器装一份。"),
+            (L.Get("Setup.Step1.Title"), L.Get("Setup.Step1.Hint")),
+            (L.Get("Setup.Step2.Title"), L.Get("Setup.Step2.Hint")),
+            (L.Get("Setup.Step3.Title"), L.Get("Setup.Step3.Hint")),
+            (L.Get("Setup.Step4.Title"), L.Get("Setup.Step4.Hint")),
         };
 
         private readonly OnboardingRailItem[] _rail;
@@ -102,7 +102,7 @@ namespace AstraBrew_Launcher.Views
             Step3.Visibility = step == 3 ? Visibility.Visible : Visibility.Collapsed;
             Step4.Visibility = step == 4 ? Visibility.Visible : Visibility.Collapsed;
 
-            StepEyebrow.Text = $"第 {step} 步，共 {TotalSteps} 步";
+            StepEyebrow.Text = L.F("Setup.Step.Eyebrow", step, TotalSteps);
             StepTitle.Text = Steps[step - 1].Title;
             StepDescription.Text = Steps[step - 1].Description;
 
@@ -127,7 +127,7 @@ namespace AstraBrew_Launcher.Views
             }
             catch (Exception ex)
             {
-                AppNotify.Error("这一步没能准备好", ex.Message);
+                AppNotify.Error(L.Get("Setup.Notify.Failed.Title"), ex.Message);
             }
         }
 
@@ -173,7 +173,7 @@ namespace AstraBrew_Launcher.Views
 
             IOnboardingStep panel = _panels[_step - 1];
 
-            NextButton.Content = _step == TotalSteps ? "完成" : "下一步";
+            NextButton.Content = L.Get(_step == TotalSteps ? "Setup.Action.Finish" : "Setup.Action.Next");
             NextButton.IsEnabled = panel.CanContinue && !panel.IsBusy;
 
             ToolTipService.SetToolTip(NextButton, panel.CanContinue ? null : panel.BlockingReason);

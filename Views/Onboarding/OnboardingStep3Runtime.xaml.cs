@@ -57,17 +57,17 @@ namespace AstraBrew_Launcher.Views.Onboarding
             {
                 if (_busy)
                 {
-                    return "正在检查或安装";
+                    return L.Get("Setup.S3.Blocking.Busy");
                 }
 
                 if (_selected is null)
                 {
-                    return "先选一边";
+                    return L.Get("Setup.S3.Blocking.NoSide");
                 }
 
                 return SelectedProfile is { BasicReady: true }
                     ? null
-                    : "这边还缺点东西，先点「开始安装」";
+                    : L.Get("Setup.S3.Blocking.Missing");
             }
         }
 
@@ -231,7 +231,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             // 版本跟在名字后面：短名称 + 版本读起来是一句「Node.js 22.20.0」
             left.Children.Add(new TextBlock
             {
-                Text = component.Version ?? (component.Ready ? "有了" : "没找到"),
+                Text = component.Version ?? L.Get(component.Ready ? "Setup.S3.Component.Ready" : "Setup.S3.Component.Missing"),
                 FontSize = 10.5,
                 Margin = new Thickness(2, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
@@ -253,7 +253,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
                     : Windows.UI.Color.FromArgb(0x1F, 0xC4, 0x2B, 0x1C)),
                 Child = new TextBlock
                 {
-                    Text = component.Ready ? "好了" : "缺",
+                    Text = L.Get(component.Ready ? "Setup.S3.Pill.Ready" : "Setup.S3.Pill.Missing"),
                     FontSize = 9.5,
                     Foreground = component.Ready
                         ? Res("SystemFillColorSuccessBrush")
@@ -268,7 +268,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 Style = (Style)Application.Current.Resources["OnboardingInfoButtonStyle"],
                 Content = new FontIcon { Glyph = "\uE946", FontSize = 11 },
             };
-            AutomationProperties.SetName(info, $"{component.Name} 是干什么的");
+            AutomationProperties.SetName(info, L.F("Setup.S3.Component.Aria", component.Name));
             info.Click += (_, _) => ShowInfo(info, component);
 
             Grid.SetColumn(info, 2);
@@ -298,7 +298,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             {
                 panel.Children.Add(new TextBlock
                 {
-                    Text = $"版本 {version}",
+                    Text = L.F("Setup.S3.Component.Version", version),
                     FontSize = 11,
                     Foreground = Res("TextFillColorTertiaryBrush"),
                 });
@@ -310,7 +310,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
         private void ApplyPill(Border pill, TextBlock text, RuntimeProfile profile)
         {
-            text.Text = profile.BasicReady ? profile.Summary : "还缺东西";
+            text.Text = profile.BasicReady ? profile.Summary : L.Get("Setup.S3.Pill.StillMissing");
 
             pill.Background = new SolidColorBrush(profile.BasicReady
                 ? Windows.UI.Color.FromArgb(0x1F, 0x0F, 0x7B, 0x0F)
@@ -327,9 +327,9 @@ namespace AstraBrew_Launcher.Views.Onboarding
             }
 
             _package = PackageFull.IsChecked == true ? RuntimePackage.Full : RuntimePackage.Basic;
-            PackageHint.Text = _package == RuntimePackage.Basic
-                ? "只装跑酒馆最少的两样"
-                : "再多装三样，装不齐也能继续";
+            PackageHint.Text = L.Get(_package == RuntimePackage.Basic
+                ? "Setup.S3.Package.Basic.Label"
+                : "Setup.S3.Package.Full.Label");
 
             UpdateActionRow();
         }
@@ -361,7 +361,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             if (profile is null)
             {
-                InstallButtonText.Text = "开始安装";
+                InstallButtonText.Text = L.Get("Setup.S3.Action.Install");
                 SystemHelpButton.Visibility = Visibility.Collapsed;
                 return;
             }
@@ -379,17 +379,17 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             InstallButtonText.Text = !builtin
                 ? profile.BasicReady && profile.FullReady
-                    ? "重装一遍"
+                    ? L.Get("Setup.S3.Action.Reinstall")
                     : profile.BasicReady
-                        ? "补上缺的"
-                        : "开始安装"
+                        ? L.Get("Setup.S3.Action.FillMissing")
+                        : L.Get("Setup.S3.Action.Install")
                 : canReinstall
-                    ? "重装一遍"
+                    ? L.Get("Setup.S3.Action.Reinstall")
                     : nothingToInstall
-                        ? "已经装齐了"
+                        ? L.Get("Setup.S3.Action.AllSet")
                         : profile.BasicReady
-                            ? "补上缺的"
-                            : "开始安装";
+                            ? L.Get("Setup.S3.Action.FillMissing")
+                            : L.Get("Setup.S3.Action.Install");
 
             // 自动安装只有内置侧支持：系统侧点它只会弹一张说明，摆成可点等于骗人
             InstallButton.IsEnabled = !_busy && builtin && !nothingToInstall;
@@ -397,9 +397,9 @@ namespace AstraBrew_Launcher.Views.Onboarding
             ToolTipService.SetToolTip(
                 InstallButton,
                 !builtin
-                    ? "系统环境只能自己装，装完点「再查一次」"
+                    ? L.Get("Setup.S3.Tip.System")
                     : nothingToInstall
-                        ? "当前这一包已经齐了，没有要装的"
+                        ? L.Get("Setup.S3.Tip.Nothing")
                         : null);
 
             SystemHelpButton.Visibility = profile is null || builtin
@@ -446,9 +446,11 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             if (tasks.Count == 0)
             {
-                AppNotify.Success("这边已经齐了", _package == RuntimePackage.Basic
-                    ? "最少的两样都在，可以继续了。"
-                    : "该有的都装好了。");
+                AppNotify.Success(
+                    L.Get("Setup.S3.Notify.Ready.Title"),
+                    L.Get(_package == RuntimePackage.Basic
+                        ? "Setup.S3.Notify.Ready.Basic"
+                        : "Setup.S3.Notify.Ready.Full"));
                 return;
             }
 
@@ -459,7 +461,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
             {
                 // 清单只有 Node.js 时别让人以为漏了：把「当前包的范围」写在弹窗顶上
                 string? note = _package == RuntimePackage.Basic
-                    ? "这次只装基础包（Node.js + npm）。Git、Caddy、PM2 在下面的「一次装齐」里。"
+                    ? L.Get("Setup.S3.Note.Basic")
                     : null;
 
                 await InstallTaskDialog.ShowAsync(XamlRoot, tasks, autoStart: true, note: note);
@@ -484,9 +486,9 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             body.Children.Add(new TextBlock
             {
-                Text = missing.Count == 0
-                    ? "看起来都齐了，点「再查一次」刷新下。"
-                    : "启动器不动你的系统，装完回来点「再查一次」。",
+                Text = L.Get(missing.Count == 0
+                    ? "Setup.S3.System.AllSet"
+                    : "Setup.S3.System.Missing"),
                 FontSize = 12,
                 TextWrapping = TextWrapping.Wrap,
             });
@@ -505,10 +507,10 @@ namespace AstraBrew_Launcher.Views.Onboarding
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = "这几样要你自己装",
+                Title = L.Get("Setup.S3.System.Dialog.Title"),
                 Content = body,
-                PrimaryButtonText = "我装好了",
-                CloseButtonText = "以后再说",
+                PrimaryButtonText = L.Get("Setup.S3.System.Dialog.Primary"),
+                CloseButtonText = L.Get("Setup.S3.System.Dialog.Close"),
                 DefaultButton = ContentDialogButton.Primary,
             };
             dialog.Resources["ControlCornerRadius"] = new CornerRadius(8);

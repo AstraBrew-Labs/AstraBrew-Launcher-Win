@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -44,7 +45,23 @@ namespace AstraBrew_Launcher.Views.Controls
             Content = _track;
 
             Rebuild();
+
+            // 选项文案是按语言取的：换语言后自己重建一遍，页面不必逐个通知。
+            //
+            // Loaded 里还要**重建一次**：控件被折叠/移出可视树时 Unloaded 会退订，
+            // 期间发生的语言切换它收不到；等它再显示出来，文案就还是上一种语言
+            // （踩过：引导第 1 步的「从别的启动器导入 / 从旧版导入」在英文界面里仍是中文）。
+            Loaded += (_, _) =>
+            {
+                LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+                LanguageSwitch.LanguageChanged += OnLanguageChanged;
+                Rebuild();
+            };
+
+            Unloaded += (_, _) => LanguageSwitch.LanguageChanged -= OnLanguageChanged;
         }
+
+        private void OnLanguageChanged(object? sender, EventArgs e) => Rebuild();
 
         /// <summary>选项文案，英文逗号分隔。</summary>
         public static readonly DependencyProperty OptionsProperty = DependencyProperty.Register(
@@ -57,6 +74,23 @@ namespace AstraBrew_Launcher.Views.Controls
         {
             get => (string)GetValue(OptionsProperty);
             set => SetValue(OptionsProperty, value);
+        }
+
+        /// <summary>
+        /// 选项文案的资源 key 前缀（与 <see cref="Options"/> 二选一）。
+        /// 值形如 <c>Settings.Language.Option</c>，实际取 <c>.Count</c> 与 <c>.0/.1/.2</c>——
+        /// 用计数而不是分隔串解析，翻译里出现逗号也不会把一段拆成两段。
+        /// </summary>
+        public static readonly DependencyProperty OptionsKeyProperty = DependencyProperty.Register(
+            nameof(OptionsKey),
+            typeof(string),
+            typeof(SegmentedPicker),
+            new PropertyMetadata(string.Empty, (d, e) => ((SegmentedPicker)d).Rebuild()));
+
+        public string OptionsKey
+        {
+            get => (string)GetValue(OptionsKeyProperty);
+            set => SetValue(OptionsKeyProperty, value);
         }
 
         /// <summary>与选项一一对应的图标码点（十六进制，不含 &amp;#x），留空则不显示图标。</summary>
@@ -85,12 +119,41 @@ namespace AstraBrew_Launcher.Views.Controls
             set => SetValue(SelectedIndexProperty, value);
         }
 
+        /// <summary>选项文案：优先按资源 key 取，没有 key 才走逗号分隔的字面量。</summary>
+        private IReadOnlyList<string> ResolveLabels()
+        {
+            if (OptionsKey is not { Length: > 0 } key)
+            {
+                return Split(Options);
+            }
+
+            if (int.TryParse(L.GetOrEmpty(key + ".Count"), out int count) && count > 0)
+            {
+                var items = new List<string>(count);
+                for (int i = 0; i < count; i++)
+                {
+                    items.Add(L.Get($"{key}.{i}"));
+                }
+
+                return items;
+            }
+
+            // 没写 .Count 时按单条处理，至少不会整块空掉
+            return new[] { L.Get(key) };
+        }
+
+        /// <summary>
+        /// 换语言后重刷选项文案。选中项保持不变（重建时会按 SelectedIndex 重新点亮），
+        /// 所以不会因为换了个语言把用户的选择弄丢。
+        /// </summary>
+        public void RefreshText() => Rebuild();
+
         private void Rebuild()
         {
             _host.Children.Clear();
             _buttons.Clear();
 
-            var labels = Split(Options);
+            var labels = ResolveLabels();
             var glyphs = Split(Glyphs);
 
             for (var i = 0; i < labels.Count; i++)

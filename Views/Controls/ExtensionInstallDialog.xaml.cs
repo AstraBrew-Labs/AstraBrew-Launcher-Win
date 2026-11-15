@@ -35,6 +35,12 @@ namespace AstraBrew_Launcher.Views.Controls
         public ExtensionInstallDialog()
         {
             InitializeComponent();
+
+            // Title 是 object 型，附加属性只认 string；两个按钮文案又是同一个附加属性，
+            // 一个元素上只能挂一次，所以这三处一律在代码里给初值（后续由状态覆盖）。
+            Title = L.Get("Ext.Action.Install");
+            CloseButtonText = L.Get("Common.Action.Cancel.Content");
+            PrimaryButtonText = L.Get("Eid.Action.Start");
         }
 
         /// <summary>装到哪个实例；页面打开弹窗时传入，默认取当前实例。</summary>
@@ -77,8 +83,8 @@ namespace AstraBrew_Launcher.Views.Controls
 
             // 有问题的包没移除时不显示数量：按钮文字说「装 2 个」却点了报错，很别扭
             PrimaryButtonText = OfflineTab.IsChecked == true && ready > 0 && !blocked
-                ? $"安装 {ready} 个"
-                : "开始安装";
+                ? L.F("Eid.ReadyCount", ready)
+                : L.Get("Eid.Action.Start");
         }
 
         // ==================== Git ====================
@@ -88,7 +94,7 @@ namespace AstraBrew_Launcher.Views.Controls
             // 地址一变，之前检测出来的分支就不可信了。
             BranchBox.Items.Clear();
             BranchBox.SelectedIndex = -1;
-            BranchBox.PlaceholderText = "先检测分支，再选择要安装的分支";
+            BranchBox.PlaceholderText = L.Get("Eid.Branch.Placeholder");
             HideError();
         }
 
@@ -96,13 +102,13 @@ namespace AstraBrew_Launcher.Views.Controls
         {
             if (_installing || !LooksLikeRepository(UrlBox.Text))
             {
-                ShowError("地址不像一个 Git 仓库，需要形如 https://host/owner/repo.git");
+                ShowError(L.Get("Eid.Error.NotRepo"));
                 return;
             }
 
             HideError();
             DetectButton.IsEnabled = false;
-            DetectButton.Content = "检测中…";
+            DetectButton.Content = L.Get("Eid.Action.Detecting");
 
             try
             {
@@ -114,7 +120,7 @@ namespace AstraBrew_Launcher.Views.Controls
                 {
                     // 私有仓库、或者网络不通：给个 main 让用户还能继续试
                     BranchBox.Items.Add("main");
-                    ShowError("没能列出远端分支（私有仓库或网络不通），先按 main 试；装不上时请检查地址与网络。");
+                    ShowError(L.Get("Eid.Error.BranchList"));
                 }
                 else
                 {
@@ -129,7 +135,7 @@ namespace AstraBrew_Launcher.Views.Controls
             finally
             {
                 DetectButton.IsEnabled = true;
-                DetectButton.Content = "检测分支";
+                DetectButton.Content = L.Get("Eid.Action.Detect");
             }
         }
 
@@ -183,10 +189,10 @@ namespace AstraBrew_Launcher.Views.Controls
             int broken = _packages.Count - ready;
 
             OfflineText.Text = _packages.Count == 0
-                ? "尚未选择离线包"
+                ? L.Get("Eid.Package.None")
                 : broken == 0
-                    ? $"已选 {_packages.Count} 个，全部可以安装"
-                    : $"已选 {_packages.Count} 个：{ready} 个可安装，{broken} 个有问题（先移除再开始）";
+                    ? L.F("Eid.Package.ReadyAll", _packages.Count)
+                    : L.F("Eid.Package.Mixed", _packages.Count, ready, broken);
 
             UpdatePrimaryButton();
         }
@@ -205,7 +211,7 @@ namespace AstraBrew_Launcher.Views.Controls
 
             text.Children.Add(new TextBlock
             {
-                Text = package.Valid ? $"可以安装 · 目录名 {package.Folder}" : package.Error ?? "预检未通过",
+                Text = package.Valid ? L.F("Eid.Package.Ok", package.Folder) : package.Error ?? L.Get("ExtS.Package.PrecheckFailed"),
                 FontSize = 11,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Res(package.Valid ? "SystemFillColorSuccessBrush" : "SystemFillColorCriticalBrush",
@@ -228,8 +234,8 @@ namespace AstraBrew_Launcher.Views.Controls
                 remove.Style = subtle;
             }
 
-            ToolTipService.SetToolTip(remove, "从这批里移除");
-            AutomationProperties.SetName(remove, "移除 " + package.FileName);
+            ToolTipService.SetToolTip(remove, L.Get("Eid.Package.Remove.Tip"));
+            AutomationProperties.SetName(remove, L.F("Eid.Package.Remove.Name", package.FileName));
             remove.Click += RemovePackage_Click;
 
             var row = new Grid { ColumnSpacing = 8, Padding = new Thickness(0, 3, 0, 3) };
@@ -267,14 +273,14 @@ namespace AstraBrew_Launcher.Views.Controls
             {
                 if (!LooksLikeRepository(UrlBox.Text))
                 {
-                    ShowError("先填写一个可用的仓库地址。");
+                    ShowError(L.Get("Eid.Error.NoRepoUrl"));
                     args.Cancel = true;
                     return;
                 }
 
                 if (BranchBox.SelectedItem is null)
                 {
-                    ShowError("先点「检测分支」，再选择要安装的分支。");
+                    ShowError(L.Get("Eid.Error.NoBranch"));
                     args.Cancel = true;
                     return;
                 }
@@ -283,7 +289,7 @@ namespace AstraBrew_Launcher.Views.Controls
             {
                 if (_packages.Count == 0)
                 {
-                    ShowError("先选择至少一个 .zip 离线包。");
+                    ShowError(L.Get("Eid.Error.NoPackage"));
                     args.Cancel = true;
                     return;
                 }
@@ -291,7 +297,7 @@ namespace AstraBrew_Launcher.Views.Controls
                 // 有一个包不合法就整批不动：半批装完再回滚，比直接拦住更难收拾
                 if (_packages.Any(package => !package.Valid))
                 {
-                    ShowError("列表里有无法安装的包，先点右侧 ✕ 移除它们再开始。");
+                    ShowError(L.Get("Eid.Error.BrokenPackages"));
                     args.Cancel = true;
                     return;
                 }
@@ -312,8 +318,8 @@ namespace AstraBrew_Launcher.Views.Controls
             InstallBar.Value = 0;
             PercentText.Text = "0%";
             LogText.Text = string.Empty;
-            PhaseText.Text = "准备安装…";
-            PhaseHintText.Text = "安装期间请勿关闭窗口";
+            PhaseText.Text = L.Get("Eid.Phase.Preparing");
+            PhaseHintText.Text = L.Get("Eid.Hint.Hold");
 
             // 安装期间不给「关闭」入口：半装完的目录留在磁盘上比失败更糟
             PrimaryButtonText = string.Empty;
@@ -343,7 +349,7 @@ namespace AstraBrew_Launcher.Views.Controls
                 InstallBar.Value = step.Percent;
                 PercentText.Text = $"{(int)Math.Round(step.Percent)}%";
                 PhaseText.Text = step.Phase;
-                PhaseHintText.Text = "安装期间请勿关闭窗口";
+                PhaseHintText.Text = L.Get("Eid.Hint.Hold");
 
                 if (step.LogLine is { Length: > 0 } line)
                 {
@@ -359,15 +365,15 @@ namespace AstraBrew_Launcher.Views.Controls
 
             if (!result.Ok)
             {
-                Fail("安装失败", result.Error ?? "未知错误");
+                Fail(L.Get("Eid.Fail.Title"), result.Error ?? L.Get("Eid.Error.Unknown"));
                 return;
             }
 
             InstallBar.Value = 100;
             PercentText.Text = "100%";
-            PhaseText.Text = "安装完成";
-            PhaseHintText.Text = "扩展已启用，可在列表中关闭";
-            AppendLog($"✓ 已写入 {TavernExtensions.ThirdPartyRoot(Target)}");
+            PhaseText.Text = L.Get("Eid.Phase.Done");
+            PhaseHintText.Text = L.Get("Eid.Hint.Done");
+            AppendLog(L.F("Eid.Log.Written", TavernExtensions.ThirdPartyRoot(Target)));
 
             Finish(new[] { result.Folder });
         }
@@ -381,8 +387,8 @@ namespace AstraBrew_Launcher.Views.Controls
                 PercentText.Text = $"{(int)Math.Round(Math.Clamp(step.Percent, 0, 100))}%";
                 PhaseText.Text = step.Phase;
                 PhaseHintText.Text = total > 1
-                    ? $"第 {Math.Min(step.Index + 1, total)}/{total} 个 · 整批进度"
-                    : "安装期间请勿关闭窗口";
+                    ? L.F("Eid.Phase.Batch", Math.Min(step.Index + 1, total), total)
+                    : L.Get("Eid.Hint.Hold");
 
                 if (step.LogLine is { Length: > 0 } line)
                 {
@@ -402,21 +408,21 @@ namespace AstraBrew_Launcher.Views.Controls
 
             if (result.Installed.Count == 0)
             {
-                Fail("一个都没装上", result.Failed.Count > 0 ? result.Failed[0].Error : "未知错误");
+                Fail(L.Get("Eid.Fail.None.Title"), result.Failed.Count > 0 ? result.Failed[0].Error : L.Get("Eid.Error.Unknown"));
                 return;
             }
 
             InstallBar.Value = 100;
             PercentText.Text = "100%";
-            PhaseText.Text = result.Failed.Count == 0 ? "全部安装完成" : "部分安装完成";
-            PhaseHintText.Text = $"成功 {result.Installed.Count} 个 · 失败 {result.Failed.Count} 个";
-            AppendLog($"✓ 已写入 {TavernExtensions.ThirdPartyRoot(Target)}");
+            PhaseText.Text = L.Get(result.Failed.Count == 0 ? "Eid.Phase.AllDone" : "Eid.Phase.Partial");
+            PhaseHintText.Text = L.F("Eid.Hint.Summary", result.Installed.Count, result.Failed.Count);
+            AppendLog(L.F("Eid.Log.Written", TavernExtensions.ThirdPartyRoot(Target)));
 
             if (result.Failed.Count > 0)
             {
                 // 有失败就留在进度面板上：日志里有具体原因，用户可以直接对照重试
-                PhaseText.Text = "部分安装完成";
-                CloseButtonText = "关闭";
+                PhaseText.Text = L.Get("Eid.Phase.Partial");
+                CloseButtonText = L.Get("Common.Action.Close.Content");
                 InstalledNames = result.Installed;
                 Installed?.Invoke(this, EventArgs.Empty);
                 return;
@@ -430,11 +436,11 @@ namespace AstraBrew_Launcher.Views.Controls
             InstallBar.Value = 0;
             PercentText.Text = "—";
             PhaseText.Text = title;
-            PhaseHintText.Text = "关掉弹窗，修正后重试";
+            PhaseHintText.Text = L.Get("Eid.Hint.FixRetry");
             AppendLog("✗ " + reason);
 
             // 失败时停在进度面板上：日志里有原始输出，比一句「失败」有用得多
-            CloseButtonText = "关闭";
+            CloseButtonText = L.Get("Common.Action.Close.Content");
         }
 
         private void Finish(IReadOnlyList<string> installed)

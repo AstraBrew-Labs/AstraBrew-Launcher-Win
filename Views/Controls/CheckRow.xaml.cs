@@ -1,3 +1,5 @@
+﻿using System;
+using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -22,9 +24,60 @@ namespace AstraBrew_Launcher.Views.Controls
     /// <summary>环境检测行：图标 + 名称 + 版本 + 状态胶囊。</summary>
     public sealed partial class CheckRow : UserControl
     {
+        private string _titleKey = string.Empty;
+        private string _detailKey = string.Empty;
+
         public CheckRow()
         {
             InitializeComponent();
+
+            // Loaded 里补一次 ApplyKeys：控件被移出可视树时 Unloaded 会退订，
+            // 这期间的语言切换收不到，再显示出来就会停在上一种语言。
+            Loaded += (_, _) =>
+            {
+                LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+                LanguageSwitch.LanguageChanged += OnLanguageChanged;
+                ApplyKeys();
+            };
+
+            Unloaded += (_, _) => LanguageSwitch.LanguageChanged -= OnLanguageChanged;
+        }
+
+        private void OnLanguageChanged(object? sender, EventArgs e) => ApplyKeys();
+
+        /// <summary>标题的资源键。设了它就以它为准。</summary>
+        public string TitleKey
+        {
+            get => _titleKey;
+            set
+            {
+                _titleKey = value;
+                ApplyKeys();
+            }
+        }
+
+        /// <summary>副标题（检测对象）的资源键。</summary>
+        public string DetailKey
+        {
+            get => _detailKey;
+            set
+            {
+                _detailKey = value;
+                ApplyKeys();
+            }
+        }
+
+        private void ApplyKeys()
+        {
+            if (_titleKey.Length > 0)
+            {
+                Title = L.Get(_titleKey);
+            }
+
+            if (_detailKey.Length > 0)
+            {
+                Detail = L.Get(_detailKey);
+            }
         }
 
         /// <summary>Segoe Fluent Icons 字形。</summary>

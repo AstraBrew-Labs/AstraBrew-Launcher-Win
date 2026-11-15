@@ -34,6 +34,12 @@
       AssemblyVersion / FileVersion 仍是纯数字 0.3.0.0 —— 那些字段不接受字母，别指望它们带后缀。
       界面上显示的是 InformationalVersion 去掉 +sha 的那一截（见 BuildChannelInfo.Version）。
     -->
+    <!--
+      PRI 的默认语言 = 源语言。缺 en-US 条目时 MRT 会回退到这里，而不是空白。
+      注意：这只影响 resw 的解析，跟 .NET 的 NeutralLanguage（给 resx / 附属程序集用）不是一回事。
+    -->
+    <DefaultLanguage>zh-CN</DefaultLanguage>
+
     <VersionPrefix>0.3.0</VersionPrefix>
 
     <!--  同一版本的迭代次数：只改这一个数，四个渠道的后缀一起动  -->
@@ -80,6 +86,12 @@
   <ItemGroup>
     <Manifest Include="$(ApplicationManifest)" />
   </ItemGroup>
+
+  <!--
+    界面文案资源放在 Strings/<语言>/Resources.resw。
+    这里**不要**再写 <PRIResource Include="Strings\**\*.resw" />：
+    BuildTools.MSIX 已经默认把 **/*.resw 收成 PRIResource，再加一条会撞 NETSDK1022「重复项」。
+  -->
 
   <!--
     渠道标记：用 AssemblyMetadata 而不是 #if 常量。
