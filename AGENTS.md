@@ -68,6 +68,82 @@ dotnet build "AstraBrew Launcher.csproj" -c Release -p:Platform=x64
   关于页主卡那三枚（版本 / 渠道 / 架构）同理，纵向内边距统一取 `1,2`
   ——版本胶囊原来是 `2,3`，比旁边两枚高 2 px。
 
+## 打包（安装包 / 免安装包）
+
+一条命令出三件套，产物按渠道分目录放（**每次打包先把目标目录清空**）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\package.ps1 -Configuration Debug
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\package.ps1 -Configuration Release
+# 可选 -Platform arm64 / x86
+```
+
+输出到 `dist\<配置名>\build\`（`dist\Debug\build`、`dist\Beta\build`……），每个渠道一个目录，
+根目录不再散落产物目录（整个 `dist/` 已进 `.gitignore`）：
+
+| 文件 | 用途 |
+|---|---|
+| `AstraBrewLauncher-<版本>-win-<架构>.zip` | 免安装包，**更新版本用它**：解压出来就是 exe，整目录覆盖即可 |
+| `AstraBrewLauncher-<版本>-win-<架构>.msi` | MSI 安装包（per-user，装到 `%LocalAppData%\Programs\AstraBrew Launcher`，免管理员） |
+| `AstraBrewLauncher-<版本>-win-<架构>-setup.exe` | MSI 外面那层 Burn 引导程序，双击装、带进度与许可页 |
+| `SHA256SUMS.txt` / `build-info.json` | 校验与元数据，更新源直接读 `build-info.json` |
+
+- 打包用的 WiX 是**仓库里的本地工具**（`dotnet tool`，见 `.config/dotnet-tools.json`），
+  版本锁在 **5.0.2**。**不要升到 7.x**：v7 起要先接受 OSMF 收费条款（WIX7015），
+  而 5.x 仍然免费（MS-RL）。`setup.exe` 需要的 Burn 扩展由脚本自己补：
+  `wix extension add -g WixToolset.BootstrapperApplications.wixext/5.0.2`（版本号必须跟工具一致，
+  装成 7.x 会报 WIX6101）。
+- **分发包一律自包含**：脚本强制 `--self-contained true -p:WindowsAppSDKSelfContained=true`，
+  用户不用先装 .NET 运行时和 Windows App Runtime。项目里 Release 保持框架依赖是为了走 MSIX/商店，
+  两者不冲突——只有打包这条链路强制自包含。
+- **`PublishTrimmed=false` 是硬要求**：非 Debug 配置在 csproj 里开了裁剪，但 WinUI 的资源加载走反射，
+  裁完启动时找不到资源直接崩。脚本显式关掉，别把它删掉。
+- 路径与命名：`AstraBrewLauncher-<ProductVersion>-win-<rid>`，版本号取自发布出来那份 dll 的
+  `ProductVersion`（去掉 `+<sha>`）。MSI 的 `ProductVersion` 只能是纯数字 `a.b.c`，渠道后缀与迭代号进不了 MSI；
+  Bundle 要四段，脚本补 `.0`。
+- 真正的安装逻辑全在 `installer/Package.wxs`：文件表用 `<Files Include="$(var.PublishDir)\**" />`
+  **自动生成**，子目录（`Assets\`、语言资源）原样保留，新增资产不用改 wxs。
+  `installer/Bundle.wxs` 只负责把 MSI 串起来，许可读线上那份（`LicenseUrl`），包里不带 rtf。
+- **`AstraBrew Launcher.exe` 在跑的时候打不了包**：输出目录被占用，PRI 生成会以 PRI210 失败
+  （报错信息看不出是这个原因）。脚本开头会先查进程并直接提示。
+- 已知无害告警：`wix msi validate` 会刷一片 ICE91（per-user 目录不随 ALLUSERS 变化），可以忽略。
+- 脚本用 **UTF-8 with BOM** 存（Windows PowerShell 5.1 不带 BOM 会按 GBK 读，中文全乱），
+  改完记得确认 BOM 还在。
+
+## 私有协议 `launcher-astrabrew://`
+
+浏览器里点一个链接就能把启动器唤起来（文档站、下载页的「打开启动器」按钮就靠它）。
+注册表结构是 Windows 认的那一套，写在 **HKCU**（不需要管理员）：
+
+```
+HKCU\Software\Classes\launcher-astrabrew
+    (默认)                       = URL:AstraBrew Launcher Protocol
+    URL Protocol                 = ""            ← 空字符串，缺了它 ShellExecute 不认
+    DefaultIcon\(默认)            = "<exe>",0
+    shell\open\command\(默认)     = "<exe>" "%1"
+```
+
+两条注册路径，**同一份结构**，不要各写一套：
+
+| 渠道 | 谁注册 | 谁删除 |
+|---|---|---|
+| 安装包（MSI / setup.exe） | MSI 的 `UriSchemeRegistration` 组件（`installer/Package.wxs`） | 卸载时 MSI 自动删（keypath 是根键默认值，整棵树随之清掉） |
+| 免安装包（zip） | 进程启动时 `UriScheme.EnsureRegistered()` 自查补写 | 不删（便携版没有卸载概念） |
+
+- **便携版不抢占有效注册**：如果已有 command 指向的 exe 还在盘上（多半是装好的 MSI 版），原样留着；
+  只有「没注册」或「指向已删除的旧路径（文件夹被挪走 / 被删）」时才按当前 exe 重写。
+  注册表写不进去（组策略）只该让唤起失效，不许挡住启动——所以整段 `try/catch` 静默。
+- **单实例走「互斥量 + 命名管道」**（`Services/SingleInstance.cs`），不用 WinAppSDK 的 `AppInstance`：
+  后者对没有包身份的 unpackaged 构建并不可靠。带链接启动时若已有实例在跑，第二个进程把链接递过去后
+  **直接退出**，绝不多开窗口；**不带参数的第二次启动仍然照常开新窗口**（保持原有行为，别顺手改成单实例）。
+- 路由就是导航项 Tag：`dashboard / tavern / versions / extensions / resources / workbench / console /
+  settings / about`；`open`、`home`、`index` 都当仪表盘。**未知路由只前置窗口、不切页**——
+  任何网页都能把我们叫起来，但它没资格把用户从正在做的事上带走。
+- 也不要在协议里做有副作用的动作（启动/停止酒馆、安装组件）：一条链接就能触发，风险不对等。
+- 前台化必须 `Activate()` **再加** `SetForegroundWindow`（`MainWindow.BringToFront`）：
+  从浏览器唤起时我们是「被别的进程拉起来的」，只 Activate 往往只在任务栏闪一下。
+- 实测过的四种情形：链接冷启动落页、运行中转发切页、未知路由不动、指向失效路径的自愈。
+
 ## 多语言（中 / 英）与文案规范
 
 ### 存储：`Strings/<语言>/Resources.resw`

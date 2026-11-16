@@ -63,9 +63,34 @@ namespace AstraBrew_Launcher
 
         protected override void OnLaunched(LaunchActivatedEventArgs args)
         {
+            // 浏览器点 launcher-astrabrew:// 时，Windows 会把链接当命令行参数塞进来
+            string? deepLink = UriScheme.FindInArgs(Environment.GetCommandLineArgs());
+
+            // 免安装版没有安装程序，协议注册靠这里每次启动自查一遍（已安装版由 MSI 负责）
+            UriScheme.EnsureRegistered();
+
+            // 带链接启动、而已经有一个实例在跑：把链接递过去，本进程直接退场——
+            // 绝不能让浏览器点一下链接就多出一个窗口。
+            if (!SingleInstance.TryAcquire() &&
+                deepLink is { Length: > 0 } &&
+                SingleInstance.TrySend(deepLink))
+            {
+                Environment.Exit(0);
+                return;
+            }
+
             var window = new MainWindow();
             MainWindow = window;
             window.Activate();
+
+            // 主实例蹲在管道上收别人递来的链接；回调在后台线程，切回 UI 线程再动视觉树
+            SingleInstance.Listen(message =>
+                window.DispatcherQueue.TryEnqueue(() => window.HandleDeepLink(message)));
+
+            if (deepLink is { Length: > 0 })
+            {
+                window.HandleDeepLink(deepLink);
+            }
         }
 
         /// <summary>把未处理异常写到 %Temp%/astrabrew-launcher/crash.log（尽力而为，绝不二次抛）。</summary>

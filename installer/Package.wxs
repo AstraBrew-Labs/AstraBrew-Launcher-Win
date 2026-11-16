@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSI 定义（per-user 安装，不需要管理员）。
+
+  由 tools/package.ps1 调用，参数全部从命令行传进来：
+    -d PublishDir     发布目录（已裁剪好的待打包文件树）
+    -d ProductVersion MSI 的 ProductVersion，必须是纯数字 a.b.c
+    -d DisplayName    产品显示名（非正式版带渠道后缀，方便测试机分辨装了哪一条线）
+    -d IconPath       控制面板「应用和功能」里那条记录用的图标
+
+  文件表不手写：<Files Include="...\**" /> 按目录树自动生成组件，
+  子目录结构原样搬到安装目录（Assets\、字体、语言资源都在子目录里）。
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Package
+      Name="$(var.DisplayName)"
+      Manufacturer="AstraBrew Labs"
+      Version="$(var.ProductVersion)"
+      UpgradeCode="8E4C1D5A-2F3B-4C7D-9A18-6B2E5F0C7D31"
+      Scope="perUser"
+      Compressed="yes"
+      InstallerVersion="500">
+
+    <SummaryInformation
+        Description="$(var.DisplayName)"
+        Manufacturer="AstraBrew Labs" />
+
+    <!--  同一条渠道升版直接覆盖；装更老的包时拦住，免得把新文件换成旧的  -->
+    <MajorUpgrade DowngradeErrorMessage="已经装了更新的版本，请先在「设置 → 应用 → 已安装的应用」里卸载它。" />
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="medium" />
+
+    <Icon Id="AppIcon" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <!--  免管理员：装到 %LocalAppData%\Programs\AstraBrew Launcher  -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="AstraBrew Launcher" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ShortcutFolder" Name="AstraBrew Launcher" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="$(var.DisplayName)" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="UriSchemeRegistration" />
+    </Feature>
+
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)\**" />
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <Component Id="StartMenuShortcut" Directory="ShortcutFolder" Guid="3A7F9C22-5D14-4B8E-A6C3-91E0F2B45D77">
+      <Shortcut
+          Id="AppShortcut"
+          Name="AstraBrew Launcher"
+          Description="星酿启动器"
+          Target="[INSTALLFOLDER]AstraBrew Launcher.exe"
+          WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveShortcutFolder" On="uninstall" />
+      <!--  快捷方式组件需要一个 keypath，卸载时才知道该删哪个键  -->
+      <RegistryValue
+          Root="HKCU"
+          Key="Software\AstraBrew Labs\AstraBrew Launcher"
+          Name="Installed"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+    </Component>
+  </Fragment>
+
+  <!--
+    私有协议 launcher-astrabrew://：浏览器里点链接就能把启动器叫起来。
+
+    结构与「免安装版自查注册」完全一致（Services/UriScheme.cs），两个渠道互不冲突：
+    安装版由 MSI 写、卸载时由 MSI 删；便携版启动时只在自己缺失或指向旧路径时才补写。
+
+    HKCU 而不是 HKLM：本包是 per-user 安装，写用户配置单元不需要管理员。
+  -->
+  <Fragment>
+    <Component Id="UriSchemeRegistration" Directory="INSTALLFOLDER" Guid="7D2E9B41-6C58-4F0A-B3D7-58E1A2C64F93">
+      <RegistryKey Root="HKCU" Key="Software\Classes\launcher-astrabrew">
+        <!--  keypath 取根键的默认值：组件卸载时整棵树随之清掉  -->
+        <RegistryValue Type="string" Value="URL:AstraBrew Launcher Protocol" KeyPath="yes" />
+        <!--  空字符串这个值必须有，ShellExecute 靠它认「这是一个能被浏览器调起的协议」  -->
+        <RegistryValue Name="URL Protocol" Type="string" Value="" />
+
+        <RegistryKey Key="DefaultIcon">
+          <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]AstraBrew Launcher.exe&quot;,0" />
+        </RegistryKey>
+
+        <RegistryKey Key="shell\open\command">
+          <RegistryValue Type="string" Value="&quot;[INSTALLFOLDER]AstraBrew Launcher.exe&quot; &quot;%1&quot;" />
+        </RegistryKey>
+      </RegistryKey>
+    </Component>
+  </Fragment>
+
+</Wix>

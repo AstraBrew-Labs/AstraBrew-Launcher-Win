@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using AstraBrew_Launcher.Services;
 using AstraBrew_Launcher.Views;
 using Microsoft.UI;
@@ -10,6 +11,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.UI;
+using WinRT.Interop;
 
 namespace AstraBrew_Launcher
 {
@@ -207,6 +209,56 @@ namespace AstraBrew_Launcher
         /// 再关窗口。少了这一步，页面可能还挂在静态事件的委托链上，持有已关闭窗口的控件。
         /// </summary>
         public void DetachContent() => ContentFrame.Content = null;
+
+        /// <summary>
+        /// 处理 <c>launcher-astrabrew://</c> 唤起：先把窗口拎到前台，再按路由切页面。
+        ///
+        /// 路由就是导航项 Tag（<c>dashboard / tavern / versions / extensions / resources /
+        /// console / settings / about</c>）。路由为空或不是已知页面时只前置窗口、不改当前页——
+        /// 网页可以随便写一个链接把我们叫起来，但它没有资格把用户从正在做的事情上带走。
+        /// </summary>
+        public void HandleDeepLink(string uriText)
+        {
+            BringToFront();
+
+            string route = UriScheme.Route(uriText);
+            if (route is "open" or "home" or "index")
+            {
+                route = "dashboard";
+            }
+
+            if (route.Length > 0 && PageMap.ContainsKey(route))
+            {
+                NavigateTo(route);
+            }
+        }
+
+        /// <summary>
+        /// 把窗口拎到最前面：最小化先还原，再 Activate + SetForegroundWindow。
+        /// 从浏览器唤起时我们是「被别的进程拉起来的」，光 Activate 经常只是任务栏闪一下，
+        /// 必须补一次 SetForegroundWindow 才能真正拿到前台。
+        /// </summary>
+        public void BringToFront()
+        {
+            try
+            {
+                if (AppWindow.Presenter is OverlappedPresenter presenter &&
+                    presenter.State == OverlappedPresenterState.Minimized)
+                {
+                    presenter.Restore();
+                }
+
+                Activate();
+                SetForegroundWindow(WindowNative.GetWindowHandle(this));
+            }
+            catch (Exception)
+            {
+                // 窗口正在销毁：忽略，下一次唤起会重来
+            }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
 
         /// <summary>让左侧导航的选中项与当前路由保持一致。</summary>
         private void SyncSelection(string tag)
