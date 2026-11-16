@@ -155,6 +155,19 @@ namespace AstraBrew_Launcher.Services
         }
 
         /// <summary>
+        /// 不看开关、强制套中转前缀：**只给「更新源」的二级候选**用。
+        ///
+        /// 更新检测的规则是固定的三段回退——GitCode → 加速 + GitHub → 直连 GitHub。
+        /// 这里的「加速 + GitHub」是**无论用户有没有开加速开关都要试**的：
+        /// 关掉开关只是表示「日常下载别走中转」，不代表更新时不许用中转兜底。
+        /// 其余场景仍然走 <see cref="Apply"/>，别拿这个方法绕过用户的开关。
+        /// </summary>
+        public static string ApplyAlways(string url)
+        {
+            return IsGithubUrl(url) ? Prefix + url.Trim() : url;
+        }
+
+        /// <summary>
         /// 一条 GitHub 链接的尝试顺序：开关打开时先加速、再直连；关掉就只有直连。
         /// 非 GitHub 链接不参与加速，只有直连一项。
         /// </summary>

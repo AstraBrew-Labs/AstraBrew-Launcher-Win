@@ -1,5 +1,7 @@
 ﻿using System;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using AstraBrew_Launcher.Services;
 using Microsoft.UI.Xaml;
 
@@ -90,6 +92,52 @@ namespace AstraBrew_Launcher
             if (deepLink is { Length: > 0 })
             {
                 window.HandleDeepLink(deepLink);
+            }
+
+            // 启动后的静默更新检查：不挡首屏，也不弹窗，有新版才在右下角冒一条
+            _ = CheckUpdatesInBackgroundAsync();
+        }
+
+        /// <summary>
+        /// 启动后延迟查一次更新。走的是带缓存的那条路（6 小时内直接读上次结论），
+        /// 所以天天开也不会把 GitHub 的匿名配额吃光；有新版时只发一条可点击的通知，
+        /// 装不装、什么时候装交给用户，绝不在启动阶段偷偷替换文件。
+        /// </summary>
+        private static async Task CheckUpdatesInBackgroundAsync()
+        {
+            try
+            {
+                // 上一次更新留在 update\ 里的解压目录，这时候已经没用了
+                LauncherUpdateService.CleanupStaging();
+
+                // 开发版不自动检查：跑的就是最新代码，没必要每次启动打一次接口
+                if (!LauncherUpdateService.AutoCheckEnabled)
+                {
+                    return;
+                }
+
+                // 让主界面、实例扫描这些真正要紧的活儿先跑完
+                await Task.Delay(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+
+                UpdateCheckResult result = await LauncherUpdateService
+                    .CheckAsync(force: false, CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                if (result.State != UpdateStatus.Available || result.Latest is null)
+                {
+                    return;
+                }
+
+                string latest = result.Latest.DisplayVersion;
+                AppNotify.Info(
+                    L.F("Update.Notify.Title", latest),
+                    L.F("Update.Notify.Message", BuildChannelInfo.DisplayVersion, latest),
+                    L.Get("Update.Notify.Action"),
+                    () => MainWindow?.NavigateTo("about"));
+            }
+            catch (Exception)
+            {
+                // 网络抖动、JSON 变形之类一律吞掉：启动阶段的更新检查不该留下任何噪音
             }
         }
 

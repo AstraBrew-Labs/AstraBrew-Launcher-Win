@@ -1,0 +1,7 @@
+{
+  "About.Channel.Label": ["更新渠道", "Update channel"],
+  "About.Channel.Option.Count": ["3", "3"],
+  "About.Channel.Option.0": ["稳定版", "Stable"],
+  "About.Channel.Option.1": ["测试版", "Beta"],
+  "About.Channel.Option.2": ["预览版", "Preview"]
+}

@@ -6736,4 +6736,88 @@
   <data name="About.License.Self" xml:space="preserve">
     <value>Apache-2.0</value>
   </data>
+  <data name="About.Update.AvailableHint" xml:space="preserve">
+    <value>新版本 {0}{1}{2}</value>
+  </data>
+  <data name="About.Update.Download" xml:space="preserve">
+    <value>下载并安装 {0}</value>
+  </data>
+  <data name="About.Update.Downloading" xml:space="preserve">
+    <value>下载中 {0}%</value>
+  </data>
+  <data name="About.Update.Installing" xml:space="preserve">
+    <value>正在安装…</value>
+  </data>
+  <data name="About.Update.Restarting" xml:space="preserve">
+    <value>安装完成后会自动重启</value>
+  </data>
+  <data name="About.Update.Failed" xml:space="preserve">
+    <value>检查失败：{0}</value>
+  </data>
+  <data name="About.Update.NoChannelRelease" xml:space="preserve">
+    <value>当前渠道暂无发布</value>
+  </data>
+  <data name="Update.Source.GitCode" xml:space="preserve">
+    <value>GitCode</value>
+  </data>
+  <data name="Update.Source.GithubAccel" xml:space="preserve">
+    <value>GitHub 加速</value>
+  </data>
+  <data name="Update.Source.GithubDirect" xml:space="preserve">
+    <value>GitHub 直连</value>
+  </data>
+  <data name="Update.Failure.Network" xml:space="preserve">
+    <value>连不上更新服务器</value>
+  </data>
+  <data name="Update.Failure.Timeout" xml:space="preserve">
+    <value>请求超时</value>
+  </data>
+  <data name="Update.Failure.RateLimit" xml:space="preserve">
+    <value>请求被限流，稍后再试</value>
+  </data>
+  <data name="Update.Failure.Server" xml:space="preserve">
+    <value>服务器返回错误</value>
+  </data>
+  <data name="Update.Failure.Payload" xml:space="preserve">
+    <value>返回内容无法解析</value>
+  </data>
+  <data name="Update.Failure.Empty" xml:space="preserve">
+    <value>仓库里没有发布记录</value>
+  </data>
+  <data name="Update.Error.NoAsset" xml:space="preserve">
+    <value>这个版本没有可用的安装包</value>
+  </data>
+  <data name="Update.Error.Checksum" xml:space="preserve">
+    <value>校验失败，安装包可能已损坏</value>
+  </data>
+  <data name="Update.Error.Download" xml:space="preserve">
+    <value>下载失败，请稍后再试</value>
+  </data>
+  <data name="Update.Notify.Title" xml:space="preserve">
+    <value>发现新版本 {0}</value>
+  </data>
+  <data name="Update.Notify.Message" xml:space="preserve">
+    <value>当前 {0}，可更新到 {1}</value>
+  </data>
+  <data name="Update.Notify.Action" xml:space="preserve">
+    <value>查看</value>
+  </data>
+  <data name="About.Update.Badge.Available" xml:space="preserve">
+    <value>有新版本</value>
+  </data>
+  <data name="About.Channel.Label" xml:space="preserve">
+    <value>更新渠道</value>
+  </data>
+  <data name="About.Channel.Option.0" xml:space="preserve">
+    <value>稳定版</value>
+  </data>
+  <data name="About.Channel.Option.1" xml:space="preserve">
+    <value>测试版</value>
+  </data>
+  <data name="About.Channel.Option.2" xml:space="preserve">
+    <value>预览版</value>
+  </data>
+  <data name="About.Update.DevNoAutoCheck" xml:space="preserve">
+    <value>开发版不自动检查更新</value>
+  </data>
 </root>

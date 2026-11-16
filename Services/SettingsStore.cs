@@ -106,6 +106,14 @@ namespace AstraBrew_Launcher.Services
             (DownloadChannel.Github, "github"),
         };
 
+        /// <summary>更新渠道的落盘标识。稳定版沿用 "stable"，与 tag 里的写法一致。</summary>
+        private static readonly (UpdateChannelSetting Value, string Id)[] UpdateChannels =
+        {
+            (UpdateChannelSetting.Stable, "stable"),
+            (UpdateChannelSetting.Beta, "beta"),
+            (UpdateChannelSetting.Alpha, "alpha"),
+        };
+
         private static readonly (ProxyModeSetting Value, string Id)[] Proxies =
         {
             (ProxyModeSetting.None, "none"),
@@ -161,6 +169,7 @@ namespace AstraBrew_Launcher.Services
                 ApplyConsole(document);
                 ApplyRuntime(document);
                 ApplyNetwork(document);
+                ApplyUpdate(document);
                 ApplyPaths(document);
             }
             finally
@@ -368,6 +377,15 @@ namespace AstraBrew_Launcher.Services
             }
         }
 
+        /// <summary>更新渠道：缺省时保持「按构建渠道推导」的那个默认值。</summary>
+        private static void ApplyUpdate(TomlDocument document)
+        {
+            if (ParseId(UpdateChannels, document.String("update", "channel")) is { } channel)
+            {
+                LauncherSettings.SetUpdateChannel(channel);
+            }
+        }
+
         private static void ApplyPaths(TomlDocument document)
         {
             if (document.String("paths", "export") is { Length: > 0 } export)
@@ -554,6 +572,9 @@ namespace AstraBrew_Launcher.Services
 
             writer.String("proxy", IdOf(Proxies, LauncherSettings.Proxy), "none | system | custom");
             writer.String("custom_proxy", LauncherSettings.CustomProxy);
+
+            writer.Section("update");
+            writer.String("channel", IdOf(UpdateChannels, LauncherSettings.UpdateChannel), "stable | beta | alpha");
 
             writer.Section("paths");
             writer.String("export", LauncherSettings.ExportPath, L.Get("Store.ExportPath"));

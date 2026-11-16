@@ -144,6 +144,104 @@ HKCU\Software\Classes\launcher-astrabrew
   从浏览器唤起时我们是「被别的进程拉起来的」，只 Activate 往往只在任务栏闪一下。
 - 实测过的四种情形：链接冷启动落页、运行中转发切页、未知路由不动、指向失效路径的自愈。
 
+## 更新检测与自动更新
+
+启动器自己检查新版本、下载并换掉自己。涉及三个文件：
+`LauncherVersion`（版本解析与比较）、`LauncherRelease` + `LauncherUpdateSource`（发布源与归一化）、
+`LauncherUpdateService`（缓存、下载、校验、替换、重启）。
+
+### 源顺序（**固定三段，不看加速开关**）
+
+```
+GitCode → 加速 + GitHub → 直连 GitHub
+```
+
+- 地址常量在 `LauncherUpdateSource.UrlOf`，顺序在 `Order`，**不要**在别处再写一套。
+- 第二档用 `GithubAccel.ApplyAlways`（无视 `LauncherSettings.GithubAcceleration`）：
+  开关管的是「日常下载走不走中转」，不是「更新时不许兜底」。中转带 Token 池，能绕开匿名 60 次/小时。
+- **200 + 空数组不算成功**：GitCode 的镜像仓库常常还没同步 release，必须继续往下试，
+  否则用户会被告知「已是最新」。
+- 只有全部失败才报错，界面按 `UpdateFailure`（Network / Timeout / RateLimit / Server / Payload / Empty）
+  取对应文案——**别把中文塞进状态里**。
+
+### 两条必须守住的规则
+
+1. **渠道是用户选的，不是构建出来的**：关于页有「更新渠道」三档——稳定版 / 测试版 / 预览版，
+   落盘在 `settings.toml` 的 `[update] channel`（`stable | beta | alpha`）。
+   **默认稳定版**：Beta/Alpha 构建也默认跟正式线，不由构建渠道推导——
+   否则「我装的明明是测试版，更新却给我换成正式版」，反过来同样成立。
+   **没有「开发版」档**：debug 包不对外发布，选了也没东西可更。
+   切渠道会立刻强查一次，缓存里带渠道标识，切完旧结论自动作废。
+2. **只收所选渠道的发布**：Debug 版装上 beta 包会把渠道标记改掉，那种「更新」比不更新更糟。
+   筛选在 `LauncherRelease.PickLatest(releases, channel)`。
+
+### tag 命名（两种都要认）
+
+```
+[type]-[版本号]      Beta-v0.0.0   beta-v0.3.0   Alpha-v1.2.3   stable-v0.3.0
+v[版本号]-[type]     v0.0.0-Beta.0 v0.3.0-Beta.0 v1.0.0-preview.2
+```
+
+`LauncherRelease.DetectChannel` 的做法是**按非字母字符切词再比关键字**（不看开头/结尾）：
+版本号里不可能出现 alpha/beta，扫全串安全，也顺手覆盖 `stable-v1.2.3`。
+`v0` / `v1` 这种 token 先去掉前导 v 再比，`preview` 归一成预览（Alpha）。
+一个渠道词都没有 = 稳定版。
+
+### 比较前必须剥渠道词
+
+远端 tag 是 `beta-v0.3.0`（版本段没有 `-Beta.0`），本地是 `0.3.0-Beta.0`。
+不剥的话 `0.3.0 > 0.3.0-Beta.0`，装完还是同一个包，于是每次检查都提示更新——死循环。
+实现是 `LauncherVersion.WithoutChannel(channel)`，**迭代号（第四个数字 / 后缀末位数字）照常参与比较**，
+所以 `0.3.0-Beta.1` 仍然比 `beta-v0.3.0` 新。
+
+3. 远端版本必须**严格高于**本地才算有更新：仓库里还挂着 0.0.x 老发布，绝不能提示降级。
+
+### 资产挑选
+
+- GitCode 的 `assets` 里混着四个 **`type: "source"` 的源码归档**（`beta-v0.3.0.zip` 这种），
+  `LauncherRelease.Parse` 直接跳过它们，否则会把源码包当安装包下下来。
+- zip 三档退化：新命名 `AstraBrewLauncher-*.zip` → 含 `launcher` → 任意 zip；同档优先含当前架构（`win-x64`）。
+- 安装版挑 `*-setup.exe`（其次 `.msi`），走 MSI 升级；免安装版挑 zip。
+
+### 缓存与频率
+
+- 检测结果落盘 `%LocalAppData%\AstraBrew Launcher\update-check.json`，有效期 **6 小时**。
+  启动时的静默检查吃缓存；**用户点「检查更新」永远强制走网络**。
+- 缓存写的是 GitHub 形状的最小 JSON，读回来直接复用 `LauncherRelease.Parse`，不维护第二套反序列化。
+
+### 替换与重启（最容易出事的一段）
+
+- 便携版：zip 解压到**程序目录旁边的 `<目录>.new`** → 外部脚本等本进程退出 → 旧目录改名 `.old` →
+  新目录顶上 → 启动 → 删 `.old`。**不要用 robocopy 往程序目录里增量覆盖**：
+  发布包与本地构建输出的文件集合不同（build 目录多 xbf / appxrecipe / pdb），
+  新旧混装会在启动时 0xC000027B 崩掉，而且一条日志都没有——踩过。
+- 目录交换失败要**回滚**（把 `.old` 改回去）并拉起旧版本：更新失败最多是「版本没变」，
+  不能变成「程序没了」。
+- 安装版：脚本等退出后静默跑 `setup.exe /quiet /norestart`，由 MSI 处理文件、快捷方式与卸载记录。
+- 脚本全程写 `%TEMP%\astrabrew-launcher\update.log`（每步一行）。出问题先看这个，不要靠猜。
+- `Start-Process` 必须带 `-WorkingDirectory <程序目录>`：缺省继承调用者的 cwd，依赖解析会找空。
+- 启动时 `LauncherUpdateService.CleanupStaging()` 清掉上一次留下的 `update\` 与 `.old` / `.new` 残渣。
+
+### 界面
+
+- 关于页是唯一入口：按钮与右侧状态行是**状态驱动**的（Never / Checking / UpToDate / Available /
+  Downloading / Installing / Failed / NoChannelRelease），
+  **这两处文本不能挂 `Loc.Text`**——Loc 在首帧会把文本重置回资源值，把「正在下载 42%」直接盖掉
+  （踩过：状态行永远显示「尚未检查更新」）。初值在构造函数里 `ApplyUpdateState()` 给。
+- 「更新渠道」是 hero 卡右上角、三枚胶囊下面那组「标签 + ComboBox」（`UpdateChannelSelect`，
+  选项文案 `About.Channel.Option.0/1/2`，顺序必须与 `UpdateChannelSetting` 一致）。
+  那组控件带 `Margin="0,15,0,0"`，用来和**左列简介**（「装环境、管版本…」那行）拉到同一水平线——
+  左列是「40 高的标识 + 10 间距 + 一行简介」，改标识高度或间距时这个 15 要跟着改。
+  回填 `SelectedIndex` 时必须用 `_syncingChannel` 挡住 `SelectionChanged`，否则「回填」会被当成
+  用户切换，白跑一次强制检查。
+- **开发版（Debug）不参与自动检查**：`LauncherUpdateService.AutoCheckEnabled` 为 false 时，
+  启动后不查、进关于页不自动回填，状态行直接写「开发版不自动检查更新」。
+  手动点按钮、手动切渠道仍然会查——那两条是用户主动行为，留着方便验证发布。
+- 「当前版本」右边那枚胶囊同样按状态显示（绿「已是最新」/ 蓝「有新版本」/ 未知就隐藏），
+  不要写死成「已是最新」。
+- 启动后 15 秒做一次静默检查（`App.CheckUpdatesInBackgroundAsync`），有新版只发一条通知，
+  点「查看」跳到关于页。**绝不在启动阶段偷偷替换文件**。
+
 ## 多语言（中 / 英）与文案规范
 
 ### 存储：`Strings/<语言>/Resources.resw`

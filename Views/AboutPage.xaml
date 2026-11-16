@@ -222,33 +222,71 @@
                                 </StackPanel>
 
                                 <StackPanel
-                                    x:Name="HeroBadges"
                                     Grid.Column="1"
+                                    HorizontalAlignment="Right"
                                     VerticalAlignment="Top"
-                                    Orientation="Horizontal"
-                                    Spacing="6">
+                                    Spacing="10">
+                                    <StackPanel
+                                        x:Name="HeroBadges"
+                                        HorizontalAlignment="Right"
+                                        Orientation="Horizontal"
+                                        Spacing="6">
+                                        <!--
+                                            内边距与 MetaChipStyle（7,1,7,2）在纵向保持一致：
+                                            这里原本是 2,3，比旁边的「渠道 / 架构」胶囊高 2 px，
+                                            三枚摆一排看着就是一高一低。
+                                        -->
+                                        <Border
+                                            Padding="8,1,8,2"
+                                            Background="#1F2B88D8"
+                                            CornerRadius="10"
+                                            VerticalAlignment="Center">
+                                            <TextBlock
+                                                x:Name="HeroVersionChipText"
+                                                FontSize="11"
+                                                FontWeight="SemiBold"
+                                                Foreground="#FF2B88D8" />
+                                        </Border>
+                                        <!--  渠道标记：预览版 / 测试版 / 开发版；正式版是「稳定通道」  -->
+                                        <Border x:Name="ChannelChip" Style="{StaticResource MetaChipStyle}">
+                                            <TextBlock x:Name="ChannelChipText" Style="{StaticResource MetaChipTextStyle}" />
+                                        </Border>
+                                        <Border Style="{StaticResource MetaChipStyle}">
+                                            <TextBlock x:Name="ArchChipText" Style="{StaticResource MetaChipTextStyle}" Text="x64" /></Border>
+                                    </StackPanel>
+
                                     <!--
-                                        内边距与 MetaChipStyle（7,1,7,2）在纵向保持一致：
-                                        这里原本是 2,3，比旁边的「渠道 / 架构」胶囊高 2 px，
-                                        三枚摆一排看着就是一高一低。
+                                        更新渠道：跟哪条发布线走。胶囊下面是这块「标签 + 下拉」，
+                                        与右上角的状态标记同列右对齐。
+
+                                        上面那 15 的顶边距不是随手写的：左列是「40 高的标识 + 10 间距 + 一行简介」，
+                                        简介的中心比胶囊行低约 30 DIP，这里补一段让**下拉与左侧简介同一水平线**——
+                                        视觉上两栏才是齐的。改左列标识高度或间距时，这个值要跟着改。
+
+                                        注意它和上面那枚「开发版」胶囊是两个概念：那枚是「这个 exe 由哪条线编出来」，
+                                        这里选的是「更新时看哪条线的发布」。
                                     -->
-                                    <Border
-                                        Padding="8,1,8,2"
-                                        Background="#1F2B88D8"
-                                        CornerRadius="10"
-                                        VerticalAlignment="Center">
+                                    <StackPanel
+                                        x:Name="UpdateChannelPanel"
+                                        Margin="0,15,0,0"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Center"
+                                        Orientation="Horizontal"
+                                        Spacing="8">
                                         <TextBlock
-                                            x:Name="HeroVersionChipText"
-                                            FontSize="11"
-                                            FontWeight="SemiBold"
-                                            Foreground="#FF2B88D8" />
-                                    </Border>
-                                    <!--  渠道标记：预览版 / 测试版 / 开发版；正式版是「稳定通道」  -->
-                                    <Border x:Name="ChannelChip" Style="{StaticResource MetaChipStyle}">
-                                        <TextBlock x:Name="ChannelChipText" Style="{StaticResource MetaChipTextStyle}" />
-                                    </Border>
-                                    <Border Style="{StaticResource MetaChipStyle}">
-                                        <TextBlock x:Name="ArchChipText" Style="{StaticResource MetaChipTextStyle}" Text="x64" /></Border>
+                                            VerticalAlignment="Center"
+                                            Style="{StaticResource FootnoteTextStyle}"
+                                            controls:Loc.Text="About.Channel.Label" />
+                                        <ComboBox
+                                            x:Name="UpdateChannelSelect"
+                                            MinWidth="112"
+                                            FontSize="12"
+                                            SelectionChanged="UpdateChannel_SelectionChanged">
+                                            <ComboBoxItem controls:Loc.Content="About.Channel.Option.0" />
+                                            <ComboBoxItem controls:Loc.Content="About.Channel.Option.1" />
+                                            <ComboBoxItem controls:Loc.Content="About.Channel.Option.2" />
+                                        </ComboBox>
+                                    </StackPanel>
                                 </StackPanel>
                             </Grid>
 
@@ -264,37 +302,42 @@
                                 </Grid.ColumnDefinitions>
 
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button
-                                        x:Name="CheckUpdateButton"
-                                        Click="CheckUpdate_Click"
-                                        Style="{StaticResource AccentActionButtonStyle}"
-                                        MinHeight="34"
-                                        Padding="14,4"
-                                        CornerRadius="8">
-                                        <StackPanel Orientation="Horizontal" Spacing="7">
-                                            <FontIcon FontSize="13" Glyph="&#xE72C;" />
-                                            <TextBlock x:Name="CheckUpdateText" FontSize="13" controls:Loc.Text="About.Action.CheckUpdate" />
-                                        </StackPanel>
-                                    </Button>
-                                    <Button
-                                        Click="OpenLink_Click"
-                                        controls:Loc.Content="About.Link.Home"
-                                        Style="{StaticResource HeroActionStyle}"
-                                        Tag="https://launcher.astrabrew.cn" />
-                                    <Button
-                                        Click="OpenLink_Click"
-                                        controls:Loc.Content="About.Link.Issues"
-                                        Style="{StaticResource HeroActionStyle}"
-                                        Tag="mailto:support@astrabrew.cn" />
-                                </StackPanel>
+                                        <Button
+                                            x:Name="CheckUpdateButton"
+                                            Click="CheckUpdate_Click"
+                                            Style="{StaticResource AccentActionButtonStyle}"
+                                            MinHeight="34"
+                                            Padding="14,4"
+                                            CornerRadius="8">
+                                            <StackPanel Orientation="Horizontal" Spacing="7">
+                                                <FontIcon FontSize="13" Glyph="&#xE72C;" />
+                                                <!--
+                                                    这两处文案（按钮文字、右侧状态）是**状态驱动**的，
+                                                    不能挂 Loc.Text：Loc 在首帧会把文本重置回资源值，
+                                                    把「正在下载 42%」「有新版本 vX」这种实时状态直接盖掉。
+                                                    初值由 ApplyUpdateState() 在构造函数里给，换语言时它也会重跑。
+                                                -->
+                                                <TextBlock x:Name="CheckUpdateText" FontSize="13" />
+                                            </StackPanel>
+                                        </Button>
+                                        <Button
+                                            Click="OpenLink_Click"
+                                            controls:Loc.Content="About.Link.Home"
+                                            Style="{StaticResource HeroActionStyle}"
+                                            Tag="https://launcher.astrabrew.cn" />
+                                        <Button
+                                            Click="OpenLink_Click"
+                                            controls:Loc.Content="About.Link.Issues"
+                                            Style="{StaticResource HeroActionStyle}"
+                                            Tag="mailto:support@astrabrew.cn" />
+                                    </StackPanel>
 
                                 <TextBlock
                                     x:Name="LastCheckText"
                                     Grid.Column="1"
                                     HorizontalAlignment="Right"
                                     VerticalAlignment="Center"
-                                    Style="{StaticResource FootnoteTextStyle}"
-                                    controls:Loc.Text="About.Update.Never" />
+                                    Style="{StaticResource FootnoteTextStyle}" />
                             </Grid>
                         </StackPanel>
                     </Grid>
@@ -333,15 +376,17 @@
                                     Grid.Column="1"
                                     Style="{StaticResource MonoValueStyle}" />
                                 <Border
+                                    x:Name="VersionBadge"
                                     Grid.Column="2"
                                     Padding="8,1,8,2"
                                     Background="#1F16A34A"
                                     CornerRadius="9"
-                                    VerticalAlignment="Center">
+                                    VerticalAlignment="Center"
+                                    Visibility="Collapsed">
                                     <TextBlock
+                                        x:Name="VersionBadgeText"
                                         FontSize="10"
-                                        Foreground="#FF16A34A"
-                                        controls:Loc.Text="About.Update.Latest" />
+                                        Foreground="#FF16A34A" />
                                 </Border>
                             </Grid>
 

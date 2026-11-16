@@ -99,6 +99,25 @@ namespace AstraBrew_Launcher.Services
     }
 
     /// <summary>
+    /// 更新渠道：用户自己选跟哪条发布线，跟「这个 exe 是哪个渠道编出来的」是两件事。
+    ///
+    /// 顺序就是关于页那排分段按钮的顺序（稳定版 / 测试版 / 预览版），**不要随手调换**：
+    /// 界面按下标存取，调换等于把用户的选择整体平移一位。
+    /// 没有「开发版」这一档：debug 构建不对外发布，选了也没有包可更。
+    /// </summary>
+    public enum UpdateChannelSetting
+    {
+        /// <summary>稳定版：只收正式发布（tag 里不带渠道词）。</summary>
+        Stable,
+
+        /// <summary>测试版：收 beta 发布。</summary>
+        Beta,
+
+        /// <summary>预览版：收 alpha 发布。</summary>
+        Alpha,
+    }
+
+    /// <summary>
     /// 一次窗口几何快照（物理像素），退出时记录、下次启动时还原。
     /// 单位为像素是因为「窗口在哪块屏」只能靠像素坐标判断；<see cref="Dpi"/> 用来在
     /// 显示器缩放变了之后按比例折算尺寸，避免 125% 存的窗口在 150% 下变得又小又远。
@@ -232,6 +251,12 @@ namespace AstraBrew_Launcher.Services
         /// </summary>
         public static bool GithubAcceleration => _githubAcceleration;
 
+        /// <summary>
+        /// 更新渠道。默认稳定版，与这个 exe 是从哪条线编出来的无关；
+        /// 用户在关于页选什么就落什么盘，切换后立刻重查一次。
+        /// </summary>
+        public static UpdateChannelSetting UpdateChannel => _updateChannel;
+
         /// <summary>代理方式。</summary>
         public static ProxyModeSetting Proxy => _proxy;
 
@@ -353,6 +378,8 @@ namespace AstraBrew_Launcher.Services
 
         public static void SetGithubAcceleration(bool value) => Set(ref _githubAcceleration, value);
 
+        public static void SetUpdateChannel(UpdateChannelSetting value) => Set(ref _updateChannel, value);
+
         public static void SetProxy(ProxyModeSetting value) => Set(ref _proxy, value);
 
         public static void SetCustomProxy(string value) => Set(ref _customProxy, value);
@@ -417,6 +444,7 @@ namespace AstraBrew_Launcher.Services
             _npmRegistry = NpmRegistrySource.Npmmirror;
             _channel = DownloadChannel.GitCode;
             _githubAcceleration = true;
+            _updateChannel = UpdateChannelSetting.Stable;
             _proxy = ProxyModeSetting.System;
             _customProxy = "http://127.0.0.1:7890";
             _githubBestLatency = null;
@@ -452,6 +480,13 @@ namespace AstraBrew_Launcher.Services
         private static NpmRegistrySource _npmRegistry = NpmRegistrySource.Npmmirror;
         private static DownloadChannel _channel = DownloadChannel.GitCode;
         private static bool _githubAcceleration = true;
+
+        /// <summary>
+        /// 更新渠道。**默认稳定版**：绝大多数用户应该跟正式发布，想尝鲜的自己去关于页切。
+        /// 不按构建渠道推导——Beta/Alpha 构建也默认跟稳定线，避免「我装的明明是测试版，
+        /// 更新却给我换成正式版」这种意外，反过来同样成立。
+        /// </summary>
+        private static UpdateChannelSetting _updateChannel = UpdateChannelSetting.Stable;
         private static ProxyModeSetting _proxy = ProxyModeSetting.System;
         private static string _customProxy = "http://127.0.0.1:7890";
         private static int? _githubBestLatency;

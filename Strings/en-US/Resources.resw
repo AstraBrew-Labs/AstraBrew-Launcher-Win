@@ -6736,4 +6736,88 @@ Merge: keep the current config and only add the keys it is missing.</value>
   <data name="About.License.Self" xml:space="preserve">
     <value>Apache-2.0</value>
   </data>
+  <data name="About.Update.AvailableHint" xml:space="preserve">
+    <value>Update {0}{1}{2}</value>
+  </data>
+  <data name="About.Update.Download" xml:space="preserve">
+    <value>Install {0}</value>
+  </data>
+  <data name="About.Update.Downloading" xml:space="preserve">
+    <value>Downloading {0}%</value>
+  </data>
+  <data name="About.Update.Installing" xml:space="preserve">
+    <value>Installing…</value>
+  </data>
+  <data name="About.Update.Restarting" xml:space="preserve">
+    <value>The app restarts when the install finishes</value>
+  </data>
+  <data name="About.Update.Failed" xml:space="preserve">
+    <value>Check failed: {0}</value>
+  </data>
+  <data name="About.Update.NoChannelRelease" xml:space="preserve">
+    <value>No release for this channel yet</value>
+  </data>
+  <data name="Update.Source.GitCode" xml:space="preserve">
+    <value>GitCode</value>
+  </data>
+  <data name="Update.Source.GithubAccel" xml:space="preserve">
+    <value>GitHub (accelerated)</value>
+  </data>
+  <data name="Update.Source.GithubDirect" xml:space="preserve">
+    <value>GitHub (direct)</value>
+  </data>
+  <data name="Update.Failure.Network" xml:space="preserve">
+    <value>Cannot reach the update server</value>
+  </data>
+  <data name="Update.Failure.Timeout" xml:space="preserve">
+    <value>Request timed out</value>
+  </data>
+  <data name="Update.Failure.RateLimit" xml:space="preserve">
+    <value>Rate limited, try again later</value>
+  </data>
+  <data name="Update.Failure.Server" xml:space="preserve">
+    <value>The server returned an error</value>
+  </data>
+  <data name="Update.Failure.Payload" xml:space="preserve">
+    <value>Unexpected response</value>
+  </data>
+  <data name="Update.Failure.Empty" xml:space="preserve">
+    <value>No releases in the repository</value>
+  </data>
+  <data name="Update.Error.NoAsset" xml:space="preserve">
+    <value>No package available for this version</value>
+  </data>
+  <data name="Update.Error.Checksum" xml:space="preserve">
+    <value>Checksum mismatch, the package may be corrupted</value>
+  </data>
+  <data name="Update.Error.Download" xml:space="preserve">
+    <value>Download failed, try again later</value>
+  </data>
+  <data name="Update.Notify.Title" xml:space="preserve">
+    <value>Update {0} available</value>
+  </data>
+  <data name="Update.Notify.Message" xml:space="preserve">
+    <value>You have {0}; {1} is available</value>
+  </data>
+  <data name="Update.Notify.Action" xml:space="preserve">
+    <value>View</value>
+  </data>
+  <data name="About.Update.Badge.Available" xml:space="preserve">
+    <value>Update available</value>
+  </data>
+  <data name="About.Channel.Label" xml:space="preserve">
+    <value>Update channel</value>
+  </data>
+  <data name="About.Channel.Option.0" xml:space="preserve">
+    <value>Stable</value>
+  </data>
+  <data name="About.Channel.Option.1" xml:space="preserve">
+    <value>Beta</value>
+  </data>
+  <data name="About.Channel.Option.2" xml:space="preserve">
+    <value>Preview</value>
+  </data>
+  <data name="About.Update.DevNoAutoCheck" xml:space="preserve">
+    <value>Dev builds skip automatic checks</value>
+  </data>
 </root>
