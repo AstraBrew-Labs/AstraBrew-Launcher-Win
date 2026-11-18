@@ -59,20 +59,11 @@ Step "还原本地打包工具（WiX）"
 & dotnet tool restore | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'dotnet tool restore 失败。' }
 
-# Burn 扩展（setup.exe 那层外壳）不在 WiX 核心里，按当前 WiX 版本补齐
-# 不要写成 `... | Select-Object -First 1`：管道被提前掐断会让 $LASTEXITCODE 失真，
-# 正常版本号也会被当成失败。
+# 这个 MSI 不挂 WixUI、也不用 util:RemoveFolderEx（向导界面由 installer/Setup 自己画），
+# 因此不需要任何 WiX 扩展；只确认 WiX 本身可用就行。
+# 不要写成 `... | Select-Object -First 1`：管道被提前掐断会让 $LASTEXITCODE 失真。
 $wixVersionRaw = & dotnet wix --version 2>&1
 if ($LASTEXITCODE -ne 0) { throw "WiX 不可用：$wixVersionRaw" }
-$wixVersion = @($wixVersionRaw)[0]
-$wixSemver = ($wixVersion -split '\+')[0].Trim()
-
-$extensions = & dotnet wix extension list -g 2>&1
-if ($extensions -notmatch 'BootstrapperApplications') {
-    Step "安装 Burn 扩展 WixToolset.BootstrapperApplications.wixext/$wixSemver"
-    & dotnet wix extension add -g "WixToolset.BootstrapperApplications.wixext/$wixSemver"
-    if ($LASTEXITCODE -ne 0) { throw 'Burn 扩展安装失败（打包机需要能访问 nuget.org）。' }
-}
 
 # ---------------------------------------------------------------- 1. 清空目标位置
 
@@ -108,7 +99,6 @@ $msiVersion = ($version -split '-')[0]
 $segments = $msiVersion.Split('.')
 while ($segments.Count -lt 3) { $segments += '0' }
 $msiVersion = ($segments[0..2] -join '.')
-$bundleVersion = "$msiVersion.0"
 
 $channelLabel = @{ Debug = '开发版'; Alpha = '预览版'; Beta = '测试版' }[$Configuration]
 if ($channelLabel) {
@@ -118,7 +108,7 @@ if ($channelLabel) {
 }
 
 $baseName = "AstraBrewLauncher-$version-$rid"
-Write-Host "版本 $version（MSI $msiVersion / Bundle $bundleVersion）  名称 $baseName" -ForegroundColor DarkGray
+Write-Host "版本 $version（MSI $msiVersion）  名称 $baseName" -ForegroundColor DarkGray
 
 # ---------------------------------------------------------------- 4. 组装待打包目录
 
@@ -177,21 +167,23 @@ if ($LASTEXITCODE -ne 0) { throw 'MSI 构建失败。' }
 
 # ---------------------------------------------------------------- 7. setup.exe
 
-Step '构建 setup.exe（Burn 引导程序）'
+Step '构建 setup.exe（提权引导，内嵌 msi）'
 $setupPath = Join-Path $outDir "$baseName-setup.exe"
-$bundleArgs = @(
-    'wix', 'build', (Join-Path $root 'installer\Bundle.wxs'),
-    '-ext', 'WixToolset.BootstrapperApplications.wixext',
-    '-arch', $Platform,
-    '-pdbtype', 'none',
-    '-d', "MsiPath=$msiPath",
-    '-d', "BundleVersion=$bundleVersion",
-    '-d', "DisplayName=$displayName",
-    '-d', "IconPath=$(Join-Path $root 'Assets\app.ico')",
-    '-o', $setupPath
-)
-& dotnet @bundleArgs
+$setupProject = Join-Path $root 'installer\Setup\Setup.csproj'
+$setupWork = Join-Path $workDir 'setup'
+
+# 单文件 + 自包含：虚拟机里不必先装 .NET；msi 作为资源嵌进去，分发仍然只有一个 exe
+& dotnet publish $setupProject `
+    -c Release -r win-x64 --self-contained true `
+    -p:MsiPath="$msiPath" `
+    -p:AssemblyName="$baseName-setup" `
+    -p:ProductDisplayName="$displayName" `
+    -p:ProductVersionLabel="$version" `
+    -o $setupWork
 if ($LASTEXITCODE -ne 0) { throw 'setup.exe 构建失败。' }
+
+Copy-Item (Join-Path $setupWork "$baseName-setup.exe") $setupPath -Force
+if (-not (Test-Path $setupPath)) { throw 'setup.exe 没有产出。' }
 
 # ---------------------------------------------------------------- 8. 校验与元数据
 

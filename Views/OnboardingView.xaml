@@ -67,16 +67,17 @@
                                 Number="1"
                                 SubtitleKey="Setup.Rail.Step1.Subtitle"
                                 TitleKey="Setup.Rail.Step1.Title" />
+                            <!--  第 2 步是装工具、第 3 步才是测网络：与 OnboardingView.xaml.cs 的 _panels 顺序保持一致  -->
                             <onboarding:OnboardingRailItem
                                 x:Name="Rail2"
                                 Number="2"
-                                SubtitleKey="Setup.Rail.Step2.Subtitle"
-                                TitleKey="Setup.Rail.Step2.Title" />
+                                SubtitleKey="Setup.Rail.Step3.Subtitle"
+                                TitleKey="Setup.Rail.Step3.Title" />
                             <onboarding:OnboardingRailItem
                                 x:Name="Rail3"
                                 Number="3"
-                                SubtitleKey="Setup.Rail.Step3.Subtitle"
-                                TitleKey="Setup.Rail.Step3.Title" />
+                                SubtitleKey="Setup.Rail.Step2.Subtitle"
+                                TitleKey="Setup.Rail.Step2.Title" />
                             <onboarding:OnboardingRailItem
                                 x:Name="Rail4"
                                 Number="4"

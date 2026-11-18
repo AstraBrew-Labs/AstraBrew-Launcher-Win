@@ -316,9 +316,13 @@ namespace AstraBrew_Launcher
         }
 
         /// <summary>
-        /// 窗口按钮（最小化 / 关闭）的悬停配色要跟着界面主题走：
+        /// 窗口按钮（最小化 / 最大化 / 关闭）的配色要跟着界面主题走：
         /// 用应用启动时的主题会让「系统深色 + 界面浅色」这类组合露出黑块。
         /// 主题一变由 <see cref="AppearanceController"/> 回来调一次。
+        ///
+        /// **常态前景色也必须显式给**（ButtonForegroundColor）：系统标题栏的按钮图标颜色跟着
+        /// Windows 的应用模式走，不是跟着我们的界面主题走。系统浅色 + 界面手动切深色时，
+        /// 三个按钮会保持黑色图标，压在深色标题栏上等于隐身——虚拟机里就是这么发现的。
         /// </summary>
         private void ApplyTitleBarColors()
         {
@@ -329,12 +333,16 @@ namespace AstraBrew_Launcher
 
                 if (dark)
                 {
+                    titleBar.ButtonForegroundColor = Colors.White;
+                    titleBar.ButtonInactiveForegroundColor = Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF);
                     titleBar.ButtonHoverBackgroundColor = Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF);
                     titleBar.ButtonPressedBackgroundColor = Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF);
                     titleBar.ButtonHoverForegroundColor = Colors.White;
                 }
                 else
                 {
+                    titleBar.ButtonForegroundColor = Colors.Black;
+                    titleBar.ButtonInactiveForegroundColor = Color.FromArgb(0x99, 0x00, 0x00, 0x00);
                     titleBar.ButtonHoverBackgroundColor = Color.FromArgb(0x0F, 0x00, 0x00, 0x00);
                     titleBar.ButtonPressedBackgroundColor = Color.FromArgb(0x0A, 0x00, 0x00, 0x00);
                     titleBar.ButtonHoverForegroundColor = Colors.Black;

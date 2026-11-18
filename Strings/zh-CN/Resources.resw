@@ -242,7 +242,7 @@
     <value>开机自动启动</value>
   </data>
   <data name="Settings.Row.AutoStart.Description" xml:space="preserve">
-    <value>登录 Windows 后自动启动。</value>
+    <value>登录 Windows 后自动启动，同时会出现在系统「启动应用」列表里。</value>
   </data>
   <data name="Settings.Row.CpuCores.Title" xml:space="preserve">
     <value>占用 CPU 核心</value>
@@ -569,7 +569,7 @@
     <value>Git、Node.js 与 WebView2 齐全，酒馆可以启动。</value>
   </data>
   <data name="Settings.Runtime.Summary.MissingBuiltin" xml:space="preserve">
-    <value>缺少 {0}；点「修复」自动安装。</value>
+    <value>缺少 {0}；点「一键补全」把整套内置环境装齐。</value>
   </data>
   <data name="Settings.Runtime.Summary.MissingSystem" xml:space="preserve">
     <value>系统环境缺少 {0}，请自行安装；或切到「内置」。</value>
@@ -1577,7 +1577,7 @@
     <value>系统环境只能自己装，装完点「再查一次」</value>
   </data>
   <data name="Setup.S3.Tip.Nothing" xml:space="preserve">
-    <value>当前这一包已经齐了，没有要装的</value>
+    <value>内置环境已经装齐，没有需要补的</value>
   </data>
   <data name="Setup.S3.Notify.Ready.Title" xml:space="preserve">
     <value>这边已经齐了</value>
@@ -6819,5 +6819,56 @@
   </data>
   <data name="About.Update.DevNoAutoCheck" xml:space="preserve">
     <value>开发版不自动检查更新</value>
+  </data>
+  <data name="Settings.Runtime.Repair.Ready.Title" xml:space="preserve">
+    <value>运行环境已就绪</value>
+  </data>
+  <data name="Settings.Runtime.Repair.Ready.Hint" xml:space="preserve">
+    <value>依赖齐全，不需要修复。</value>
+  </data>
+  <data name="Settings.Runtime.Repair.Note" xml:space="preserve">
+    <value>这次会把缺失的依赖一次装齐：Node.js → Git → Caddy → PM2，按顺序安装，中途可以取消。</value>
+  </data>
+  <data name="Settings.AutoStart.Failed.Title" xml:space="preserve">
+    <value>没能写入系统启动项</value>
+  </data>
+  <data name="Settings.AutoStart.Failed.Hint" xml:space="preserve">
+    <value>可能被安全软件或组策略拦住了。可以到「设置 → 应用 → 启动」手动确认。</value>
+  </data>
+  <data name="Dashboard.Action.NeedRuntime" xml:space="preserve">
+    <value>需先装运行环境</value>
+  </data>
+  <data name="Dashboard.Action.NeedRuntimeTip" xml:space="preserve">
+    <value>内置运行环境还没装齐。到「设置 → 必要运行环境」点「一键补全」，装好后这里就能启动。</value>
+  </data>
+  <data name="Dashboard.Action.NeedInstance" xml:space="preserve">
+    <value>需先装酒馆实例</value>
+  </data>
+  <data name="Dashboard.Action.NeedInstanceTip" xml:space="preserve">
+    <value>还没有可用的酒馆实例。到「版本管理」安装内置酒馆，或在「资源管理」里添加本地目录。</value>
+  </data>
+  <data name="Dashboard.Browser.System" xml:space="preserve">
+    <value>默认浏览器</value>
+  </data>
+  <data name="Dashboard.A11y.BrowserSystem" xml:space="preserve">
+    <value>默认浏览器</value>
+  </data>
+  <data name="Dashboard.Browser.Hint.NoConfig" xml:space="preserve">
+    <value>还没有酒馆配置文件，先在「酒馆配置」生成或导入一份，再来切换浏览器。</value>
+  </data>
+  <data name="Settings.Runtime.Repair.Action" xml:space="preserve">
+    <value>一键补全</value>
+  </data>
+  <data name="Setup.S3.Action.FillAll" xml:space="preserve">
+    <value>补全环境</value>
+  </data>
+  <data name="Setup.S3.Note.Full" xml:space="preserve">
+    <value>这次会把内置环境一次装齐：Node.js → Git → Caddy → PM2，按顺序安装，中途可以取消。</value>
+  </data>
+  <data name="Setup.Action.Fill" xml:space="preserve">
+    <value>补全</value>
+  </data>
+  <data name="Setup.Action.FillTip" xml:space="preserve">
+    <value>先补全运行环境，装好后就能继续下一步。</value>
   </data>
 </root>

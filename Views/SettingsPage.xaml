@@ -650,7 +650,7 @@
                                         Visibility="Collapsed">
                                         <StackPanel Orientation="Horizontal" Spacing="6">
                                             <FontIcon FontSize="12" Glyph="&#xE90F;" />
-                                            <TextBlock controls:Loc.Text="Common.Fix" />
+                                            <TextBlock controls:Loc.Text="Settings.Runtime.Repair.Action" />
                                         </StackPanel>
                                     </Button>
                                 </StackPanel>

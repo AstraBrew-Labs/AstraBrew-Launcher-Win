@@ -1,0 +1,5 @@
+{
+  "Settings.Runtime.Repair.Ready.Title": ["运行环境已就绪", "Runtime ready"],
+  "Settings.Runtime.Repair.Ready.Hint": ["依赖齐全，不需要修复。", "All dependencies are present."],
+  "Settings.Runtime.Repair.Note": ["这次会把缺失的依赖一次装齐：Node.js → Git → Caddy → PM2，按顺序安装，中途可以取消。", "Installs every missing dependency in one pass: Node.js, Git, Caddy, PM2."]
+}

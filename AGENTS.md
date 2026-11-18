@@ -474,6 +474,31 @@ v[版本号]-[type]     v0.0.0-Beta.0 v0.3.0-Beta.0 v1.0.0-preview.2
   窗口几何是静默写入的（不发 `Changed`），漏了这一步「记住窗口位置」永远存不下来。
 - 设置页右上角的「已保存」徽章读 `SettingsStore.Saved` 事件，不要再用定时器假装保存成功。
 
+### 开机自启动：必须写系统启动项
+
+`auto_launch` 这个布尔值只是**记录用户的意图**，真正让程序开机跑起来的是
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下的 `AstraBrew Launcher` 值
+（`Services/StartupRegistration.cs`）。Windows 的「设置 → 应用 → 启动」和任务管理器读的就是它——
+只存配置的话，用户在系统里永远看不到这一条，会认为开关没生效（也确实没生效）。
+
+- 开关一拨就 `Apply(bool)`：开则写 `"<exe>"`（带引号，路径空格才不会被切），关则删值。
+  写失败不抛异常，改发一条警告提示可能被安全软件 / 组策略拦住。
+- `App.OnLaunched` 里 `EnsureMatchesSetting()` 校准一次：便携版换了目录，旧路径会失效，
+  这里按当前 exe 重写；设置关着却残留一条**指向本 exe** 的，顺手删掉（别人的同名值不碰）。
+- 这个键**不进 MSI 组件表**：它是用户偏好，不该由安装包管；exe 不在了系统会自动跳过。
+
+## 仪表盘「启动」按钮的前置条件
+
+实例没装（`TavernInstance.IsInstalled == false`）或依赖没装齐（`DepsReady == false`）、
+或运行环境缺 Node / npm 时，「启动」点了必然失败。这时：
+`PrimaryActionButton.IsEnabled = false`，文案换成「需先装酒馆实例」/「需先装运行环境」，
+ToolTip 里写清楚去哪装。`PrimaryAction_Click` 里再兜一层同样的判断（键盘回车也能触发）。
+
+- `_instanceReady` 来自 `TavernInstances.Current`，`Instances_Changed` 时重算；
+- `_runtimeReady` 来自 `RuntimeProbe.ProbeAsync(LauncherSettings.Runtime)` 的结果
+  （`Node != null && Npm != null`），探测完由 `SyncRuntimeLabelAsync()` 回写并重算按钮。
+- 两个标记的初值都是 `true`：首帧还没探测完就把按钮画灰，会让人以为坏了。
+
 ### 启动模式只有一个真值
 
 - `LauncherSettings.StartMode`（普通 / 桌面 / 服务器）是**唯一**的模式来源。
@@ -517,7 +542,9 @@ v[版本号]-[type]     v0.0.0-Beta.0 v0.3.0-Beta.0 v1.0.0-preview.2
   给元素起个名字并在这里登记，不要另写一份「小白版页面」。
 - 小白版去掉：界面里的缩放与字体、基础里的 CPU 核心/服务器模式/数据存放/全局数据目录、
   整个控制台、网络里的代理；运行环境收成一行结论（Git / Node.js / WebView2
-  齐全 = 正常，缺任意一项 = 环境缺失 + 「修复」按钮逐个补齐）。
+  齐全 = 正常，缺任意一项 = 环境缺失 + 「一键补全」按钮，内置侧一次装齐整套环境）。
+  那颗按钮**不是逐个弹窗**：走 `RuntimeSetup.Plan(Builtin, Full, profile)` + `InstallTaskDialog`，
+  缺几样就在一个窗里排几行。系统侧仍然只给逐个安装引导（不代装）。
 - 条件行（服务器模式的子行、自定义代理）由 `ApplyConditions()` 再夹一层 `!simple`：
   旧配置里开着它们，也不能在小白版下把子行顶出来。分隔线跟着所属行一起收起，
   否则卡片里会留下孤立的一条线。
@@ -823,6 +850,14 @@ git config --global --unset url."https://gh-proxy.org/https://github.com/".inste
   摆在那反而像还留着选项。现在整行消失，什么都不说。
 - 副标题与项数要跟着变，否则「端口、监听地址、协议栈与默认浏览器」「5 项」会和界面自相矛盾：
   高手版分组副标题切到「端口、监听地址与协议栈」，小白版项数 5 → 3。
+- 仪表盘的快速切换有**四档**：谷歌 / Edge / 火狐 / 默认浏览器（= `BrowserKind.System`）。
+  四个胶囊放在 `controls:WrapPanel` 里，窗口窄时自动折行，不会把最后一颗挤出面板。
+- **下拉框的索引要覆盖四项**：`TavernConfigPage.Browser_SelectionChanged` 里 3 → `System`、
+  `SyncBrowserSelection` 里 `System` → 3。漏了这条会把「默认浏览器」悄悄存成 Chrome，
+  而两边共用 `TavernSettings.Browser`，被坑的是另一个页面。
+- `GlobalTavernConfig.HasGlobalConfig == false`（还没有 config.yaml）时，仪表盘这四个胶囊**整组禁用**
+  并提示先去酒馆配置页生成 / 导入——那会儿写 `browserLaunch.browser` 无处可写，
+  让用户点完以为生效了，是更坏的结果。
 
 ## IP 白名单（两份，服务器模式推导；普通模式记住用户那份）
 
@@ -1417,8 +1452,8 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
   这类技术细节一律下沉到灰字或 (i)，不占主句；路径单独一行灰字（`SetMeta`），必须是展开后的真实路径。
 - **不要动这几个哨兵字符串**：`RuntimeSetup` 产出 `"完成"` / `"准备中…"`，`InstallTaskDialog` 拿它们判行胶囊；
   `MirrorBenchmark` 的 `"已取消"` 也用同一套比较。改文案只改显示侧，比较基准保持原样。
-- **第 3 步必须一屏装下**：两张卡（`MinHeight=168`、`Padding=14,10`、组件行 22 高）+ 单行「胶囊 + 包说明」
-  + 两个按钮；说明单独占一行会把按钮挤出可视区（踩过）。卡头留 26 右边距给 `OptionCardStyle` 的选中角标。
+- **第 3 步必须一屏装下**：两张卡（`MinHeight=168`、`Padding=14,10`、组件行 22 高）+ 两个按钮；
+  再加一行说明就会把按钮挤出可视区（踩过，包选择那行已删）。卡头留 26 右边距给 `OptionCardStyle` 的选中角标。
 - **页脚「先跳过」唯一**：第 2 步限流卡里的按钮叫「跳过这项」，别再出现两颗同名按钮——
   自动化和用户都会点错。
 - **外壳只做三件事**：切面板、按当前面板算页脚（`NextButton.IsEnabled = CanContinue && !IsBusy`）、
@@ -1506,23 +1541,30 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
 ### 第 3 步 · 运行环境（`Services/RuntimeSetup.cs`）
 
 - 两侧（内置 / 系统）各出一张卡片，组件状态来自 `RuntimeProbe`；每行都有 (i) 说明「用途 / 缺失后果」。
-- **基础包 = Node.js + npm**（普通模式跑酒馆的最小集合），Git / Caddy / PM2 属完整包，缺了不挡路。
-- **按钮能不能点，看「这一包还剩几项」**：`RuntimeSetup.Plan(side, _package, profile).Count`。只装必需且已齐 → 0 项，
-  按钮显示「已经装齐了」并禁用（否则点下去只弹一句「这边已经齐了」，用户以为能补全）；
-  完整包全齐时保留「重装一遍」入口。
+- **不再让人选包**：以前有「基础包 / 完整包」两个胶囊，可引导阶段用户根本无从判断该选哪个；
+  少装 Git 的话，下一步测速直接跑不起来。现在**恒装完整包**（Node → Git → Caddy → PM2），
+  按钮文案固定「补全环境」，全齐了变「已经装齐了」并禁用。
+- **两侧都跑不起来时默认选内置**（`AutoSelectSide`）：内置是启动器能自己装好的那一侧。
+  以前这里给 `null`，两张红卡都不选中，用户只能自己猜该点哪边。
+- **页脚按钮会变成「补全」**：`IOnboardingStep` 有两个默认成员（`WantsPrimaryAction` /
+  `PrimaryActionAsync`），只有这一步覆写。内置侧没到 `BasicReady` 时，
+  `OnboardingView.UpdateFooter` 把「下一步」换成「补全」并且**可点**，`Next_Click` 走
+  `PrimaryActionAsync()` 就地开装（不进下一步）；装完 `CanContinue` 变真，按钮自己变回「下一步」。
+  其余三步不覆写，行为不变。
 - 自动选中「能跑的那一侧」并写 `LauncherSettings.Runtime`（全局只有一套运行环境，
   引导里选的和仪表盘显示必须同源）。
 - **切换环境不弹安装窗**：`Side_Checked` 只刷新卡片与按钮。用户可能只是想看看这边缺什么，
-  自动弹窗会像「已经动手装了」，而且默认包会让人误以为只装一项就完事。
-- **安装窗顶部写清「这一包的范围」**：`InstallTaskDialog.ShowAsync(..., note: ...)`。
-  默认选「只装必需」时清单里只有 Node.js（npm 随 Node 一起），不加说明就像漏了
-  Git / Caddy / PM2；`note` 写「这次只装基础包（Node.js + npm）。Git、Caddy、PM2 在下面的「一次装齐」里」。
-  选「一次装齐」时清单会真的列出 Git / Caddy / PM2 三项（已实测）。
+  自动弹窗会像「已经动手装了」。
+- **安装窗顶部写清补全范围**：`InstallTaskDialog.ShowAsync(..., note: L.Get("Setup.S3.Note.Full"))`，
+  文案是「Node.js → Git → Caddy → PM2，按顺序安装，中途可以取消」，否则一套四行会显得莫名其妙。
 - 内置侧走 `InstallTaskDialog`：`ContentDialog.Closing` 里取消关闭（倒计时阶段与安装结束后放行），
   3 秒倒计时自动开始，行内进度 + 总进度按权重合成，串行安装（PM2 依赖 Node）。
-  系统侧**不代装**（要 UAC / msi 交互）：主按钮 `InstallButton` 在系统侧是**禁用态**（`IsEnabled = !_busy && builtin`）+ ToolTip 说明，旁边一颗 `SystemHelpButton`「缺什么？」用 `GhostButtonStyle` 进说明窗；`Side_Checked` 的自动弹窗只对内置侧生效。
-  **按钮状态要在 `RefreshAsync` 的 finally 里再算一次**——探测期间 `_busy = true`，那时算出来的永远是禁用，漏了这一步切到内置也一直是灰的（踩过）。
+  系统侧**不代装**（要 UAC / msi 交互）：`InstallButton` 在系统侧直接 `Collapsed`，旁边一颗
+  `SystemHelpButton`「缺什么？」用 `GhostButtonStyle` 进说明窗。
+  **按钮状态要在 `RefreshAsync` 的 finally 里再算一次**——探测期间 `_busy = true`，那时算出来的永远是禁用（踩过）。
 - 装完必须 `ProbeAsync(force: true)` 重探，卡片版本号只能来自磁盘。
+- 取消安装后弹窗会停在「已取消安装。」等用户点「关闭」，此时 `_busy` 仍是 true、页脚是灰的——这是正常时序，
+  关掉弹窗后 `InstallAsync` 才继续走到重探。别把这个状态当成卡死。
 
 **PM2 的装法与共享**（`Services/Pm2Installer.cs`）：
 

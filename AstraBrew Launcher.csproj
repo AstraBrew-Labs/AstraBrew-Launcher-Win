@@ -113,6 +113,18 @@
   <ItemGroup Condition="'$(DisableMsixProjectCapabilityAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
     <ProjectCapability Include="Msix" />
   </ItemGroup>
+  <!--
+    installer/ 下有自己的项目（Setup：提权引导器）。主项目默认把 **\*.cs 全收进来，
+    会把那个 Program.cs 一起编译，结果是主程序里多一个 Main、还缺一堆 using。
+    这里整体排除，两个项目各编各的。
+  -->
+  <ItemGroup>
+    <Compile Remove="installer\**" />
+    <EmbeddedResource Remove="installer\**" />
+    <None Remove="installer\**" />
+    <Page Remove="installer\**" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
     <!--  设备访问弹窗里的二维码：只用它的矩阵（QRCodeData），画到 XAML 里，不碰 System.Drawing  -->

@@ -438,7 +438,7 @@ namespace AstraBrew_Launcher.Services
             _serviceScope = ServiceScopeSetting.Lan;
             _userWhitelist = string.Empty;
             _allowBackground = true;
-            _dataLocation = DataLocationMode.CurrentInstance;
+            _dataLocation = DataLocationMode.Global;
             _showStartupCommand = true;
             _runtime = RuntimeSource.Builtin;
             _npmRegistry = NpmRegistrySource.Npmmirror;
@@ -474,7 +474,7 @@ namespace AstraBrew_Launcher.Services
         private static ServiceScopeSetting _serviceScope = ServiceScopeSetting.Lan;
         private static string _userWhitelist = string.Empty;
         private static bool _allowBackground = true;
-        private static DataLocationMode _dataLocation = DataLocationMode.CurrentInstance;
+        private static DataLocationMode _dataLocation = DataLocationMode.Global;
         private static bool _showStartupCommand = true;
         private static RuntimeSource _runtime = RuntimeSource.Builtin;
         private static NpmRegistrySource _npmRegistry = NpmRegistrySource.Npmmirror;

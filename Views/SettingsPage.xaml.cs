@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AstraBrew_Launcher.Services;
 using AstraBrew_Launcher.Views.Controls;
+using AstraBrew_Launcher.Views.Onboarding;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -1149,8 +1150,20 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            LauncherSettings.SetAutoLaunch(AutoLaunchSwitch.IsOn);
+            // 真正的「开机自启」是注册表里的启动项，不是这个布尔值本身：
+            // 只存配置的话，Windows 的「启动应用」列表里什么都看不到（用户以为没生效）。
+            bool enabled = AutoLaunchSwitch.IsOn;
+            bool ok = StartupRegistration.Apply(enabled);
+
+            LauncherSettings.SetAutoLaunch(enabled);
             MarkDirty();
+
+            if (!ok)
+            {
+                AppNotify.Warning(
+                    L.Get("Settings.AutoStart.Failed.Title"),
+                    L.Get("Settings.AutoStart.Failed.Hint"));
+            }
         }
 
         private void CpuPicker_SelectionChanged(object sender, EventArgs e)
@@ -1330,6 +1343,44 @@ namespace AstraBrew_Launcher.Views
         /// </summary>
         private async void RepairRuntime_Click(object sender, RoutedEventArgs e)
         {
+            // 内置环境：与引导里的「一次装齐」走同一套多任务弹窗，
+            // 缺几样就在同一个窗口里排几行，而不是一个个弹、每装完一个再弹一次。
+            if (LauncherSettings.Runtime == RuntimeSource.Builtin)
+            {
+                RepairRuntimeButton.IsEnabled = false;
+                try
+                {
+                    RuntimeProfile profile = await RuntimeSetup.DescribeAsync(RuntimeSide.Builtin, force: true);
+                    IReadOnlyList<RuntimeTask> tasks = RuntimeSetup.Plan(
+                        RuntimeSide.Builtin,
+                        RuntimePackage.Full,
+                        profile);
+
+                    if (tasks.Count == 0)
+                    {
+                        AppNotify.Success(
+                            L.Get("Settings.Runtime.Repair.Ready.Title"),
+                            L.Get("Settings.Runtime.Repair.Ready.Hint"));
+                        return;
+                    }
+
+                    await InstallTaskDialog.ShowAsync(
+                        XamlRoot,
+                        tasks,
+                        autoStart: true,
+                        note: L.Get("Settings.Runtime.Repair.Note"));
+
+                    await RefreshEnvironmentAsync(force: true);
+                }
+                finally
+                {
+                    RepairRuntimeButton.IsEnabled = true;
+                }
+
+                return;
+            }
+
+            // 系统侧：那些依赖是用户自己装的，我们只逐个给出安装引导
             if (CurrentEnvironment is null)
             {
                 return;

@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    setup.exe：自带界面的安装向导（Tauri 2 / NSIS 那种布局），内嵌一份静默 MSI。
+
+    为什么不再让 MSI 显示自己的向导：
+    WiX 的 WixUI 是 Windows Installer 的老式对话框（灰底、左对齐文字、系统按钮），
+    和现代安装包的观感差得远。这里自己画界面，MSI 只负责真正的安装动作，
+    进度由 MsiSetExternalUI 的进度消息驱动，实时且准确。
+
+    由 tools/package.ps1 调用，参数：
+      -p MsiPath      要内嵌的 msi
+      -p AssemblyName 产出 exe 的文件名（不带扩展名）
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName Condition="'$(AssemblyName)' == ''">AstraBrewLauncher-setup</AssemblyName>
+    <RootNamespace>AstraBrewSetup</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\Assets\app.ico</ApplicationIcon>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!--  WinForms 不支持裁剪：硬开会把反射用到的类型剪掉，界面一开就炸  -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <Version>1.0.0.0</Version>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+
+    <!--  产品名与版本由 package.ps1 传进来（非正式版带渠道后缀），界面直接显示这两个  -->
+    <ProductDisplayName Condition="'$(ProductDisplayName)' == ''">AstraBrew Launcher</ProductDisplayName>
+    <ProductVersionLabel Condition="'$(ProductVersionLabel)' == ''">1.0.0</ProductVersionLabel>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="ProductDisplayName" Value="$(ProductDisplayName)" />
+    <AssemblyMetadata Include="ProductVersionLabel" Value="$(ProductVersionLabel)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--  MSI 以资源形式嵌进 exe：分发时只有一个文件  -->
+    <EmbeddedResource Include="$(MsiPath)" LogicalName="payload.msi" Condition="'$(MsiPath)' != ''" />
+  </ItemGroup>
+
+</Project>

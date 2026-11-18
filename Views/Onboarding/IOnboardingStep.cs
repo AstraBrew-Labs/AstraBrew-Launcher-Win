@@ -28,6 +28,20 @@ namespace AstraBrew_Launcher.Views.Onboarding
         /// <summary>不能继续时的原因，写进按钮 ToolTip。</summary>
         string? BlockingReason { get; }
 
+        /// <summary>
+        /// 页脚主按钮要不要换成「补全」并且点了就地干活（而不是进下一步）。
+        /// 目前只有「运行环境」这一步会用到：环境没装齐时，「下一步」是灰的，
+        /// 与其让用户自己在页面里找按钮，不如把页脚那颗直接变成补全。
+        /// 默认 false —— 其余步骤行为不变。
+        /// </summary>
+        bool WantsPrimaryAction => false;
+
+        /// <summary>
+        /// 页脚主按钮在 <see cref="WantsPrimaryAction"/> 为 true 时被点击。
+        /// 默认什么都不做，避免每个步骤都被迫实现一遍。
+        /// </summary>
+        Task PrimaryActionAsync() => Task.CompletedTask;
+
         /// <summary>进入本步：启动检测 / 读取磁盘现状。</summary>
         Task EnterAsync(CancellationToken token);
 

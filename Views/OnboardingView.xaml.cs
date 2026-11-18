@@ -26,8 +26,11 @@ namespace AstraBrew_Launcher.Views
         private static readonly (string Title, string Description)[] Steps =
         {
             (L.Get("Setup.Step1.Title"), L.Get("Setup.Step1.Hint")),
-            (L.Get("Setup.Step2.Title"), L.Get("Setup.Step2.Hint")),
+
+            // 第 2 步是「装运行环境」、第 3 步才是「网络检测」：测速与源检查要用到 Git，
+            // 环境还没装时那一步的检测根本跑不起来，顺序反了会让人误以为网络有问题。
             (L.Get("Setup.Step3.Title"), L.Get("Setup.Step3.Hint")),
+            (L.Get("Setup.Step2.Title"), L.Get("Setup.Step2.Hint")),
             (L.Get("Setup.Step4.Title"), L.Get("Setup.Step4.Hint")),
         };
 
@@ -49,14 +52,14 @@ namespace AstraBrew_Launcher.Views
             InitializeComponent();
 
             _rail = new[] { Rail1, Rail2, Rail3, Rail4 };
-            _panels = new IOnboardingStep[] { Step1, Step2, Step3, Step4 };
+            _panels = new IOnboardingStep[] { Step1, Step3, Step2, Step4 };
 
             foreach (IOnboardingStep panel in _panels)
             {
                 panel.StateChanged += Panel_StateChanged;
             }
 
-            Step4.BackToRuntimeRequested += (_, _) => GoToStep(3);
+            Step4.BackToRuntimeRequested += (_, _) => GoToStep(2);
         }
 
         /// <summary>重置到第 1 步并恢复可见状态（每次展示前调用）。</summary>
@@ -97,10 +100,14 @@ namespace AstraBrew_Launcher.Views
 
             _step = step;
 
-            Step1.Visibility = step == 1 ? Visibility.Visible : Visibility.Collapsed;
-            Step2.Visibility = step == 2 ? Visibility.Visible : Visibility.Collapsed;
-            Step3.Visibility = step == 3 ? Visibility.Visible : Visibility.Collapsed;
-            Step4.Visibility = step == 4 ? Visibility.Visible : Visibility.Collapsed;
+            // 可见性跟着 _panels 的顺序走：以后调换步骤只改数组，不必回来改这四行
+            for (var i = 0; i < _panels.Length; i++)
+            {
+                if (_panels[i] is FrameworkElement element)
+                {
+                    element.Visibility = i == step - 1 ? Visibility.Visible : Visibility.Collapsed;
+                }
+            }
 
             StepEyebrow.Text = L.F("Setup.Step.Eyebrow", step, TotalSteps);
             StepTitle.Text = Steps[step - 1].Title;
@@ -173,10 +180,23 @@ namespace AstraBrew_Launcher.Views
 
             IOnboardingStep panel = _panels[_step - 1];
 
-            NextButton.Content = L.Get(_step == TotalSteps ? "Setup.Action.Finish" : "Setup.Action.Next");
-            NextButton.IsEnabled = panel.CanContinue && !panel.IsBusy;
+            // 环境没装齐时，页脚那颗按钮变成「补全」：点一下就开装，装完自己变回「下一步」。
+            // 这样用户不用在页面里再找一遍按钮，也不会对着灰掉的「下一步」干等。
+            bool repair = panel.WantsPrimaryAction;
 
-            ToolTipService.SetToolTip(NextButton, panel.CanContinue ? null : panel.BlockingReason);
+            NextButton.Content = L.Get(repair
+                ? "Setup.Action.Fill"
+                : _step == TotalSteps
+                    ? "Setup.Action.Finish"
+                    : "Setup.Action.Next");
+
+            NextButton.IsEnabled = repair || (panel.CanContinue && !panel.IsBusy);
+
+            ToolTipService.SetToolTip(
+                NextButton,
+                repair
+                    ? L.Get("Setup.Action.FillTip")
+                    : panel.CanContinue ? null : panel.BlockingReason);
 
             // 长任务在跑时不拦「跳过」，但会先把它取消掉（Finish 里做）
             SkipButton.IsEnabled = true;
@@ -184,8 +204,17 @@ namespace AstraBrew_Launcher.Views
 
         // ==================== 底部操作 ====================
 
-        private void Next_Click(object sender, RoutedEventArgs e)
+        private async void Next_Click(object sender, RoutedEventArgs e)
         {
+            IOnboardingStep panel = _panels[_step - 1];
+
+            // 「补全」只是就地装环境，不进下一步：装完按钮会重算，变成正常的「下一步」
+            if (panel.WantsPrimaryAction)
+            {
+                await panel.PrimaryActionAsync();
+                return;
+            }
+
             if (_step >= TotalSteps)
             {
                 Finish(OnboardingResult.Completed);

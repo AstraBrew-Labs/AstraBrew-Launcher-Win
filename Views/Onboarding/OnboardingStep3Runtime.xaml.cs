@@ -21,8 +21,9 @@ namespace AstraBrew_Launcher.Views.Onboarding
     /// 选择会**落到 <see cref="LauncherSettings.Runtime"/>**，因为启动器全局只有一套运行环境，
     /// 引导里选的和仪表盘显示的不是同一个东西，那是 bug。
     ///
-    /// 基础包只要求 Node + npm：普通模式跑酒馆就需要这些。Git / Caddy / PM2 属于完整包，
-    /// 缺了不挡路，装不齐也能点下一步。
+    /// 内置侧的补全**一次装满**：Node → Git → Caddy → PM2。以前还让人在
+    /// 「基础包 / 完整包」之间选，可引导阶段用户根本无从判断该选哪个，
+    /// 少装了 Git 到第 3 步测速时又会失败——不如直接全装。
     /// </summary>
     public sealed partial class OnboardingStep3Runtime : UserControl, IOnboardingStep
     {
@@ -33,8 +34,6 @@ namespace AstraBrew_Launcher.Views.Onboarding
         private RuntimeProfile? _system;
 
         private RuntimeSide? _selected;
-
-        private RuntimePackage _package = RuntimePackage.Basic;
 
         private CancellationTokenSource? _cts;
 
@@ -50,6 +49,19 @@ namespace AstraBrew_Launcher.Views.Onboarding
         public bool CanContinue => !_busy && SelectedProfile is { BasicReady: true };
 
         public bool IsBusy => _busy;
+
+        /// <summary>
+        /// 页脚主按钮是否该承担「补全」：内置侧还没到能跑的程度时，把「下一步」换成「补全」，
+        /// 点一下就地开装，装完按钮自己变回「下一步」。
+        /// 系统侧不代装，所以那边永远是「下一步」（缺失时是禁用 + 原因提示）。
+        /// </summary>
+        public bool WantsPrimaryAction =>
+            !_busy &&
+            _selected == RuntimeSide.Builtin &&
+            SelectedProfile is { BasicReady: false };
+
+        /// <summary>页脚点了「补全」：与卡里那颗按钮走同一条路。</summary>
+        public Task PrimaryActionAsync() => InstallAsync();
 
         public string? BlockingReason
         {
@@ -99,15 +111,12 @@ namespace AstraBrew_Launcher.Views.Onboarding
             _builtin = null;
             _system = null;
             _selected = null;
-            _package = RuntimePackage.Basic;
             _busy = false;
 
             BuiltinComponents.Children.Clear();
             SystemComponents.Children.Clear();
 
             _syncing = true;
-            PackageBasic.IsChecked = true;
-            PackageFull.IsChecked = false;
             OptionBuiltin.IsChecked = false;
             OptionSystem.IsChecked = false;
             _syncing = false;
@@ -158,14 +167,16 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             _syncing = true;
 
-            // 只有一侧能跑就选它；都能跑就沿用用户原本的偏好；都不能跑就都不选
-            RuntimeSide? choice = _builtin.BasicReady && _system.BasicReady
+            // 只有一侧能跑就选它；都能跑就沿用用户原本的偏好；
+            // 两边都跑不起来时**默认选内置**——内置是启动器能自己装好的那一侧，
+            // 选空只会让用户对着两张红卡发呆，还得自己猜该点哪边。
+            RuntimeSide choice = _builtin.BasicReady && _system.BasicReady
                 ? LauncherSettings.Runtime == RuntimeSource.Builtin ? RuntimeSide.Builtin : RuntimeSide.System
                 : _builtin.BasicReady
                     ? RuntimeSide.Builtin
                     : _system.BasicReady
                         ? RuntimeSide.System
-                        : null;
+                        : RuntimeSide.Builtin;
 
             OptionBuiltin.IsChecked = choice == RuntimeSide.Builtin;
             OptionSystem.IsChecked = choice == RuntimeSide.System;
@@ -173,10 +184,8 @@ namespace AstraBrew_Launcher.Views.Onboarding
             _selected = choice;
             _syncing = false;
 
-            if (choice is { } side)
-            {
-                LauncherSettings.SetRuntime(side == RuntimeSide.Builtin ? RuntimeSource.Builtin : RuntimeSource.System);
-            }
+            // 两边都缺时把来源也落成内置：后面补全装的就是内置那套
+            LauncherSettings.SetRuntime(choice == RuntimeSide.Builtin ? RuntimeSource.Builtin : RuntimeSource.System);
         }
 
         private void RenderComponents(Panel host, RuntimeProfile profile)
@@ -319,21 +328,6 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
         // ==================== 交互 ====================
 
-        private void Package_Checked(object sender, RoutedEventArgs e)
-        {
-            if (_syncing)
-            {
-                return;
-            }
-
-            _package = PackageFull.IsChecked == true ? RuntimePackage.Full : RuntimePackage.Basic;
-            PackageHint.Text = L.Get(_package == RuntimePackage.Basic
-                ? "Setup.S3.Package.Basic.Label"
-                : "Setup.S3.Package.Full.Label");
-
-            UpdateActionRow();
-        }
-
         private void Side_Checked(object sender, RoutedEventArgs e)
         {
             if (_syncing)
@@ -357,54 +351,31 @@ namespace AstraBrew_Launcher.Views.Onboarding
             RuntimeProfile? profile = SelectedProfile;
             bool builtin = _selected == RuntimeSide.Builtin;
 
-            InstallButton.Visibility = profile is null ? Visibility.Collapsed : Visibility.Visible;
+            // 系统侧不能代装：那颗按钮点了只会弹一张说明，摆出来纯属噪音
+            InstallButton.Visibility = profile is null || !builtin ? Visibility.Collapsed : Visibility.Visible;
 
             if (profile is null)
             {
-                InstallButtonText.Text = L.Get("Setup.S3.Action.Install");
+                InstallButtonText.Text = L.Get("Setup.S3.Action.FillAll");
                 SystemHelpButton.Visibility = Visibility.Collapsed;
                 return;
             }
 
-            // 当前这一包到底还剩几项要装：只装必需且已经齐了就是 0 项，
-            // 这时按钮必须禁掉——否则点下去只弹一句「这边已经齐了」，用户以为能补全
+            // 永装完整包：缺几项就排几项，全齐了就把按钮标成「已齐全」并禁掉
             int pending = builtin
-                ? RuntimeSetup.Plan(RuntimeSide.Builtin, _package, profile).Count
+                ? RuntimeSetup.Plan(RuntimeSide.Builtin, RuntimePackage.Full, profile).Count
                 : 0;
 
-            // 完整包全齐时留一个「重装一遍」的入口（换机器、装坏了要用），
-            // 只装必需全齐就不给重装——那一步本来就没东西可装
-            bool canReinstall = builtin && _package == RuntimePackage.Full && profile.FullReady;
-            bool nothingToInstall = pending == 0 && !canReinstall;
-
-            InstallButtonText.Text = !builtin
-                ? profile.BasicReady && profile.FullReady
-                    ? L.Get("Setup.S3.Action.Reinstall")
-                    : profile.BasicReady
-                        ? L.Get("Setup.S3.Action.FillMissing")
-                        : L.Get("Setup.S3.Action.Install")
-                : canReinstall
-                    ? L.Get("Setup.S3.Action.Reinstall")
-                    : nothingToInstall
-                        ? L.Get("Setup.S3.Action.AllSet")
-                        : profile.BasicReady
-                            ? L.Get("Setup.S3.Action.FillMissing")
-                            : L.Get("Setup.S3.Action.Install");
-
-            // 自动安装只有内置侧支持：系统侧点它只会弹一张说明，摆成可点等于骗人
-            InstallButton.IsEnabled = !_busy && builtin && !nothingToInstall;
+            InstallButtonText.Text = pending == 0
+                ? L.Get("Setup.S3.Action.AllSet")
+                : L.Get("Setup.S3.Action.FillAll");
+            InstallButton.IsEnabled = !_busy && builtin && pending > 0;
 
             ToolTipService.SetToolTip(
                 InstallButton,
-                !builtin
-                    ? L.Get("Setup.S3.Tip.System")
-                    : nothingToInstall
-                        ? L.Get("Setup.S3.Tip.Nothing")
-                        : null);
+                builtin && pending == 0 ? L.Get("Setup.S3.Tip.Nothing") : null);
 
-            SystemHelpButton.Visibility = profile is null || builtin
-                ? Visibility.Collapsed
-                : Visibility.Visible;
+            SystemHelpButton.Visibility = builtin ? Visibility.Collapsed : Visibility.Visible;
             SystemHelpButton.IsEnabled = !_busy;
         }
 
@@ -442,15 +413,13 @@ namespace AstraBrew_Launcher.Views.Onboarding
                 return;
             }
 
-            IReadOnlyList<RuntimeTask> tasks = RuntimeSetup.Plan(side, _package, profile);
+            IReadOnlyList<RuntimeTask> tasks = RuntimeSetup.Plan(side, RuntimePackage.Full, profile);
 
             if (tasks.Count == 0)
             {
                 AppNotify.Success(
                     L.Get("Setup.S3.Notify.Ready.Title"),
-                    L.Get(_package == RuntimePackage.Basic
-                        ? "Setup.S3.Notify.Ready.Basic"
-                        : "Setup.S3.Notify.Ready.Full"));
+                    L.Get("Setup.S3.Notify.Ready.Full"));
                 return;
             }
 
@@ -459,12 +428,11 @@ namespace AstraBrew_Launcher.Views.Onboarding
 
             try
             {
-                // 清单只有 Node.js 时别让人以为漏了：把「当前包的范围」写在弹窗顶上
-                string? note = _package == RuntimePackage.Basic
-                    ? L.Get("Setup.S3.Note.Basic")
-                    : null;
-
-                await InstallTaskDialog.ShowAsync(XamlRoot, tasks, autoStart: true, note: note);
+                await InstallTaskDialog.ShowAsync(
+                    XamlRoot,
+                    tasks,
+                    autoStart: true,
+                    note: L.Get("Setup.S3.Note.Full"));
             }
             finally
             {

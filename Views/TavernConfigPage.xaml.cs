@@ -286,6 +286,10 @@ namespace AstraBrew_Launcher.Views
             {
                 1 => BrowserKind.Edge,
                 2 => BrowserKind.Firefox,
+
+                // 第 4 项是「默认浏览器」：漏了这一条会把 System 悄悄存成 Chrome，
+                // 仪表盘那边就永远显示不出「默认浏览器」被选中（两边同一份设置，坑的是对面）
+                3 => BrowserKind.System,
                 _ => BrowserKind.Chrome,
             };
 
@@ -298,6 +302,7 @@ namespace AstraBrew_Launcher.Views
             {
                 BrowserKind.Edge => 1,
                 BrowserKind.Firefox => 2,
+                BrowserKind.System => 3,
                 _ => 0,
             };
 

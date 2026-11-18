@@ -645,7 +645,11 @@
                             <!--  仅普通模式：默认浏览器  -->
                             <StackPanel x:Name="NormalModePanel" Spacing="10">
                                 <TextBlock Style="{StaticResource FieldLabelTextStyle}" controls:Loc.Text="Dashboard.Browser.Label" />
-                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                <!--
+                                    四个胶囊用 WrapPanel：窗口窄下来时自动折行，
+                                    否则「默认浏览器」会被挤出面板右边缘。
+                                -->
+                                <controls:WrapPanel HorizontalSpacing="8" VerticalSpacing="8">
                                     <RadioButton
                                         x:Name="ChromeRadio"
                                         controls:Loc.Name="Dashboard.A11y.BrowserChrome"
@@ -668,7 +672,18 @@
                                         controls:Loc.Content="Dashboard.Browser.Firefox"
                                         GroupName="Browser"
                                         Style="{StaticResource ChoiceChipRadioStyle}" />
-                                </StackPanel>
+                                    <!--
+                                        跟随系统默认：与酒馆配置里的「默认浏览器」是同一个值
+                                        （TavernSettings.Browser == System），两边随时保持一致。
+                                    -->
+                                    <RadioButton
+                                        x:Name="SystemRadio"
+                                        controls:Loc.Name="Dashboard.A11y.BrowserSystem"
+                                        Checked="Browser_Checked"
+                                        controls:Loc.Content="Dashboard.Browser.System"
+                                        GroupName="Browser"
+                                        Style="{StaticResource ChoiceChipRadioStyle}" />
+                                </controls:WrapPanel>
                                 <TextBlock
                                     x:Name="BrowserHint"
                                     Style="{StaticResource FootnoteTextStyle}"

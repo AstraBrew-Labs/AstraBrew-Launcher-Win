@@ -71,6 +71,10 @@ namespace AstraBrew_Launcher
             // 免安装版没有安装程序，协议注册靠这里每次启动自查一遍（已安装版由 MSI 负责）
             UriScheme.EnsureRegistered();
 
+            // 开机自启动：设置里开着就把 Run 项指到当前 exe（便携版换了目录也不会失效），
+            // 关着则清掉残留。这一条必须在 UI 起来之前做，用户一开设置页看到的就是真实状态。
+            StartupRegistration.EnsureMatchesSetting();
+
             // 带链接启动、而已经有一个实例在跑：把链接递过去，本进程直接退场——
             // 绝不能让浏览器点一下链接就多出一个窗口。
             if (!SingleInstance.TryAcquire() &&

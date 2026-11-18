@@ -39,6 +39,15 @@ namespace AstraBrew_Launcher.Views
         /// <summary>下拉框当前承载的清单快照，只有清单变化才重建控件。</summary>
         private string _versionSignature = string.Empty;
 
+        /// <summary>
+        /// 运行环境是否齐（Node + npm）。先按「齐」处理：首帧还没探测完就把按钮画成灰的，
+        /// 会让人以为坏了；探测只要几百毫秒，探测完再翻。
+        /// </summary>
+        private bool _runtimeReady = true;
+
+        /// <summary>当前实例是否可用（内置要真的装过，且依赖装齐）。</summary>
+        private bool _instanceReady = true;
+
         public DashboardPage()
         {
             InitializeComponent();
@@ -240,6 +249,9 @@ namespace AstraBrew_Launcher.Views
             {
                 RuntimeEnvironment env = await RuntimeProbe.ProbeAsync(LauncherSettings.Runtime);
                 TavernInstances.SetRuntimeLabel(env.Node);
+
+                // 酒馆跑起来要有 Node 与 npm；缺了任一项，启动按钮点了也只会失败
+                _runtimeReady = env.Node is not null && env.Npm is not null;
             }
             catch
             {
@@ -247,6 +259,9 @@ namespace AstraBrew_Launcher.Views
             }
 
             UpdateEnvironmentText();
+
+            // 探测结果直接决定「启动」能不能点：没装 Node 时那颗按钮必须灰掉
+            SetServiceRunning();
         }
 
         private void UpdateEnvironmentText()
@@ -296,6 +311,7 @@ namespace AstraBrew_Launcher.Views
             ChromeRadio.IsChecked = TavernSettings.Browser == BrowserKind.Chrome;
             EdgeRadio.IsChecked = TavernSettings.Browser == BrowserKind.Edge;
             FirefoxRadio.IsChecked = TavernSettings.Browser == BrowserKind.Firefox;
+            SystemRadio.IsChecked = TavernSettings.Browser == BrowserKind.System;
 
             LanRadio.IsChecked = TavernSettings.Scope == ServiceScope.Lan;
             WanRadio.IsChecked = TavernSettings.Scope == ServiceScope.Wan;
@@ -306,14 +322,33 @@ namespace AstraBrew_Launcher.Views
             // 以前这里写死「用 xxx 浏览器打开」，桌面模式下点下去开的是内嵌窗口
             SyncOpenTavernAction();
 
-            if (BrowserHint is not null)
+            ApplyBrowserAvailability();
+        }
+
+        /// <summary>
+        /// 没有酒馆配置文件（config.yaml）时，浏览器选择没地方落：
+        /// 写不进文件，用户还会以为「改好了却一直用旧浏览器」。这种情况把整组禁掉，
+        /// 并说清楚先去酒馆配置页生成 / 导入一份。
+        /// </summary>
+        private void ApplyBrowserAvailability()
+        {
+            if (ChromeRadio is null || BrowserHint is null)
             {
-                // 三个 chip 全不选中表示「跟随系统」，这件事得说出来，
-                // 不然用户只会看到一排都没亮的按钮
-                BrowserHint.Text = L.Get(TavernSettings.Browser == BrowserKind.System
+                return;
+            }
+
+            bool editable = GlobalTavernConfig.HasGlobalConfig;
+
+            ChromeRadio.IsEnabled = editable;
+            EdgeRadio.IsEnabled = editable;
+            FirefoxRadio.IsEnabled = editable;
+            SystemRadio.IsEnabled = editable;
+
+            BrowserHint.Text = L.Get(!editable
+                ? "Dashboard.Browser.Hint.NoConfig"
+                : TavernSettings.Browser == BrowserKind.System
                     ? "Dashboard.Browser.Hint.System"
                     : "Dashboard.Browser.Hint.Custom");
-            }
         }
 
         private void Shared_Changed(object? sender, EventArgs e)
@@ -437,6 +472,12 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
+            // 按钮已经灰掉，这里再兜一层：键盘回车或快捷键也可能走到这条路上
+            if (!TavernInstances.Current.IsInstalled || !TavernInstances.Current.DepsReady || !_runtimeReady)
+            {
+                return;
+            }
+
             if (state.IsRunning)
             {
                 AppNotify.Info(
@@ -489,6 +530,9 @@ namespace AstraBrew_Launcher.Views
         {
             SyncFromCatalog();
             UpdateEnvironmentText();
+
+            // 换了实例、装了新实例之后，「启动」能不能点要重算
+            SetServiceRunning();
         }
 
         private void SyncFromCatalog()
@@ -788,14 +832,16 @@ namespace AstraBrew_Launcher.Views
 
             if (!_syncing)
             {
-                // 三个 chip 全不选中 = 跟随系统（官方配置里的 default）
-                BrowserKind browser = EdgeRadio.IsChecked == true
-                    ? BrowserKind.Edge
-                    : FirefoxRadio.IsChecked == true
-                        ? BrowserKind.Firefox
-                        : ChromeRadio.IsChecked == true
-                            ? BrowserKind.Chrome
-                            : BrowserKind.System;
+                // 四个 chip 一一对应四种取值；都未选中只可能是同步过程中的中间态
+                BrowserKind browser = SystemRadio.IsChecked == true
+                    ? BrowserKind.System
+                    : EdgeRadio.IsChecked == true
+                        ? BrowserKind.Edge
+                        : FirefoxRadio.IsChecked == true
+                            ? BrowserKind.Firefox
+                            : ChromeRadio.IsChecked == true
+                                ? BrowserKind.Chrome
+                                : BrowserKind.System;
 
                 TavernSettings.Browser = browser;
 
@@ -805,12 +851,7 @@ namespace AstraBrew_Launcher.Views
 
             OpenTavernHint.Text = L.F("Dashboard.Action.OpenWith", TavernSettings.BrowserName);
 
-            if (BrowserHint is not null)
-            {
-                BrowserHint.Text = L.Get(TavernSettings.Browser == BrowserKind.System
-                    ? "Dashboard.Browser.Hint.System"
-                    : "Dashboard.Browser.Hint.Custom");
-            }
+            ApplyBrowserAvailability();
         }
 
         private static string BrowserKey(BrowserKind browser) => browser switch
@@ -1119,13 +1160,38 @@ namespace AstraBrew_Launcher.Views
                 StopStatusPulse();
             }
 
+            // 实例没装 / 依赖没装齐 / 运行环境缺失时，「启动」是个必然失败的按钮：
+            // 禁掉它，并把文案换成「接下来该去装什么」，比让用户点出一个报错更有用。
+            _instanceReady = TavernInstances.Current is { IsInstalled: true, DepsReady: true };
+            bool blocked = !running && (!_instanceReady || !_runtimeReady);
+
             // 没在跑时主按钮是「启动」，跑起来才变成「重启」——一个按钮兼顾两件事，
             // 也避免「停止状态点重启什么都不会发生」
-            PrimaryActionButton.IsEnabled = !busy;
-            PrimaryActionText.Text = L.Get(running
-                ? "Dashboard.Action.Restart"
-                : "Dashboard.Action.Start");
-            PrimaryActionGlyph.Glyph = running ? "\uE72C" : "\uE768";
+            PrimaryActionButton.IsEnabled = !busy && !blocked;
+
+            if (blocked)
+            {
+                PrimaryActionText.Text = L.Get(_instanceReady
+                    ? "Dashboard.Action.NeedRuntime"
+                    : "Dashboard.Action.NeedInstance");
+                PrimaryActionGlyph.Glyph = "\uE7BA";
+            }
+            else
+            {
+                PrimaryActionText.Text = L.Get(running
+                    ? "Dashboard.Action.Restart"
+                    : "Dashboard.Action.Start");
+                PrimaryActionGlyph.Glyph = running ? "\uE72C" : "\uE768";
+            }
+
+            ToolTipService.SetToolTip(
+                PrimaryActionButton,
+                blocked
+                    ? L.Get(_instanceReady
+                        ? "Dashboard.Action.NeedRuntimeTip"
+                        : "Dashboard.Action.NeedInstanceTip")
+                    : null);
+
             HeroStopButton.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
 
             UpdateUptime();

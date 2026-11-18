@@ -105,29 +105,10 @@
             </RadioButton>
         </Grid>
 
-        <!--  包选择：胶囊与说明同排 —— 说明单独一行会把按钮挤出可视区  -->
-        <StackPanel Orientation="Horizontal" Spacing="8">
-            <RadioButton
-                x:Name="PackageBasic"
-                GroupName="RuntimePackage"
-                Checked="Package_Checked"
-                controls:Loc.Content="Setup.S3.Package.Basic.Name"
-                Style="{StaticResource ChoiceChipRadioStyle}" />
-            <RadioButton
-                x:Name="PackageFull"
-                GroupName="RuntimePackage"
-                Checked="Package_Checked"
-                controls:Loc.Content="Setup.S3.Package.Full.Name"
-                Style="{StaticResource ChoiceChipRadioStyle}" />
-            <TextBlock
-                x:Name="PackageHint"
-                Margin="2,0,0,0"
-                VerticalAlignment="Center"
-                FontSize="11"
-                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                controls:Loc.Text="Setup.S3.Package.Basic.Label"
-                TextTrimming="CharacterEllipsis" />
-        </StackPanel>
+        <!--
+            不再给「基础包 / 完整包」二选一：引导阶段缺什么就一次补齐（Node → Git → Caddy → PM2），
+            让新手在第一屏就选包，只会让人犹豫「选错会不会少装东西」。多装的那几项总比缺着强。
+        -->
 
         <!--
             系统侧不能代装：主按钮变灰，旁边给一个淡链接看「缺什么」。

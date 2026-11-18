@@ -242,7 +242,7 @@
     <value>Launch at sign-in</value>
   </data>
   <data name="Settings.Row.AutoStart.Description" xml:space="preserve">
-    <value>Starts when you sign in to Windows.</value>
+    <value>Starts when you sign in to Windows and appears in the Windows startup apps list.</value>
   </data>
   <data name="Settings.Row.CpuCores.Title" xml:space="preserve">
     <value>CPU cores</value>
@@ -569,7 +569,7 @@
     <value>Git, Node.js and WebView2 are ready. The tavern can start.</value>
   </data>
   <data name="Settings.Runtime.Summary.MissingBuiltin" xml:space="preserve">
-    <value>Missing {0}. Use Fix to install.</value>
+    <value>Missing {0}. Choose Install all to add every built-in component.</value>
   </data>
   <data name="Settings.Runtime.Summary.MissingSystem" xml:space="preserve">
     <value>System runtime lacks {0}. Install it, or switch to Bundled.</value>
@@ -1577,7 +1577,7 @@
     <value>System runtime is yours to install. Then click Recheck.</value>
   </data>
   <data name="Setup.S3.Tip.Nothing" xml:space="preserve">
-    <value>This package is complete</value>
+    <value>The built-in runtime is already complete.</value>
   </data>
   <data name="Setup.S3.Notify.Ready.Title" xml:space="preserve">
     <value>This side is ready</value>
@@ -6819,5 +6819,56 @@ Merge: keep the current config and only add the keys it is missing.</value>
   </data>
   <data name="About.Update.DevNoAutoCheck" xml:space="preserve">
     <value>Dev builds skip automatic checks</value>
+  </data>
+  <data name="Settings.Runtime.Repair.Ready.Title" xml:space="preserve">
+    <value>Runtime ready</value>
+  </data>
+  <data name="Settings.Runtime.Repair.Ready.Hint" xml:space="preserve">
+    <value>All dependencies are present.</value>
+  </data>
+  <data name="Settings.Runtime.Repair.Note" xml:space="preserve">
+    <value>Installs every missing dependency in one pass: Node.js, Git, Caddy, PM2.</value>
+  </data>
+  <data name="Settings.AutoStart.Failed.Title" xml:space="preserve">
+    <value>Couldn't update the startup entry</value>
+  </data>
+  <data name="Settings.AutoStart.Failed.Hint" xml:space="preserve">
+    <value>A security tool or group policy may have blocked it. Check Settings, Apps, Startup.</value>
+  </data>
+  <data name="Dashboard.Action.NeedRuntime" xml:space="preserve">
+    <value>Runtime required</value>
+  </data>
+  <data name="Dashboard.Action.NeedRuntimeTip" xml:space="preserve">
+    <value>The built-in runtime is incomplete. Go to Settings, Runtime and choose Install all.</value>
+  </data>
+  <data name="Dashboard.Action.NeedInstance" xml:space="preserve">
+    <value>Instance required</value>
+  </data>
+  <data name="Dashboard.Action.NeedInstanceTip" xml:space="preserve">
+    <value>No usable tavern instance yet. Install the built-in one in Versions, or add a local folder in Resources.</value>
+  </data>
+  <data name="Dashboard.Browser.System" xml:space="preserve">
+    <value>System default</value>
+  </data>
+  <data name="Dashboard.A11y.BrowserSystem" xml:space="preserve">
+    <value>System default browser</value>
+  </data>
+  <data name="Dashboard.Browser.Hint.NoConfig" xml:space="preserve">
+    <value>No tavern config file yet. Create or import one in Tavern config first, then pick a browser.</value>
+  </data>
+  <data name="Settings.Runtime.Repair.Action" xml:space="preserve">
+    <value>Install all</value>
+  </data>
+  <data name="Setup.S3.Action.FillAll" xml:space="preserve">
+    <value>Install all</value>
+  </data>
+  <data name="Setup.S3.Note.Full" xml:space="preserve">
+    <value>Installs the whole built-in runtime in one pass: Node.js, Git, Caddy, PM2.</value>
+  </data>
+  <data name="Setup.Action.Fill" xml:space="preserve">
+    <value>Install</value>
+  </data>
+  <data name="Setup.Action.FillTip" xml:space="preserve">
+    <value>Install the runtime first, then you can continue.</value>
   </data>
 </root>

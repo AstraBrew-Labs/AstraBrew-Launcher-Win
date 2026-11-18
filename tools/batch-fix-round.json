@@ -1,0 +1,19 @@
+{
+  "Settings.Row.AutoStart.Description": ["登录 Windows 后自动启动，同时会出现在系统「启动应用」列表里。", "Starts when you sign in to Windows and appears in the Windows startup apps list."],
+  "Settings.AutoStart.Failed.Title": ["没能写入系统启动项", "Couldn't update the startup entry"],
+  "Settings.AutoStart.Failed.Hint": ["可能被安全软件或组策略拦住了。可以到「设置 → 应用 → 启动」手动确认。", "A security tool or group policy may have blocked it. Check Settings, Apps, Startup."],
+  "Dashboard.Action.NeedRuntime": ["需先装运行环境", "Runtime required"],
+  "Dashboard.Action.NeedRuntime.Tip": ["内置运行环境还没装齐。到「设置 → 必要运行环境」点「一键补全」，装好后这里就能启动。", "The built-in runtime is incomplete. Go to Settings, Runtime and choose Install all."],
+  "Dashboard.Action.NeedInstance": ["需先装酒馆实例", "Instance required"],
+  "Dashboard.Action.NeedInstance.Tip": ["还没有可用的酒馆实例。到「版本管理」安装内置酒馆，或在「资源管理」里添加本地目录。", "No usable tavern instance yet. Install the built-in one in Versions, or add a local folder in Resources."],
+  "Dashboard.Browser.System": ["默认浏览器", "System default"],
+  "Dashboard.A11y.BrowserSystem": ["默认浏览器", "System default browser"],
+  "Dashboard.Browser.Hint.NoConfig": ["还没有酒馆配置文件，先在「酒馆配置」生成或导入一份，再来切换浏览器。", "No tavern config file yet. Create or import one in Tavern config first, then pick a browser."],
+  "Settings.Runtime.Repair.Action": ["一键补全", "Install all"],
+  "Settings.Runtime.Summary.MissingBuiltin": ["缺少 {0}；点「一键补全」把整套内置环境装齐。", "Missing {0}. Choose Install all to add every built-in component."],
+  "Setup.S3.Action.FillAll": ["补全环境", "Install all"],
+  "Setup.S3.Note.Full": ["这次会把内置环境一次装齐：Node.js → Git → Caddy → PM2，按顺序安装，中途可以取消。", "Installs the whole built-in runtime in one pass: Node.js, Git, Caddy, PM2."],
+  "Setup.S3.Tip.Nothing": ["内置环境已经装齐，没有需要补的", "The built-in runtime is already complete."],
+  "Setup.Action.Fill": ["补全", "Install"],
+  "Setup.Action.Fill.Tip": ["先补全运行环境，装好后就能继续下一步。", "Install the runtime first, then you can continue."]
+}

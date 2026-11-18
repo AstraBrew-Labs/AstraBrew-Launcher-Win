@@ -1015,12 +1015,15 @@ namespace AstraBrew_Launcher.Services
 
         /// <summary>
         /// 进度节流：Git 一秒能吐几十行，每行都推给界面会让 UI 线程一直在排版。
-        /// 只放行「涨了 1% 以上」或强制发送的那几帧，进度也不会倒着走。
+        /// 百分比按「涨了 0.9% 以上」放行；**带日志行的那一帧不受这条限制**——
+        /// 之前是同一套节流，结果日志一屏只剩十来行、看起来像卡死，
+        /// 排查时完全没有第一手信息（和装 PM2 时的日志密度差太多）。
         /// </summary>
         private sealed class Reporter
         {
             private readonly IProgress<TavernInstallProgress>? _progress;
             private double _last = -1;
+            private string? _lastDetail;
 
             public Reporter(IProgress<TavernInstallProgress>? progress) => _progress = progress;
 
@@ -1036,12 +1039,26 @@ namespace AstraBrew_Launcher.Services
                     return;
                 }
 
-                if (!force && percent - _last < 0.9)
+                bool hasDetail = detail is { Length: > 0 };
+
+                if (!force)
                 {
-                    return;
+                    // 日志行：内容完全相同才丢（Git 会重复刷同一行），其余照单放行
+                    if (hasDetail)
+                    {
+                        if (string.Equals(detail, _lastDetail, StringComparison.Ordinal))
+                        {
+                            return;
+                        }
+                    }
+                    else if (percent - _last < 0.9)
+                    {
+                        return;
+                    }
                 }
 
                 _last = Math.Max(_last, percent);
+                _lastDetail = detail;
                 _progress.Report(new TavernInstallProgress(stage, message, detail, Math.Round(percent, 1)));
             }
         }
