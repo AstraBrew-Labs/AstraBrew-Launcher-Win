@@ -6871,4 +6871,10 @@ Merge: keep the current config and only add the keys it is missing.</value>
   <data name="Setup.Action.FillTip" xml:space="preserve">
     <value>Install the runtime first, then you can continue.</value>
   </data>
+  <data name="Shell.Boot.Loading" xml:space="preserve">
+    <value>Loading…</value>
+  </data>
+  <data name="Shell.Nav.NeedInstance" xml:space="preserve">
+    <value>Install or repair a tavern instance first</value>
+  </data>
 </root>

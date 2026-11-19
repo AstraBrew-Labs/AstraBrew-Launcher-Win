@@ -456,6 +456,38 @@ v[版本号]-[type]     v0.0.0-Beta.0 v0.3.0-Beta.0 v1.0.0-preview.2
 > 本地实例是真实目录，清单落盘在 `data/local_instances.json`（只存路径），
 > 版本与依赖状态每次现读磁盘，见下方「本地实例（扫描 / 导入）」。
 
+## 启动时序、加载遮罩与前置条件
+
+低配机器上「窗口出来了但点什么都没反应」比慢本身更难受。启动被拆成两段：
+
+1. **先出窗口**：`MainWindow` 构造只建外壳，第一页由 `App.OnLaunched` 在 `Activate()` 之后
+   调 `StartShell()` 才创建——仪表盘是全应用最重的一页，把它放到窗口显示之后，
+   用户先看到窗口 + 遮罩，而不是干等一秒。
+2. **遮罩盖住直到首屏就绪**：`BootOverlay`（XAML 里最后一个子元素，背景不透明）
+   覆盖导航与内容，挡住这期间所有点击。收起时机是「第一页 `Loaded` + 至少 420ms」，
+   `Loaded` 最多等 6 秒；超时也放行——宁可露出空页面，也不能把界面永久锁死。
+3. **重活排在遮罩之后**：运行环境探测（6 个子进程）与指标扫描（数磁盘）在遮罩撤掉后
+   350ms 才开始，仪表盘自己也把这两件事推迟 700ms（`PrimeAfterBootAsync`）。
+   启动前后各写一条 `%TEMP%\astrabrew-launcher\boot.log`（3 行），慢的时候先看它。
+
+### 前置条件：`Services/AppReadiness.cs`
+
+三个布尔值回答「这个功能现在能不能用」：`InstanceReady`（实例已装且依赖齐）、
+`RuntimeReady`（Node + npm）、`ConfigReady`（有 config.yaml）。变化时发 `Changed`。
+
+- **控制台**与**扩展管理**要求 `InstanceReady`：没有实例时点进去只有一堆点了报错的按钮。
+  禁用靠 `MainWindow.UpdatePrerequisites()`，ToolTip 说明原因。
+- `NavigateTo()` 里还有一道闸：`console` / `extensions` 在前置不满足时改跳仪表盘，
+  深链、页面内跳转、换语言重建都走这一层，不会绕过。
+- 判定初值一律为 `true`：首帧还没探测完就画成灰的，会让人以为坏了。
+
+### 内存
+
+- 启动收尾做一次 `GC.Collect`（不阻塞）+ `EmptyWorkingSet`：
+  实测工作集从 **233 MB → 70 MB**（Release 包，启动 3 秒后）。
+  这是「还工作集」不是「还提交内存」，首次交互时少量页会重新映射（毫秒级）。
+- 不要为了压内存把 GC 模式改成 Server；桌面端那样只会更占内存。
+
 ## 设置持久化
 
 偏好只有一份状态：`Services/LauncherSettings.cs`（内存），落盘只有一个出口：

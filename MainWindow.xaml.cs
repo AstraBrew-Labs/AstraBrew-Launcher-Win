@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using AstraBrew_Launcher.Services;
 using AstraBrew_Launcher.Views;
 using Microsoft.UI;
@@ -82,15 +84,10 @@ namespace AstraBrew_Launcher
             // 扫描进度卡的「查看详情」：服务层不认页面，这里把两边接起来
             InstanceScan.OpenDetail = _openDetailHandler;
 
-            // 默认选中「仪表盘」
+            // 默认选中「仪表盘」：这里只同步侧栏高亮，真正的页面创建推迟到 StartShell()
             if (NavView.MenuItems.Count > 0 && NavView.MenuItems[0] is NavigationViewItem first)
             {
                 NavView.SelectedItem = first;
-            }
-
-            if (string.IsNullOrEmpty(_currentTag))
-            {
-                NavigateTo("dashboard");
             }
 
             Onboarding.Finished += Onboarding_Finished;
@@ -99,6 +96,188 @@ namespace AstraBrew_Launcher
             if (!OnboardingState.IsCompleted)
             {
                 ShowOnboarding();
+            }
+
+            // 前置条件：先用磁盘上能立刻算出来的两项打底，运行环境稍后再探
+            AppReadiness.Changed -= OnReadinessChanged;
+            AppReadiness.Changed += OnReadinessChanged;
+            AppReadiness.RefreshLocal();
+            UpdatePrerequisites();
+
+        }
+
+        /// <summary>
+        /// 由 <see cref="App"/> 在窗口 Activate 之后调用：建第一页并开始收遮罩。
+        ///
+        /// 顺序很关键——窗口先进屏幕、页面后建，低配机上「点开就有反应」的观感差别很明显。
+        /// 深链唤起时页面可能已经被 HandleDeepLink 建好了，这里就不再覆盖它。
+        /// </summary>
+        public void StartShell()
+        {
+            if (string.IsNullOrEmpty(_currentTag))
+            {
+                NavigateTo("dashboard");
+            }
+
+            _ = RunBootSequenceAsync();
+        }
+
+        /// <summary>
+        /// 启动时序：先出界面，再干活。
+        ///
+        /// 低配机上最难受的不是「慢」，而是「窗口已经出来了、点什么都没反应」——
+        /// 用户在这两三秒里的点击全落在还没建好的页面上。所以遮罩会一直盖到首屏就绪，
+        /// 期间所有点击都被它挡住；运行环境探测（要起 6 个子进程）与指标扫描（要数磁盘）
+        /// 则推迟到遮罩撤掉之后，避免和首帧渲染抢 CPU。
+        /// </summary>
+        private static void BootLog(string message)
+        {
+            try
+            {
+                string dir = Path.Combine(Path.GetTempPath(), "astrabrew-launcher");
+                Directory.CreateDirectory(dir);
+                File.AppendAllText(
+                    Path.Combine(dir, "boot.log"),
+                    $"[{DateTimeOffset.Now:HH:mm:ss.fff}] {message}{Environment.NewLine}");
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        private async Task RunBootSequenceAsync()
+        {
+            Stopwatch watch = Stopwatch.StartNew();
+            BootLog("boot start");
+
+            try
+            {
+                // 让首帧先落到屏幕上：遮罩比白屏好看
+                await Task.Delay(120);
+
+                // 等第一页真的 Loaded：低配机上「窗口出来了但页面还没铺完」是常态，
+                // 按固定毫秒数撤遮罩会正好露一个空白页给用户点。
+                await WaitForFirstPageAsync(TimeSpan.FromSeconds(6));
+
+                // 遮罩至少停 420ms：一闪而过像闪屏，反而让人怀疑没加载
+                int remaining = 420 - (int)watch.ElapsedMilliseconds;
+
+                if (remaining > 0)
+                {
+                    await Task.Delay(remaining);
+                }
+            }
+            catch (Exception)
+            {
+                // 时序出错也必须把遮罩撤掉，否则整个界面永远点不动
+            }
+            finally
+            {
+                BootRing.IsActive = false;
+                BootOverlay.Visibility = Visibility.Collapsed;
+                BootLog($"overlay hidden after {watch.ElapsedMilliseconds} ms");
+            }
+
+            // 首屏之后的活：探测运行环境 + 更新前置条件
+            await Task.Delay(350);
+            await AppReadiness.RefreshAsync();
+            UpdatePrerequisites();
+
+            // 启动阶段的临时对象（TOML、XAML 解析、字体枚举）一次性收掉，
+            // 低内存机器上能立刻还回去十几 MB
+            GC.Collect(2, GCCollectionMode.Optimized, blocking: false, compacting: true);
+
+            // 再把工作集还给系统一次：启动时的 XAML 解析、字体枚举会在工作集里留下
+            // 一大片已经用不上的页。低内存机器上这一步能明显减少后续换页压力；
+            // 代价是首次交互时这些页要重新从磁盘映射回来（毫秒级）。
+            TrimWorkingSet();
+
+            BootLog($"post-boot work done at {watch.ElapsedMilliseconds} ms");
+        }
+
+        /// <summary>
+        /// 等内容 Frame 里那一页触发 Loaded（页面自己的首次布局与数据回填都在这之前完成）。
+        /// 超时也放行：宁可露出一个空页面，也不能让遮罩把界面永久锁死。
+        /// </summary>
+        private async Task WaitForFirstPageAsync(TimeSpan timeout)
+        {
+            if (ContentFrame.Content is not FrameworkElement page)
+            {
+                return;
+            }
+
+            if (page.IsLoaded)
+            {
+                return;
+            }
+
+            var loaded = new TaskCompletionSource<bool>();
+
+            void OnLoaded(object sender, RoutedEventArgs e)
+            {
+                page.Loaded -= OnLoaded;
+                loaded.TrySetResult(true);
+            }
+
+            page.Loaded += OnLoaded;
+
+            Task finished = await Task.WhenAny(loaded.Task, Task.Delay(timeout));
+
+            if (finished != loaded.Task)
+            {
+                page.Loaded -= OnLoaded;
+            }
+        }
+
+        /// <summary>把工作集收缩到当前实际需要的大小（等价于任务管理器的「收缩工作集」）。</summary>
+        private static void TrimWorkingSet()
+        {
+            try
+            {
+                EmptyWorkingSet(GetCurrentProcess());
+            }
+            catch (Exception)
+            {
+                // 系统不允许就跳过，不影响任何功能
+            }
+        }
+
+        private void OnReadinessChanged(object? sender, EventArgs e)
+        {
+            if (Root.DispatcherQueue.HasThreadAccess)
+            {
+                UpdatePrerequisites();
+                return;
+            }
+
+            Root.DispatcherQueue.TryEnqueue(UpdatePrerequisites);
+        }
+
+        /// <summary>
+        /// 按前置条件开关导航项。
+        ///
+        /// 控制台与扩展管理都要求「当前实例真的能跑」：没有实例时点进去只会看到一堆
+        /// 点了报错的按钮，或者干脆空白。禁掉并给出说明，比让人自己试错好。
+        /// </summary>
+        private void UpdatePrerequisites()
+        {
+            if (NavConsole is null || NavExtensions is null)
+            {
+                return;
+            }
+
+            bool ready = AppReadiness.InstanceReady;
+            string? tip = ready ? null : L.Get("Shell.Nav.NeedInstance");
+
+            NavConsole.IsEnabled = ready;
+            NavExtensions.IsEnabled = ready;
+            ToolTipService.SetToolTip(NavConsole, tip);
+            ToolTipService.SetToolTip(NavExtensions, tip);
+
+            // 正停在被禁用的页面上（比如深链直接跳进来）就退回仪表盘，别留一个死页面
+            if (!ready && _currentTag is "console" or "extensions")
+            {
+                NavigateTo("dashboard");
             }
         }
 
@@ -155,6 +334,13 @@ namespace AstraBrew_Launcher
         /// </summary>
         public void NavigateTo(string tag, bool force)
         {
+            // 有前置条件的功能不允许被绕过：深链、页面内跳转、换语言重建都走这里，
+            // 统一在这一层拦住，比在每个入口各写一遍可靠
+            if (tag is "console" or "extensions" && !AppReadiness.InstanceReady)
+            {
+                tag = "dashboard";
+            }
+
             if (!PageMap.TryGetValue(tag, out var pageType))
             {
                 return;
@@ -256,6 +442,12 @@ namespace AstraBrew_Launcher
                 // 窗口正在销毁：忽略，下一次唤起会重来
             }
         }
+
+        [DllImport("psapi.dll")]
+        private static extern bool EmptyWorkingSet(IntPtr process);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentProcess();
 
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -364,6 +556,9 @@ namespace AstraBrew_Launcher
             AppNotify.Raised -= OnNotifyRaised;
             TavernInstances.Changed -= OnInstancesChanged;
 
+            // 静态事件必须退订：换语言会重建窗口，不退订就让已关闭的窗口一直挂在事件链上
+            AppReadiness.Changed -= OnReadinessChanged;
+
             // 只清自己挂上去的那一份，别把新窗口的挂载点抹掉
             if (ReferenceEquals(InstanceScan.OpenDetail, _openDetailHandler))
             {
@@ -406,7 +601,11 @@ namespace AstraBrew_Launcher
         /// 标题栏徽章：显示当前选中的酒馆实例（内置-1.19.2 / 本地-1.19.0）。
         /// 常驻标题栏，用户在任意页面都能确认启动时用的是哪一份实例。
         /// </summary>
-        private void OnInstancesChanged(object? sender, EventArgs e) => ApplyInstanceChip();
+        private void OnInstancesChanged(object? sender, EventArgs e)
+        {
+            ApplyInstanceChip();
+            AppReadiness.RefreshLocal();
+        }
 
         private void ApplyInstanceChip()
         {

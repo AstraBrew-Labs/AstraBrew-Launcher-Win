@@ -43,7 +43,7 @@
     <VersionPrefix>0.3.0</VersionPrefix>
 
     <!--  同一版本的迭代次数：只改这一个数，四个渠道的后缀一起动  -->
-    <ChannelIteration Condition="'$(ChannelIteration)' == ''">0</ChannelIteration>
+    <ChannelIteration Condition="'$(ChannelIteration)' == ''">1</ChannelIteration>
 
     <VersionSuffix Condition="'$(Configuration)' == 'Alpha'">Alpha.$(ChannelIteration)</VersionSuffix>
     <VersionSuffix Condition="'$(Configuration)' == 'Beta'">Beta.$(ChannelIteration)</VersionSuffix>

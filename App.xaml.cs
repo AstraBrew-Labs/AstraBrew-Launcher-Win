@@ -98,6 +98,10 @@ namespace AstraBrew_Launcher
                 window.HandleDeepLink(deepLink);
             }
 
+            // 窗口已经在屏幕上了，再建第一页：页面解析（仪表盘是全应用最重的一页）
+            // 放到这之后，用户看到的是「窗口 + 加载遮罩」，而不是干等一秒才出窗口。
+            window.StartShell();
+
             // 启动后的静默更新检查：不挡首屏，也不弹窗，有新版才在右下角冒一条
             _ = CheckUpdatesInBackgroundAsync();
         }

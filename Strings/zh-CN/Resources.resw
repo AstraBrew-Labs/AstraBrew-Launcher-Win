@@ -6871,4 +6871,10 @@
   <data name="Setup.Action.FillTip" xml:space="preserve">
     <value>先补全运行环境，装好后就能继续下一步。</value>
   </data>
+  <data name="Shell.Boot.Loading" xml:space="preserve">
+    <value>正在加载…</value>
+  </data>
+  <data name="Shell.Nav.NeedInstance" xml:space="preserve">
+    <value>先安装或修复酒馆实例，然后才能使用这里</value>
+  </data>
 </root>

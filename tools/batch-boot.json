@@ -1,0 +1,4 @@
+{
+  "Shell.Boot.Loading": ["正在加载…", "Loading…"],
+  "Shell.Nav.NeedInstance": ["先安装或修复酒馆实例，然后才能使用这里", "Install or repair a tavern instance first"]
+}

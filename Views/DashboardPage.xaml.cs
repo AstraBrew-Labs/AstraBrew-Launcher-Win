@@ -102,8 +102,37 @@ namespace AstraBrew_Launcher.Views
             StartStatusPulse();
             _tick.Start();
 
-            _ = RefreshMetricsAsync(force: false);
-            _ = SyncRuntimeLabelAsync();
+            // 重活推迟到启动遮罩撤掉之后：探测要起子进程、指标要数磁盘，
+            // 和首帧渲染抢 CPU 时，低配机上会明显卡一下。
+            _ = PrimeAfterBootAsync();
+        }
+
+        /// <summary>
+        /// 首屏之后按「先环境、后指标」的顺序补数据：环境那一行是主卡上的关键信息，
+        /// 指标卡空一会儿没人注意，但顺序反了会让两件事同时抢磁盘。
+        /// </summary>
+        private async Task PrimeAfterBootAsync()
+        {
+            try
+            {
+                await Task.Delay(700);
+
+                if (!IsLoaded)
+                {
+                    return;
+                }
+
+                await SyncRuntimeLabelAsync();
+
+                if (IsLoaded)
+                {
+                    await RefreshMetricsAsync(force: false);
+                }
+            }
+            catch (Exception)
+            {
+                // 补数据失败不该弹错：页面上的占位会自己显示「未检测」
+            }
         }
 
         /// <summary>

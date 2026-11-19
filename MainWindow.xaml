@@ -134,7 +134,7 @@
                                 <FontIcon Glyph="&#xE81C;" />
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
-                        <NavigationViewItem controls:Loc.Content="Shell.Nav.Extensions.Content" Tag="extensions">
+                        <NavigationViewItem x:Name="NavExtensions" controls:Loc.Content="Shell.Nav.Extensions.Content" Tag="extensions">
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xE74C;" />
                             </NavigationViewItem.Icon>
@@ -154,7 +154,7 @@
                     </NavigationView.MenuItems>
 
                     <NavigationView.FooterMenuItems>
-                        <NavigationViewItem controls:Loc.Content="Shell.Nav.Console.Content" Tag="console">
+                        <NavigationViewItem x:Name="NavConsole" controls:Loc.Content="Shell.Nav.Console.Content" Tag="console">
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xE756;" />
                             </NavigationViewItem.Icon>
@@ -178,6 +178,29 @@
                 <views:OnboardingView
                     x:Name="Onboarding"
                     Visibility="Collapsed" />
+
+                <!--
+                    启动加载遮罩：从首帧到首屏数据就绪之间盖住整块内容区（含导航栏）。
+                    它在最上层且背景不透明，点击落不到下面的按钮上——低配机器上那几秒
+                    最容易出现「点了没反应，其实页面还没建好」的误触。
+                -->
+                <Grid x:Name="BootOverlay" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+                    <StackPanel
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="14">
+                        <ProgressRing
+                            x:Name="BootRing"
+                            Width="34"
+                            Height="34"
+                            IsActive="True" />
+                        <TextBlock
+                            x:Name="BootText"
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource FootnoteTextStyle}"
+                            controls:Loc.Text="Shell.Boot.Loading" />
+                    </StackPanel>
+                </Grid>
             </Grid>
         </Grid>
 

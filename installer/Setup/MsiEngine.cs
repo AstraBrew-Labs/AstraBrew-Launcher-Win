@@ -27,7 +27,10 @@ internal static class MsiEngine
     private const uint InstallMessageFatalExit = 0x02000000;
     private const uint InstallMessageError = 0x01000000;
 
-    private delegate int ExternalUiHandler(IntPtr context, uint messageType, string message, IntPtr record);
+    // CharSet 必须显式写 Unicode：委托默认按 ANSI 解 LPWSTR，
+    // 宽字符串会被读成 "1"（第一个字符后就是 0 字节），进度消息全变废纸。
+    [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Unicode)]
+    private delegate int ExternalUiHandler(IntPtr context, uint messageType, string message);
 
     [DllImport("msi.dll", CharSet = CharSet.Unicode)]
     private static extern IntPtr MsiSetExternalUI(ExternalUiHandler handler, uint filter, IntPtr context);
@@ -35,12 +38,31 @@ internal static class MsiEngine
     [DllImport("msi.dll", CharSet = CharSet.Unicode)]
     private static extern int MsiInstallProduct(string product, string commandLine);
 
+    /// <summary>
+    /// 关掉 Windows Installer 自己的界面（等价于 msiexec 的 /qn）。
+    ///
+    /// 只设 MsiSetExternalUI 是不够的：那只把**我们筛选的消息**转过来，
+    /// MSI 仍会自己弹一个「正在安装…」的进度窗口——用户看到的就是向导后面又冒出一个框。
+    /// 这两个 API 是配套的：内部 UI 设 NONE，消息全部走外部回调。
+    /// </summary>
+    [DllImport("msi.dll")]
+    private static extern int MsiSetInternalUI(int level, IntPtr hwnd);
+
+    /// <summary>INSTALLUILEVEL_NONE：不显示任何 MSI 自带对话框。</summary>
+    private const int InstallUiLevelNone = 2;
+
     /// <summary>安装进度快照。MSI 的回调跑在安装线程上，界面用定时器来读，不跨线程直接改控件。</summary>
     internal sealed class ProgressState
     {
         private readonly object _gate = new();
 
         public int Percent { get; private set; }
+
+        /// <summary>本次安装到达过的最高百分比：写日志用，判断「外部 UI 到底有没有收到进度」。</summary>
+        public int PeakPercent { get; private set; }
+
+        /// <summary>收到过多少条消息（诊断用：0 说明外部 UI 没接上）。</summary>
+        public int MessageCount { get; private set; }
 
         public string Action { get; private set; } = string.Empty;
 
@@ -51,8 +73,18 @@ internal static class MsiEngine
             lock (_gate)
             {
                 Percent = 0;
+                PeakPercent = 0;
+                MessageCount = 0;
                 Action = string.Empty;
                 Error = null;
+            }
+        }
+
+        public void CountMessage()
+        {
+            lock (_gate)
+            {
+                MessageCount++;
             }
         }
 
@@ -64,6 +96,11 @@ internal static class MsiEngine
                 if (percent > Percent)
                 {
                     Percent = Math.Min(percent, 100);
+
+                    if (Percent > PeakPercent)
+                    {
+                        PeakPercent = Percent;
+                    }
                 }
             }
         }
@@ -247,10 +284,12 @@ internal static class MsiEngine
     private static int Run(string msiPath, string arguments, ProgressState state, bool chinese)
     {
         // 委托必须活到 MsiInstallProduct 返回：被 GC 掉就是访问违例
-        ExternalUiHandler handler = (_, type, message, _) =>
+        ExternalUiHandler handler = (_, type, message) =>
         {
             try
             {
+                state.CountMessage();
+
                 switch (type)
                 {
                     case InstallMessageProgress:
@@ -279,14 +318,17 @@ internal static class MsiEngine
             return 0;
         };
 
+        int previousLevel = MsiSetInternalUI(InstallUiLevelNone, IntPtr.Zero);
         MsiSetExternalUI(handler, 0xFFFFFFFF, IntPtr.Zero);
+
         try
         {
             return MsiInstallProduct(msiPath, arguments);
         }
         finally
         {
-            MsiSetExternalUI((_, _, _, _) => 0, 0, IntPtr.Zero);
+            MsiSetExternalUI((_, _, _) => 0, 0, IntPtr.Zero);
+            MsiSetInternalUI(previousLevel, IntPtr.Zero);
             GC.KeepAlive(handler);
         }
     }
@@ -336,10 +378,9 @@ internal static class MsiEngine
             return;
         }
 
-        if (name.Length > 0)
-        {
-            state.SetAction(name);
-        }
+        // 认不出来的动作名不显示：MSI 有些消息是半截词（实测出现过只有一个「项」），
+        // 摆上去比空着更让人困惑。保留上一句已知的动作即可。
+
     }
 
     /// <summary>

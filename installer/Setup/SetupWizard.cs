@@ -69,6 +69,17 @@ internal sealed class SetupWizard : Form
     /// <summary>用户手动改过路径之后，再切作用域就别覆盖他的选择。</summary>
     private bool _pathTouched;
 
+    /// <summary>正在安装的目标目录：进度按这里已写入的字节数估算。</summary>
+    private string? _installingDir;
+
+    /// <summary>预计写入的总字节数（约等于 MSI 体积，实测两者基本一致）。</summary>
+    private long _expectedBytes;
+
+    /// <summary>上次枚举目录的时间与结果：每 120ms 递归数一遍文件太浪费。</summary>
+    private DateTime _lastEstimateAt;
+
+    private int _lastEstimate;
+
     private bool _busy;
 
     private Page _page = Page.Welcome;
@@ -409,7 +420,7 @@ internal sealed class SetupWizard : Form
         title = new Label
         {
             Name = "progressTitle",
-            Bounds = new Rectangle(0, 70, 320, 24),
+            Bounds = new Rectangle(0, 26, 320, 24),
             Font = new Font("Microsoft YaHei UI", 10.5f, FontStyle.Regular, GraphicsUnit.Point),
             ForeColor = TextPrimary,
             AutoSize = false,
@@ -419,13 +430,13 @@ internal sealed class SetupWizard : Form
         bar = new FlatProgress
         {
             Name = "progressBar",
-            Bounds = new Rectangle(0, 106, 300, 8),
+            Bounds = new Rectangle(0, 64, 300, 8),
         };
 
         action = new Label
         {
             Name = "progressAction",
-            Bounds = new Rectangle(0, 126, 300, 20),
+            Bounds = new Rectangle(0, 108, 300, 20),
             Font = new Font("Microsoft YaHei UI", 8.5f, FontStyle.Regular, GraphicsUnit.Point),
             ForeColor = TextSecondary,
             AutoSize = false,
@@ -434,7 +445,7 @@ internal sealed class SetupWizard : Form
         percent = new Label
         {
             Name = "progressPercent",
-            Bounds = new Rectangle(0, 146, 300, 20),
+            Bounds = new Rectangle(0, 84, 300, 20),
             Font = new Font("Microsoft YaHei UI", 8.5f, FontStyle.Regular, GraphicsUnit.Point),
             ForeColor = Accent,
             AutoSize = false,
@@ -839,6 +850,13 @@ internal sealed class SetupWizard : Form
 
         bool machine = _scopeAll.Checked;
 
+        // MSI 的进度消息字段格式不固定（不同版本 MSI 输出还不一样），
+        // 这里用「目标目录已写入多少字节」来推进度条：确定性、和数据一致。
+        _installingDir = dir;
+        _expectedBytes = Math.Max(1, new FileInfo(_msiPath).Length);
+        _lastEstimateAt = DateTime.MinValue;
+        _lastEstimate = 0;
+
         int code;
 
         try
@@ -857,6 +875,11 @@ internal sealed class SetupWizard : Form
 
         _ticker.Stop();
         _busy = false;
+
+        int estimated = _installingDir is { Length: > 0 } ? EstimatePercent(_installingDir) : 0;
+        _installingDir = null;
+
+        WriteLog($"安装结束：退出码 {code}，估算 {estimated}%，MSI 自报峰值 {_progress.PeakPercent}%，消息 {_progress.MessageCount} 条");
 
         if (code is MsiEngine.Success or MsiEngine.RebootRequired)
         {
@@ -914,6 +937,11 @@ internal sealed class SetupWizard : Form
     {
         (int percent, string action, string? error) = _progress.Snapshot();
 
+        if (!final && _installingDir is { Length: > 0 })
+        {
+            percent = Math.Max(percent, EstimatePercent(_installingDir));
+        }
+
         _bar.Value = final ? 100 : percent;
         _progressPercent.Text = S($"已完成 {percent}%", $"{percent}% complete");
 
@@ -926,6 +954,52 @@ internal sealed class SetupWizard : Form
         {
             _progressAction.Text = error;
         }
+    }
+
+    /// <summary>
+    /// 按目标目录已写入的字节数估算进度。写文件是安装里最耗时的一段，
+    /// 这条曲线和实际观感基本一致；封顶 97%，剩下的留给注册表与快捷方式。
+    /// </summary>
+    private int EstimatePercent(string directory)
+    {
+        if ((DateTime.UtcNow - _lastEstimateAt).TotalMilliseconds < 300)
+        {
+            return _lastEstimate;
+        }
+
+        _lastEstimateAt = DateTime.UtcNow;
+
+        long written = 0;
+
+        try
+        {
+            if (Directory.Exists(directory))
+            {
+                foreach (string file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+                {
+                    try
+                    {
+                        written += new FileInfo(file).Length;
+                    }
+                    catch (Exception)
+                    {
+                        // 正在写的文件拿不到大小就算了
+                    }
+                }
+            }
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
+
+        if (_expectedBytes <= 0)
+        {
+            return 0;
+        }
+
+        _lastEstimate = (int)Math.Clamp(written * 100 / _expectedBytes, 0, 97);
+        return _lastEstimate;
     }
 
     private void ShowFailure(int code)
