@@ -75,6 +75,10 @@ namespace AstraBrew_Launcher
             // 关着则清掉残留。这一条必须在 UI 起来之前做，用户一开设置页看到的就是真实状态。
             StartupRegistration.EnsureMatchesSetting();
 
+            // 旧版本把 GitHub 加速规则写进了用户的 ~/.gitconfig，升级后要撤掉那条规则。
+            // 只做一次（成功后有标记文件），失败不影响启动，下次再试。
+            _ = Task.Run(TavernGitConfig.CleanLegacyGlobalAsync);
+
             // 带链接启动、而已经有一个实例在跑：把链接递过去，本进程直接退场——
             // 绝不能让浏览器点一下链接就多出一个窗口。
             if (!SingleInstance.TryAcquire() &&

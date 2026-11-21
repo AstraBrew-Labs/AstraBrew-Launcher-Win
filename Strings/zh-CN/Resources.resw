@@ -515,7 +515,7 @@
     <value>应用内走中转；git 规则没写成，命令行仍直连。</value>
   </data>
   <data name="Settings.Row.GithubAccel.Description.OnChecking" xml:space="preserve">
-    <value>应用内走中转；正在核对全局 git 配置。</value>
+    <value>应用内走中转；正在核对酒馆的 git 配置。</value>
   </data>
   <data name="Settings.SystemProxy.Label.On" xml:space="preserve">
     <value>已开启</value>
@@ -2258,7 +2258,7 @@
     <value>{0} 已同步 {1}，从镜像下载。</value>
   </data>
   <data name="Version.Builtin.Route.MirrorMissAccel" xml:space="preserve">
-    <value>{0} 没有 {1}，改用 GitHub；加速服务已开启，git 拉取会自动经中转（全局配置生效）。</value>
+    <value>{0} 没有 {1}，改用 GitHub；加速服务已开启，酒馆内的 git 拉取会自动经中转。</value>
   </data>
   <data name="Version.Builtin.Route.MirrorMiss" xml:space="preserve">
     <value>{0} 没有 {1}，改用 GitHub 直连拉取。</value>
@@ -5714,19 +5714,19 @@
     <value>写入</value>
   </data>
   <data name="Miss.GitCfg.NoGitSoft" xml:space="preserve">
-    <value>没有找到 Git，全局加速规则没能写入；命令行与酒馆更新里的 GitHub 拉取仍是直连。</value>
+    <value>没有找到 Git，酒馆专属的加速规则没能写入；实例与扩展的 GitHub 拉取仍是直连。</value>
   </data>
   <data name="Miss.GitCfg.NoGitHard" xml:space="preserve">
     <value>没有找到 Git，请先在「运行环境」里安装后再打开这个开关。</value>
   </data>
   <data name="Miss.GitCfg.WriteFail" xml:space="preserve">
-    <value>写入全局 git 配置失败。</value>
+    <value>写入酒馆的 git 配置失败。</value>
   </data>
   <data name="Miss.GitCfg.ReadBack" xml:space="preserve">
-    <value>配置写完后没能读到，可能是 .gitconfig 被其它程序占用，请重试。</value>
+    <value>配置写完后没能读到，可能是文件被占用，请重试。</value>
   </data>
   <data name="Miss.GitCfg.RemoveFail" xml:space="preserve">
-    <value>移除全局 git 配置失败。</value>
+    <value>移除酒馆的 git 配置失败。</value>
   </data>
   <data name="Miss.GitCfg.CannotStart" xml:space="preserve">
     <value>无法启动 git 进程。</value>
@@ -6104,7 +6104,7 @@
     <value>普通 / 桌面模式的 IP 白名单，逗号分隔；服务器模式的白名单由服务范围推导，不写在这里</value>
   </data>
   <data name="Store.GithubAcceleration" xml:space="preserve">
-    <value>所有 GitHub 链接是否走 gh-proxy.org 加速（同时写入全局 git insteadOf 规则）</value>
+    <value>所有 GitHub 链接是否走 gh-proxy.org 加速（同时写入酒馆专属 git insteadOf 规则，不改你的全局配置）</value>
   </data>
   <data name="Store.Milliseconds" xml:space="preserve">
     <value>毫秒</value>
@@ -6125,13 +6125,13 @@
     <value>未安装</value>
   </data>
   <data name="Setp.GitCfgFail.Title" xml:space="preserve">
-    <value>全局 git 规则没写上</value>
+    <value>酒馆的 git 规则没写上</value>
   </data>
   <data name="Setp.GitCfgFail.Body" xml:space="preserve">
     <value>{0} 应用内下载仍然走加速，只有命令行里的 git 拉取还是直连。</value>
   </data>
   <data name="Setp.GitCfgRemoveFail.Title" xml:space="preserve">
-    <value>全局 git 规则没能移除</value>
+    <value>酒馆的 git 规则没能移除</value>
   </data>
   <data name="Setp.GitCfgRemoveFail.Body" xml:space="preserve">
     <value>{0} 应用内已恢复直连，但终端里的 git 仍会被这条规则带去加速。</value>
@@ -6143,10 +6143,10 @@
     <value>GitHub 加速服务已关闭</value>
   </data>
   <data name="Setp.AccelOn.Body" xml:space="preserve">
-    <value>应用内请求已走中转；全局 git 配置也写好了，终端与酒馆更新里的 GitHub 拉取同样加速。</value>
+    <value>应用内请求已走中转；酒馆的 git 配置也写好了，实例更新与扩展安装里的 GitHub 拉取同样加速。</value>
   </data>
   <data name="Setp.AccelOff.Body" xml:space="preserve">
-    <value>应用内请求恢复直连，全局 git 配置里的加速规则也已移除。</value>
+    <value>应用内请求恢复直连，酒馆 git 配置里的加速规则也已移除。</value>
   </data>
   <data name="Setp.OpenWindowsSettingsFail" xml:space="preserve">
     <value>打不开 Windows 设置</value>
@@ -6876,5 +6876,104 @@
   </data>
   <data name="Shell.Nav.NeedInstance" xml:space="preserve">
     <value>先安装或修复酒馆实例，然后才能使用这里</value>
+  </data>
+  <data name="About.Channel.Option.Auto" xml:space="preserve">
+    <value>跟随当前版本</value>
+  </data>
+  <data name="About.Channel.Tip.Auto" xml:space="preserve">
+    <value>跟随当前版本：测试版跟测试线、正式版跟正式线。现在跟的是{0}。</value>
+  </data>
+  <data name="About.Channel.Tip.Fixed" xml:space="preserve">
+    <value>已手动固定为{0}，不再跟随版本变化。选回「跟随当前版本」可恢复自动。</value>
+  </data>
+  <data name="Store.UpdateChannelExplicit" xml:space="preserve">
+    <value>用户是否手动定过更新渠道（false = 跟随当前版本）</value>
+  </data>
+  <data name="About.Update.Notes.Title" xml:space="preserve">
+    <value>更新内容 · {0}</value>
+  </data>
+  <data name="About.Update.Notes.Empty" xml:space="preserve">
+    <value>这个版本没有填写更新说明。</value>
+  </data>
+  <data name="Cfg.Port.Checking" xml:space="preserve">
+    <value>正在检测端口…</value>
+  </data>
+  <data name="Cfg.Port.Free" xml:space="preserve">
+    <value>端口 {0} 可用</value>
+  </data>
+  <data name="Cfg.Port.Busy" xml:space="preserve">
+    <value>端口 {0} 已被占用，请换一个</value>
+  </data>
+  <data name="Cfg.Port.BusyOwner" xml:space="preserve">
+    <value>端口 {0} 已被 {1} 占用，请换一个</value>
+  </data>
+  <data name="Run.Log.PortBusyFound" xml:space="preserve">
+    <value>端口 {0} 已被占用（{1}），先尝试解除</value>
+  </data>
+  <data name="Run.Log.PortReleased" xml:space="preserve">
+    <value>已结束占用端口的残留进程 {0} 个，端口已释放</value>
+  </data>
+  <data name="Run.PortBusy.GoFix" xml:space="preserve">
+    <value>端口 {0} 被 {1} 占用，无法自动解除。已打开「酒馆配置」，请换一个端口。</value>
+  </data>
+  <data name="Run.PortBusy.UnknownOwner" xml:space="preserve">
+    <value>未知进程</value>
+  </data>
+  <data name="Setup.Step5.Title" xml:space="preserve">
+    <value>酒馆配置</value>
+  </data>
+  <data name="Setup.Step5.Hint" xml:space="preserve">
+    <value>生成 config.yaml，端口、模型与扩展都从这份文件读。</value>
+  </data>
+  <data name="Setup.Rail.Step5.Title" xml:space="preserve">
+    <value>酒馆配置</value>
+  </data>
+  <data name="Setup.Rail.Step5.Subtitle" xml:space="preserve">
+    <value>生成配置文件</value>
+  </data>
+  <data name="Setup.S5.Found.Title" xml:space="preserve">
+    <value>已找到配置文件</value>
+  </data>
+  <data name="Setup.S5.Found.Body" xml:space="preserve">
+    <value>当前端口 {0}，下一步会用它启动酒馆。需要改端口或模型，可以装完后再到「酒馆配置」里调。</value>
+  </data>
+  <data name="Setup.S5.Missing.Title" xml:space="preserve">
+    <value>还没有配置文件</value>
+  </data>
+  <data name="Setup.S5.Missing.Body" xml:space="preserve">
+    <value>酒馆没有 config.yaml 起不来：端口、模型与扩展配置都在里面。点下面的「创建」下载一份官方默认配置。</value>
+  </data>
+  <data name="Setup.S5.Note.Found" xml:space="preserve">
+    <value>这一步只是确认文件在不在，不会改动你已有的设置。</value>
+  </data>
+  <data name="Setup.S5.Note.Missing" xml:space="preserve">
+    <value>下载的是官方默认配置，端口会自动避开占用；装完之后随时可以改。</value>
+  </data>
+  <data name="Setup.S5.Blocking.Busy" xml:space="preserve">
+    <value>正在创建配置文件…</value>
+  </data>
+  <data name="Setup.S5.Blocking.Missing" xml:space="preserve">
+    <value>还没有配置文件，点「创建」下载一份</value>
+  </data>
+  <data name="Setup.S5.Failed.Body" xml:space="preserve">
+    <value>没能下载默认配置，检查网络后再点一次「创建」。</value>
+  </data>
+  <data name="Setup.S5.Notify.Created.Title" xml:space="preserve">
+    <value>配置文件已创建</value>
+  </data>
+  <data name="Setup.S5.Notify.Created.Body" xml:space="preserve">
+    <value>用的是{0}的默认配置，可以在「酒馆配置」里修改端口和模型。</value>
+  </data>
+  <data name="Setup.S5.Notify.Failed.Title" xml:space="preserve">
+    <value>没能创建配置文件</value>
+  </data>
+  <data name="Setup.S5.Notify.Failed.Body" xml:space="preserve">
+    <value>下载失败，检查网络后重试。</value>
+  </data>
+  <data name="Setup.Action.CreateConfig" xml:space="preserve">
+    <value>创建</value>
+  </data>
+  <data name="Setup.Action.CreateConfigTip" xml:space="preserve">
+    <value>下载一份官方默认配置，完成后就能继续</value>
   </data>
 </root>

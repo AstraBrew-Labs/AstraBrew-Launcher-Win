@@ -1,0 +1,6 @@
+{
+  "About.Channel.Option.Auto": ["跟随当前版本", "Follow build channel"],
+  "About.Channel.Tip.Auto": ["跟随当前版本：测试版跟测试线、正式版跟正式线。现在跟的是{0}。", "Follows the build channel: beta builds on the beta line, stable builds on the stable line. Currently on {0}."],
+  "About.Channel.Tip.Fixed": ["已手动固定为{0}，不再跟随版本变化。选回「跟随当前版本」可恢复自动。", "Pinned to {0}. Choose Follow build channel to go back to automatic."],
+  "Store.UpdateChannelExplicit": ["用户是否手动定过更新渠道（false = 跟随当前版本）", "Whether the update channel was chosen manually"]
+}

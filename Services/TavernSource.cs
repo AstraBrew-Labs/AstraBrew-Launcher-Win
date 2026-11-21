@@ -49,9 +49,9 @@ namespace AstraBrew_Launcher.Services
         /// · 下载源选镜像但镜像里没有：退回 GitHub <b>直连</b>，不加速。用户选的是镜像，
         ///   没选过直连，就不该替他决定要不要中转；想用加速得自己把下载源切过去。
         ///
-        /// 但注意：加速开关打开时，<see cref="GitGlobalConfig"/> 已经往全局 git 配置里写了
-        /// <c>insteadOf</c>，第三条里那个「直连」地址交到 git 手上会被它自己改写成加速地址。
-        /// 这是开关打开后的预期行为，不是这里逻辑失效。
+        /// 但注意：加速开关打开时，<see cref="TavernGitConfig"/> 已经往酒馆专属 git 配置里写了
+        /// <c>insteadOf</c>（并通过 <c>GIT_CONFIG_GLOBAL</c> 生效），第三条里那个「直连」地址
+        /// 交到 git 手上会被它自己改写成加速地址。这是开关打开后的预期行为，不是这里逻辑失效。
         /// </summary>
         public static IReadOnlyList<SourceTarget> InstallTargets(DownloadChannel channel, bool mirrorUsable)
         {

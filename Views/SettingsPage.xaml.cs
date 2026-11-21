@@ -789,9 +789,9 @@ namespace AstraBrew_Launcher.Views
         private async Task SyncGlobalGitAsync(bool announce)
         {
             bool enabled = LauncherSettings.GithubAcceleration;
-            GitConfigResult? result = await GitGlobalConfig.SyncAsync(enabled);
+            GitConfigResult? result = await TavernGitConfig.SyncAsync(enabled);
 
-            _gitRewriteApplied = await GitGlobalConfig.IsAppliedAsync();
+            _gitRewriteApplied = await TavernGitConfig.IsAppliedAsync();
             UpdateChannelUi();
 
             if (result is { Ok: false } failed)

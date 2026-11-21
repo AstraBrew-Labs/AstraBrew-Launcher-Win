@@ -515,7 +515,7 @@
     <value>In-app uses the relay. Git rule failed, so the command line stays direct.</value>
   </data>
   <data name="Settings.Row.GithubAccel.Description.OnChecking" xml:space="preserve">
-    <value>In-app uses the relay. Checking the global git config.</value>
+    <value>In-app traffic uses the proxy; checking the tavern git config.</value>
   </data>
   <data name="Settings.SystemProxy.Label.On" xml:space="preserve">
     <value>On</value>
@@ -2258,7 +2258,7 @@
     <value>{0} already has {1}; downloading from the mirror.</value>
   </data>
   <data name="Version.Builtin.Route.MirrorMissAccel" xml:space="preserve">
-    <value>{0} does not have {1}, so GitHub is used. Acceleration is on, and git pulls are routed through the relay (global config applies).</value>
+    <value>{0} lacks {1}; falling back to GitHub with the proxy for tavern git operations.</value>
   </data>
   <data name="Version.Builtin.Route.MirrorMiss" xml:space="preserve">
     <value>{0} does not have {1}; pulling directly from GitHub.</value>
@@ -5714,19 +5714,19 @@ Merge: keep the current config and only add the keys it is missing.</value>
     <value>Writing</value>
   </data>
   <data name="Miss.GitCfg.NoGitSoft" xml:space="preserve">
-    <value>Git was not found, so the global acceleration rules were not written; GitHub fetches from the command line and from tavern updates still go direct.</value>
+    <value>Git not found, so the tavern git config wasn't written; GitHub fetches stay direct.</value>
   </data>
   <data name="Miss.GitCfg.NoGitHard" xml:space="preserve">
     <value>Git was not found. Install it from Runtime before turning this on.</value>
   </data>
   <data name="Miss.GitCfg.WriteFail" xml:space="preserve">
-    <value>Could not write the global git config.</value>
+    <value>Couldn't write the tavern git config.</value>
   </data>
   <data name="Miss.GitCfg.ReadBack" xml:space="preserve">
-    <value>The config could not be read back after writing; .gitconfig may be locked by another program. Please try again.</value>
+    <value>The config couldn't be read back — the file may be locked. Try again.</value>
   </data>
   <data name="Miss.GitCfg.RemoveFail" xml:space="preserve">
-    <value>Could not remove the global git config.</value>
+    <value>Couldn't remove the tavern git config entry.</value>
   </data>
   <data name="Miss.GitCfg.CannotStart" xml:space="preserve">
     <value>Could not start the git process.</value>
@@ -6104,7 +6104,7 @@ Merge: keep the current config and only add the keys it is missing.</value>
     <value>IP whitelist for normal and desktop mode, comma separated; in server mode it follows the service scope and is not written here</value>
   </data>
   <data name="Store.GithubAcceleration" xml:space="preserve">
-    <value>whether GitHub links go through gh-proxy.org acceleration (also writes the global git insteadOf rule)</value>
+    <value>Whether GitHub links use gh-proxy.org (also writes an insteadOf rule into the tavern-only git config, never yours)</value>
   </data>
   <data name="Store.Milliseconds" xml:space="preserve">
     <value>milliseconds</value>
@@ -6125,13 +6125,13 @@ Merge: keep the current config and only add the keys it is missing.</value>
     <value>Not installed</value>
   </data>
   <data name="Setp.GitCfgFail.Title" xml:space="preserve">
-    <value>The global git rules were not written</value>
+    <value>Couldn't write the tavern git rule</value>
   </data>
   <data name="Setp.GitCfgFail.Body" xml:space="preserve">
     <value>{0} In-app downloads are still accelerated; only git fetches in a terminal stay direct.</value>
   </data>
   <data name="Setp.GitCfgRemoveFail.Title" xml:space="preserve">
-    <value>The global git rules could not be removed</value>
+    <value>Couldn't remove the tavern git rule</value>
   </data>
   <data name="Setp.GitCfgRemoveFail.Body" xml:space="preserve">
     <value>{0} In-app requests are direct again, but git in a terminal is still routed through the relay by that rule.</value>
@@ -6143,10 +6143,10 @@ Merge: keep the current config and only add the keys it is missing.</value>
     <value>GitHub acceleration is off</value>
   </data>
   <data name="Setp.AccelOn.Body" xml:space="preserve">
-    <value>In-app requests go through the relay; the global git config is written too, so GitHub fetches from a terminal and from tavern updates are accelerated as well.</value>
+    <value>In-app traffic uses the proxy, and the tavern git config is written — instance and extension fetches are proxied too.</value>
   </data>
   <data name="Setp.AccelOff.Body" xml:space="preserve">
-    <value>In-app requests are direct again and the acceleration rule was removed from the global git config.</value>
+    <value>In-app traffic is direct again and the tavern git rule has been removed.</value>
   </data>
   <data name="Setp.OpenWindowsSettingsFail" xml:space="preserve">
     <value>Could not open Windows Settings</value>
@@ -6876,5 +6876,104 @@ Merge: keep the current config and only add the keys it is missing.</value>
   </data>
   <data name="Shell.Nav.NeedInstance" xml:space="preserve">
     <value>Install or repair a tavern instance first</value>
+  </data>
+  <data name="About.Channel.Option.Auto" xml:space="preserve">
+    <value>Follow build channel</value>
+  </data>
+  <data name="About.Channel.Tip.Auto" xml:space="preserve">
+    <value>Follows the build channel: beta builds on the beta line, stable builds on the stable line. Currently on {0}.</value>
+  </data>
+  <data name="About.Channel.Tip.Fixed" xml:space="preserve">
+    <value>Pinned to {0}. Choose Follow build channel to go back to automatic.</value>
+  </data>
+  <data name="Store.UpdateChannelExplicit" xml:space="preserve">
+    <value>Whether the update channel was chosen manually</value>
+  </data>
+  <data name="About.Update.Notes.Title" xml:space="preserve">
+    <value>What's new in {0}</value>
+  </data>
+  <data name="About.Update.Notes.Empty" xml:space="preserve">
+    <value>This release has no notes.</value>
+  </data>
+  <data name="Cfg.Port.Checking" xml:space="preserve">
+    <value>Checking port…</value>
+  </data>
+  <data name="Cfg.Port.Free" xml:space="preserve">
+    <value>Port {0} is available</value>
+  </data>
+  <data name="Cfg.Port.Busy" xml:space="preserve">
+    <value>Port {0} is already in use, pick another</value>
+  </data>
+  <data name="Cfg.Port.BusyOwner" xml:space="preserve">
+    <value>Port {0} is held by {1}, pick another</value>
+  </data>
+  <data name="Run.Log.PortBusyFound" xml:space="preserve">
+    <value>Port {0} is in use ({1}), trying to release it</value>
+  </data>
+  <data name="Run.Log.PortReleased" xml:space="preserve">
+    <value>Released the port by ending {0} leftover process(es)</value>
+  </data>
+  <data name="Run.PortBusy.GoFix" xml:space="preserve">
+    <value>Port {0} is held by {1} and cannot be released. Tavern settings is open — pick another port.</value>
+  </data>
+  <data name="Run.PortBusy.UnknownOwner" xml:space="preserve">
+    <value>unknown process</value>
+  </data>
+  <data name="Setup.Step5.Title" xml:space="preserve">
+    <value>Tavern config</value>
+  </data>
+  <data name="Setup.Step5.Hint" xml:space="preserve">
+    <value>Create config.yaml — port, models and extensions are read from it.</value>
+  </data>
+  <data name="Setup.Rail.Step5.Title" xml:space="preserve">
+    <value>Tavern config</value>
+  </data>
+  <data name="Setup.Rail.Step5.Subtitle" xml:space="preserve">
+    <value>Create the config file</value>
+  </data>
+  <data name="Setup.S5.Found.Title" xml:space="preserve">
+    <value>Config file found</value>
+  </data>
+  <data name="Setup.S5.Found.Body" xml:space="preserve">
+    <value>Port {0}. You can change the port or models later in Tavern config.</value>
+  </data>
+  <data name="Setup.S5.Missing.Title" xml:space="preserve">
+    <value>No config file yet</value>
+  </data>
+  <data name="Setup.S5.Missing.Body" xml:space="preserve">
+    <value>Tavern cannot start without config.yaml. Choose Create to download the official default.</value>
+  </data>
+  <data name="Setup.S5.Note.Found" xml:space="preserve">
+    <value>This step only checks that the file exists; your settings stay untouched.</value>
+  </data>
+  <data name="Setup.S5.Note.Missing" xml:space="preserve">
+    <value>The downloaded default picks a free port automatically, and you can change it later.</value>
+  </data>
+  <data name="Setup.S5.Blocking.Busy" xml:space="preserve">
+    <value>Creating the config file…</value>
+  </data>
+  <data name="Setup.S5.Blocking.Missing" xml:space="preserve">
+    <value>No config file yet — choose Create</value>
+  </data>
+  <data name="Setup.S5.Failed.Body" xml:space="preserve">
+    <value>Couldn't download the default config. Check your network and try Create again.</value>
+  </data>
+  <data name="Setup.S5.Notify.Created.Title" xml:space="preserve">
+    <value>Config file created</value>
+  </data>
+  <data name="Setup.S5.Notify.Created.Body" xml:space="preserve">
+    <value>Using the default from {0}. You can change port and models in Tavern config.</value>
+  </data>
+  <data name="Setup.S5.Notify.Failed.Title" xml:space="preserve">
+    <value>Couldn't create the config file</value>
+  </data>
+  <data name="Setup.S5.Notify.Failed.Body" xml:space="preserve">
+    <value>Download failed. Check your network and try again.</value>
+  </data>
+  <data name="Setup.Action.CreateConfig" xml:space="preserve">
+    <value>Create</value>
+  </data>
+  <data name="Setup.Action.CreateConfigTip" xml:space="preserve">
+    <value>Download the official default config, then continue</value>
   </data>
 </root>

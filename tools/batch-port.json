@@ -1,0 +1,10 @@
+{
+  "Cfg.Port.Checking": ["正在检测端口…", "Checking port…"],
+  "Cfg.Port.Free": ["端口 {0} 可用", "Port {0} is available"],
+  "Cfg.Port.Busy": ["端口 {0} 已被占用，请换一个", "Port {0} is already in use, pick another"],
+  "Cfg.Port.BusyOwner": ["端口 {0} 已被 {1} 占用，请换一个", "Port {0} is held by {1}, pick another"],
+  "Run.Log.PortBusyFound": ["端口 {0} 已被占用（{1}），先尝试解除", "Port {0} is in use ({1}), trying to release it"],
+  "Run.Log.PortReleased": ["已结束占用端口的残留进程 {0} 个，端口已释放", "Released the port by ending {0} leftover process(es)"],
+  "Run.PortBusy.GoFix": ["端口 {0} 被 {1} 占用，无法自动解除。已打开「酒馆配置」，请换一个端口。", "Port {0} is held by {1} and cannot be released. Tavern settings is open — pick another port."],
+  "Run.PortBusy.UnknownOwner": ["未知进程", "unknown process"]
+}

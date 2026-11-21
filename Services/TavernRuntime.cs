@@ -414,24 +414,34 @@ namespace AstraBrew_Launcher.Services
             }
 
             // ---------- 5. 端口 ----------
-            List<PortOwner> owners = FindPortOwners(port);
-            if (owners.Count > 0)
+            // 先自己动手：占用者是「我们内置的那份 node」时直接结束掉（多半是上次没退干净的残留），
+            // 用户不必为这种小事去改配置。别的程序一律不动——端口冲突不该以关掉别人的程序收场。
+            if (!PortProbe.IsFree(port))
             {
-                string detail = string.Join("、", owners.Select(item => $"PID {item.Pid} {item.Name}"));
-                AddLogKey(TavernLogKind.Error, "Run.Log.PortBusy", port, detail);
+                List<PortOwnerInfo> owners = PortProbe.FindOwners(port);
+                string detail = owners.Count > 0
+                    ? string.Join("、", owners.Select(item => $"PID {item.Pid} {item.Name}"))
+                    : L.Get("Run.PortBusy.UnknownOwner");
 
-                lock (Gate)
+                AddLogKey(TavernLogKind.Warning, "Run.Log.PortBusyFound", port, detail);
+
+                int released = await PortProbe.ReleaseOwnAsync(owners, port).ConfigureAwait(false);
+
+                if (released == 0)
                 {
-                    _state = _state with { State = TavernRunState.Failed, Port = port, Error = L.F("Run.PortBusy.Short", port) };
+                    AddLogKey(TavernLogKind.Error, "Run.Log.PortBusy", port, detail);
+
+                    lock (Gate)
+                    {
+                        _state = _state with { State = TavernRunState.Failed, Port = port, Error = L.F("Run.PortBusy.Short", port) };
+                    }
+
+                    Raise();
+                    RequestPortFix(port, detail);
+                    return;
                 }
 
-                Raise();
-                AppNotify.Error(
-                    L.Get("Run.PortBusy.Title"),
-                    L.F("Run.PortBusy.Body", port, detail),
-                    L.Get("Run.PortBusy.Action"),
-                    () => _ = ReleasePortAndStartAsync(owners, port));
-                return;
+                AddLogKey(TavernLogKind.Success, "Run.Log.PortReleased", port, released);
             }
 
             // ---------- 6. 组命令 ----------
@@ -488,6 +498,10 @@ namespace AstraBrew_Launcher.Services
 
             // 内置 node 不在 PATH 里：不显式前置，酒馆自己的子进程（npm、扩展脚本）会找不到 node
             startInfo.Environment["PATH"] = BuildPath(node, git);
+
+            // 酒馆内部会 spawn git（更新本体、装扩展）。把专属配置传给 node，
+            // 它派生出去的所有 git 进程都能继承——用户自己的 ~/.gitconfig 不受影响。
+            TavernGitConfig.Apply(startInfo);
 
             ApplyNodeOptions(startInfo);
 
@@ -977,98 +991,26 @@ namespace AstraBrew_Launcher.Services
 
         // ==================== 端口 ====================
 
-        private sealed record PortOwner(int Pid, string Name);
-
-        private static async Task ReleasePortAndStartAsync(List<PortOwner> owners, int port)
+        /// <summary>
+        /// 端口被别的程序占着、又解不掉：把用户送到配置页，并把那一行标出来。
+        ///
+        /// 走 force 导航：配置页可能正开着（用户刚改完端口就点了启动），
+        /// 不重建的话新页面不会重新读配置，高亮也没有地方挂。
+        /// </summary>
+        private static void RequestPortFix(int port, string detail)
         {
-            foreach (PortOwner owner in owners)
+            PortAttention.Request(port);
+
+            DispatcherQueue? queue = App.MainWindow?.DispatcherQueue ?? _queue;
+
+            queue?.TryEnqueue(() =>
             {
-                AddLogKey(TavernLogKind.Warning, "Run.Log.KilledPortOwner", port, owner.Pid, owner.Name);
-                KillTree(owner.Pid, force: true);
-            }
+                AppNotify.Error(
+                    L.Get("Run.PortBusy.Title"),
+                    L.F("Run.PortBusy.GoFix", port, detail));
 
-            await Task.Delay(600).ConfigureAwait(false);
-            await StartAsync().ConfigureAwait(false);
-        }
-
-        private static List<PortOwner> FindPortOwners(int port)
-        {
-            var owners = new List<PortOwner>();
-
-            try
-            {
-                var startInfo = new ProcessStartInfo("netstat")
-                {
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                };
-
-                startInfo.ArgumentList.Add("-ano");
-                startInfo.ArgumentList.Add("-p");
-                startInfo.ArgumentList.Add("TCP");
-
-                using Process? process = Process.Start(startInfo);
-                if (process is null)
-                {
-                    return owners;
-                }
-
-                string output = process.StandardOutput.ReadToEnd();
-                process.WaitForExit(4000);
-
-                var seen = new HashSet<int>();
-
-                foreach (string raw in output.Split('\n'))
-                {
-                    string line = raw.Trim();
-                    if (!line.Contains("LISTENING", StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    string[] columns = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    if (columns.Length < 5)
-                    {
-                        continue;
-                    }
-
-                    // 本地地址形如 0.0.0.0:11451 / [::]:11451，只认端口完全相同的
-                    string local = columns[1];
-                    int colon = local.LastIndexOf(':');
-                    if (colon < 0
-                        || !int.TryParse(local[(colon + 1)..], out int localPort)
-                        || localPort != port)
-                    {
-                        continue;
-                    }
-
-                    if (!int.TryParse(columns[^1], out int pid) || pid <= 0 || !seen.Add(pid))
-                    {
-                        continue;
-                    }
-
-                    string name = L.Get("Run.UnknownProcess");
-                    try
-                    {
-                        name = Process.GetProcessById(pid).ProcessName + ".exe";
-                    }
-                    catch
-                    {
-                        // 进程刚退出，或者没权限查名字：保留 PID 也够用户判断了
-                    }
-
-                    owners.Add(new PortOwner(pid, name));
-                }
-            }
-            catch
-            {
-                // netstat 不可用就当没冲突，交给启动自己去撞
-            }
-
-            return owners;
+                App.MainWindow?.NavigateTo("tavern", force: true);
+            });
         }
 
         /// <summary>端口上有没有人监听。用连一下的方式判断，比查表可靠（也不依赖 netstat）。</summary>

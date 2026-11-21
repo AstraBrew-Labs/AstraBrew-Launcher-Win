@@ -81,9 +81,14 @@
                             <onboarding:OnboardingRailItem
                                 x:Name="Rail4"
                                 Number="4"
-                                IsLast="True"
                                 SubtitleKey="Setup.Rail.Step4.Subtitle"
                                 TitleKey="Setup.Rail.Step4.Title" />
+                            <onboarding:OnboardingRailItem
+                                x:Name="Rail5"
+                                Number="5"
+                                IsLast="True"
+                                SubtitleKey="Setup.Rail.Step5.Subtitle"
+                                TitleKey="Setup.Rail.Step5.Title" />
                         </StackPanel>
 
                         <TextBlock
@@ -136,6 +141,7 @@
                             <onboarding:OnboardingStep2Network x:Name="Step2" Visibility="Collapsed" />
                             <onboarding:OnboardingStep3Runtime x:Name="Step3" Visibility="Collapsed" />
                             <onboarding:OnboardingStep4Instance x:Name="Step4" Visibility="Collapsed" />
+                            <onboarding:OnboardingStep5Config x:Name="Step5" Visibility="Collapsed" />
                         </Grid>
                     </ScrollViewer>
 

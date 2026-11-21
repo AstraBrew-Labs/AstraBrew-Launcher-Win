@@ -245,7 +245,7 @@ namespace AstraBrew_Launcher.Services
             if (LauncherSettings.GithubAcceleration != best.Accelerated)
             {
                 LauncherSettings.SetGithubAcceleration(best.Accelerated);
-                await GitGlobalConfig.SyncAsync(best.Accelerated).ConfigureAwait(false);
+                await TavernGitConfig.SyncAsync(best.Accelerated).ConfigureAwait(false);
             }
 
             if (!best.UseProxy && ProxyRoute.Resolve().UseProxy)

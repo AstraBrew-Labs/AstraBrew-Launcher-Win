@@ -183,6 +183,10 @@ namespace AstraBrew_Launcher.Services
                     });
             }
 
+            // 酒馆专属 git 配置（insteadOf）。测速分支会在后面把它覆盖成空配置，
+            // 那个覆盖必须发生在这里之后，否则「直连测速」会被 insteadOf 改写成加速地址。
+            TavernGitConfig.Apply(startInfo);
+
             return startInfo;
         }
 

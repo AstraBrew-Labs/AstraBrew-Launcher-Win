@@ -456,7 +456,7 @@ namespace AstraBrew_Launcher.Views.Onboarding
                     LauncherSettings.SetGithubAcceleration(enable);
 
                     // 全局 git 的 insteadOf 也一起同步：不然「加速开着但 git 不加速」会让人以为开关没生效
-                    GitConfigResult? sync = await GitGlobalConfig.SyncAsync(enable);
+                    GitConfigResult? sync = await TavernGitConfig.SyncAsync(enable);
 
                     if (sync is { Ok: false } failed)
                     {

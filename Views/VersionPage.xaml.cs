@@ -1530,41 +1530,11 @@ namespace AstraBrew_Launcher.Views
             await LoadReleasesAsync(force: true);
 
         /// <summary>
-        /// 发布说明是 Markdown，这里只做最小整理：标题去掉 <c>#</c>、列表换成圆点、压掉连续空行。
-        /// 不引 Markdown 渲染器——为一段更新日志加一个渲染库不划算，纯文本也算能读。
+        /// 发布说明的排版交给 <see cref="ReleaseNotes"/>：关于页显示的启动器更新日志用的是同一份实现，
+        /// 两处对同一段 Markdown 出字必须一致。
         /// </summary>
-        private static string FormatNotes(string? notes)
-        {
-            if (string.IsNullOrWhiteSpace(notes))
-            {
-                return L.Get("Version.Notes.Empty");
-            }
-
-            var lines = new System.Collections.Generic.List<string>();
-            foreach (string raw in notes.Replace("\r\n", "\n").Split('\n'))
-            {
-                string line = raw.TrimEnd();
-                string trimmed = line.TrimStart();
-
-                if (trimmed.StartsWith('#'))
-                {
-                    line = trimmed.TrimStart('#').Trim();
-                }
-                else if (trimmed.StartsWith("* ") || trimmed.StartsWith("- "))
-                {
-                    line = "• " + trimmed[2..].TrimStart();
-                }
-
-                if (line.Length == 0 && lines.Count > 0 && lines[^1].Length == 0)
-                {
-                    continue;
-                }
-
-                lines.Add(line);
-            }
-
-            return string.Join(Environment.NewLine, lines).Trim();
-        }
+        private static string FormatNotes(string? notes) =>
+            ReleaseNotes.Format(notes, L.Get("Version.Notes.Empty"));
 
         // ==================== 内置实例：其它操作 ====================
 

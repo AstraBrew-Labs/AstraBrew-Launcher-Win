@@ -21,7 +21,7 @@ namespace AstraBrew_Launcher.Views
     /// </summary>
     public sealed partial class OnboardingView : UserControl
     {
-        private const int TotalSteps = 4;
+        private const int TotalSteps = 5;
 
         private static readonly (string Title, string Description)[] Steps =
         {
@@ -32,6 +32,9 @@ namespace AstraBrew_Launcher.Views
             (L.Get("Setup.Step3.Title"), L.Get("Setup.Step3.Hint")),
             (L.Get("Setup.Step2.Title"), L.Get("Setup.Step2.Hint")),
             (L.Get("Setup.Step4.Title"), L.Get("Setup.Step4.Hint")),
+
+            // 实例装完不等于能跑：没有 config.yaml 酒馆起不来，所以配置单独占一步
+            (L.Get("Setup.Step5.Title"), L.Get("Setup.Step5.Hint")),
         };
 
         private readonly OnboardingRailItem[] _rail;
@@ -51,8 +54,8 @@ namespace AstraBrew_Launcher.Views
         {
             InitializeComponent();
 
-            _rail = new[] { Rail1, Rail2, Rail3, Rail4 };
-            _panels = new IOnboardingStep[] { Step1, Step3, Step2, Step4 };
+            _rail = new[] { Rail1, Rail2, Rail3, Rail4, Rail5 };
+            _panels = new IOnboardingStep[] { Step1, Step3, Step2, Step4, Step5 };
 
             foreach (IOnboardingStep panel in _panels)
             {
@@ -185,7 +188,7 @@ namespace AstraBrew_Launcher.Views
             bool repair = panel.WantsPrimaryAction;
 
             NextButton.Content = L.Get(repair
-                ? "Setup.Action.Fill"
+                ? panel.PrimaryActionLabelKey
                 : _step == TotalSteps
                     ? "Setup.Action.Finish"
                     : "Setup.Action.Next");
@@ -195,7 +198,7 @@ namespace AstraBrew_Launcher.Views
             ToolTipService.SetToolTip(
                 NextButton,
                 repair
-                    ? L.Get("Setup.Action.FillTip")
+                    ? L.Get(panel.PrimaryActionTipKey)
                     : panel.CanContinue ? null : panel.BlockingReason);
 
             // 长任务在跑时不拦「跳过」，但会先把它取消掉（Finish 里做）

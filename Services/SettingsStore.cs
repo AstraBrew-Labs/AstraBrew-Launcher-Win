@@ -106,9 +106,10 @@ namespace AstraBrew_Launcher.Services
             (DownloadChannel.Github, "github"),
         };
 
-        /// <summary>更新渠道的落盘标识。稳定版沿用 "stable"，与 tag 里的写法一致。</summary>
+        /// <summary>更新渠道的落盘标识。auto = 跟随当前版本，稳定版沿用 "stable"。</summary>
         private static readonly (UpdateChannelSetting Value, string Id)[] UpdateChannels =
         {
+            (UpdateChannelSetting.Auto, "auto"),
             (UpdateChannelSetting.Stable, "stable"),
             (UpdateChannelSetting.Beta, "beta"),
             (UpdateChannelSetting.Alpha, "alpha"),
@@ -377,13 +378,25 @@ namespace AstraBrew_Launcher.Services
             }
         }
 
-        /// <summary>更新渠道：缺省时保持「按构建渠道推导」的那个默认值。</summary>
+        /// <summary>
+        /// 更新渠道：默认「跟随当前版本」。
+        ///
+        /// <c>channel_explicit</c> 是后加的标记。老配置里只有 <c>channel</c>，
+        /// 而且是**每次落盘都会写**（连默认值也写），分不清是用户选的还是默认值——
+        /// 所以缺这个标记时一律按「没定过」处理写成跟随，否则从 Beta.0 升级上来的
+        /// 测试版用户会一直卡在稳定版这条线上，看着就像「修了跟没修一样」。
+        /// </summary>
         private static void ApplyUpdate(TomlDocument document)
         {
-            if (ParseId(UpdateChannels, document.String("update", "channel")) is { } channel)
+            bool explicitSet = document.Bool("update", "channel_explicit") == true;
+
+            if (explicitSet && ParseId(UpdateChannels, document.String("update", "channel")) is { } channel)
             {
-                LauncherSettings.SetUpdateChannel(channel);
+                LauncherSettings.RestoreUpdateChannel(channel, true);
+                return;
             }
+
+            LauncherSettings.RestoreUpdateChannel(UpdateChannelSetting.Auto, false);
         }
 
         private static void ApplyPaths(TomlDocument document)
@@ -574,7 +587,8 @@ namespace AstraBrew_Launcher.Services
             writer.String("custom_proxy", LauncherSettings.CustomProxy);
 
             writer.Section("update");
-            writer.String("channel", IdOf(UpdateChannels, LauncherSettings.UpdateChannel), "stable | beta | alpha");
+            writer.String("channel", IdOf(UpdateChannels, LauncherSettings.UpdateChannel), "auto | stable | beta | alpha");
+            writer.Bool("channel_explicit", LauncherSettings.UpdateChannelExplicit, L.Get("Store.UpdateChannelExplicit"));
 
             writer.Section("paths");
             writer.String("export", LauncherSettings.ExportPath, L.Get("Store.ExportPath"));

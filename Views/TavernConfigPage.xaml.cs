@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,6 +15,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Windows.Storage;
 using Windows.System;
+using Windows.UI;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
 
@@ -48,6 +50,18 @@ namespace AstraBrew_Launcher.Views
 
         /// <summary>高手版字段的变更事件只挂一次（页面可能被复用）。</summary>
         private bool _fieldsHooked;
+
+        /// <summary>端口检测的取消源：连续改数字时只认最后一次。</summary>
+        private CancellationTokenSource? _portCheckCts;
+
+        /// <summary>端口可用的提示色（跟仪表盘的状态绿一致，深浅主题下都够看）。</summary>
+        private static readonly Brush PortFreeBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0x16, 0xA3, 0x4A));
+
+        /// <summary>端口被占用的提示色。</summary>
+        private static readonly Brush PortBusyBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0xD1, 0x34, 0x38));
+
+        /// <summary>检测中的提示色（次要灰）。</summary>
+        private static readonly Brush PortCheckingBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0x8A, 0x8A, 0x8A));
 
         public TavernConfigPage()
         {
@@ -98,6 +112,15 @@ namespace AstraBrew_Launcher.Views
             RefreshConfigMask();
             LoadFromConfig();
             MarkClean();
+
+            // 打开这一页最想确认的就是「端口能不能用」，进来就测
+            SchedulePortCheck(immediate: true);
+
+            // 启动前因端口被占被送到这里：把那一行标出来，用户不用自己找
+            if (PortAttention.TryConsume(out int attentionPort))
+            {
+                HighlightPort(attentionPort);
+            }
         }
 
         /// <summary>
@@ -114,6 +137,12 @@ namespace AstraBrew_Launcher.Views
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
+            // 检测还没回来就离开：取消它，并把输入框恢复成可编辑
+            // （禁用状态是检测加上去的，取消了就没人负责撤销，页面复用时会是灰的）
+            _portCheckCts?.Cancel();
+            _portCheckCts = null;
+            SetPortEditing(true);
+
             TavernSettings.Changed -= Shared_Changed;
             TavernSettings.WhitelistChanged -= Shared_WhitelistChanged;
             LanguageSwitch.LanguageChanged -= OnLanguageChanged;
@@ -220,7 +249,12 @@ namespace AstraBrew_Launcher.Views
             }
 
             SyncPorts(args.NewValue);
+
+            // 用户开始改端口了：启动失败时留下的红框该撤掉，别一直挂着「请修改」
+            ClearPortHighlight();
+
             MarkDirty();
+            SchedulePortCheck();
         }
 
         /// <summary>两个版本的端口输入框保持同值，并做范围校验。</summary>
@@ -237,6 +271,179 @@ namespace AstraBrew_Launcher.Views
             var state = invalid ? Visibility.Visible : Visibility.Collapsed;
             SimplePortError.Visibility = state;
             AdvPortError.Visibility = state;
+        }
+
+        // ==================== 端口检测 ====================
+
+        private enum PortStatus
+        {
+            Hidden,
+            Checking,
+            Free,
+            Busy,
+        }
+
+        /// <summary>
+        /// 调度一次端口检测。改数字时防抖 320ms：每敲一位都起一次绑定测试没有意义，
+        /// 而且「检测期间输入框是禁用的」，抖得太频繁会让输入框一直闪。
+        /// </summary>
+        private void SchedulePortCheck(bool immediate = false)
+        {
+            if (_loading)
+            {
+                return;
+            }
+
+            double raw = SimplePortBox.Value;
+            int port = double.IsNaN(raw) ? (int)DefaultPort : (int)raw;
+
+            _ = CheckPortAsync(port, immediate);
+        }
+
+        /// <summary>
+        /// 真去绑一次端口。**检测期间两个输入框都禁用**：不锁的话用户可以在
+        /// 「已经发出去的检测」和「刚改的数字」之间错位——提示是旧端口的结论，
+        /// 用户却以为在说新端口。检测只有毫秒级，锁一下不影响输入手感。
+        /// </summary>
+        private async Task CheckPortAsync(int port, bool immediate)
+        {
+            _portCheckCts?.Cancel();
+
+            var cts = new CancellationTokenSource();
+            _portCheckCts = cts;
+
+            // 范围问题由「范围错误」那行提示，这里不叠第二句
+            if (port is < 1024 or > 65535)
+            {
+                SetPortStatus(PortStatus.Hidden, port, null);
+                SetPortEditing(true);
+                cts.Dispose();
+                return;
+            }
+
+            try
+            {
+                // 先等用户停手，这段**不禁用**输入框：防抖是「等人」，不是「在检测」，
+                // 把 320ms 也算进禁用窗口的话，每敲一次数字手都会被锁住
+                await Task.Delay(immediate ? 80 : 320, cts.Token);
+                cts.Token.ThrowIfCancellationRequested();
+
+                // 真要开始测了才锁：这一小段用户改不了值，提示与结论才对得上
+                SetPortEditing(false);
+                SetPortStatus(PortStatus.Checking, port, null);
+
+                // 让 UI 把禁用态与「正在检测」画出来，再去做实际探测
+                await Task.Yield();
+
+                bool free = await Task.Run(() => PortProbe.IsFree(port), cts.Token);
+                cts.Token.ThrowIfCancellationRequested();
+
+                string? ownerName = null;
+
+                if (!free)
+                {
+                    // 占用时才去查是谁（netstat 要一百多毫秒），有空闲路径上不付这个代价
+                    List<PortOwnerInfo> owners = await Task.Run(() => PortProbe.FindOwners(port), cts.Token);
+                    ownerName = owners.FirstOrDefault()?.Name;
+                }
+
+                cts.Token.ThrowIfCancellationRequested();
+                SetPortStatus(free ? PortStatus.Free : PortStatus.Busy, port, ownerName);
+            }
+            catch (OperationCanceledException)
+            {
+                // 被下一次检测顶掉：状态与输入框都交给那一次处理
+                return;
+            }
+            finally
+            {
+                if (!cts.IsCancellationRequested)
+                {
+                    SetPortEditing(true);
+                }
+
+                if (ReferenceEquals(_portCheckCts, cts))
+                {
+                    _portCheckCts = null;
+                }
+
+                cts.Dispose();
+            }
+        }
+
+        private void SetPortStatus(PortStatus status, int port, string? ownerName)
+        {
+            (string text, Brush? brush) = status switch
+            {
+                PortStatus.Checking => (L.Get("Cfg.Port.Checking"), PortCheckingBrush),
+                PortStatus.Free => (L.F("Cfg.Port.Free", port), PortFreeBrush),
+                PortStatus.Busy => (
+                    ownerName is { Length: > 0 }
+                        ? L.F("Cfg.Port.BusyOwner", port, ownerName)
+                        : L.F("Cfg.Port.Busy", port),
+                    PortBusyBrush),
+                _ => (string.Empty, null),
+            };
+
+            foreach (TextBlock block in new[] { SimplePortStatus, AdvPortStatus })
+            {
+                if (block is null)
+                {
+                    continue;
+                }
+
+                block.Text = text;
+                block.Visibility = status == PortStatus.Hidden ? Visibility.Collapsed : Visibility.Visible;
+
+                if (brush is not null)
+                {
+                    block.Foreground = brush;
+                }
+            }
+        }
+
+        private void SetPortEditing(bool enabled)
+        {
+            SimplePortBox.IsEnabled = enabled;
+            AdvPortBox.IsEnabled = enabled;
+        }
+
+        /// <summary>
+        /// 标出「端口被占用，请修改」：红框 + 提示 + 滚到可见位置。
+        /// 启动失败被送到这里时用——用户点开页面就能看到该改哪一行。
+        /// </summary>
+        private void HighlightPort(int port)
+        {
+            SetPortStatus(PortStatus.Busy, port, null);
+
+            foreach (NumberBox box in new[] { SimplePortBox, AdvPortBox })
+            {
+                if (box is null)
+                {
+                    continue;
+                }
+
+                box.BorderBrush = PortBusyBrush;
+                box.BorderThickness = new Thickness(2);
+            }
+
+            SimplePortBox.StartBringIntoView();
+            SimplePortBox.Focus(FocusState.Programmatic);
+        }
+
+        /// <summary>撤掉高亮，把边框还给主题默认值（不是写死一个颜色）。</summary>
+        private void ClearPortHighlight()
+        {
+            foreach (NumberBox box in new[] { SimplePortBox, AdvPortBox })
+            {
+                if (box is null)
+                {
+                    continue;
+                }
+
+                box.ClearValue(Control.BorderBrushProperty);
+                box.ClearValue(Control.BorderThicknessProperty);
+            }
         }
 
         // ==================== 局域网 / 浏览器 ====================

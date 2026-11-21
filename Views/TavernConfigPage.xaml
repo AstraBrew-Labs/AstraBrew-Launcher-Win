@@ -260,6 +260,17 @@
                                             panels:Loc.Text="Cfg.Port.Range"
                                             TextWrapping="NoWrap"
                                             Visibility="Collapsed" />
+                                        <!--
+                                            端口状态：被占用 / 可用 / 正在检测。
+                                            与上面的「范围错误」分开两行——一个是输入不合法，一个是能不能用，
+                                            合成一行会互相盖掉。
+                                        -->
+                                        <TextBlock
+                                            x:Name="SimplePortStatus"
+                                            HorizontalAlignment="Right"
+                                            Style="{StaticResource FieldHintTextStyle}"
+                                            TextWrapping="NoWrap"
+                                            Visibility="Collapsed" />
                                     </StackPanel>
                                 </Grid>
                             </Border>
@@ -534,6 +545,12 @@
                                             Foreground="{ThemeResource SystemFillColorCriticalBrush}"
                                             Style="{StaticResource FieldHintTextStyle}"
                                             panels:Loc.Text="Cfg.Port.Range"
+                                            TextWrapping="NoWrap"
+                                            Visibility="Collapsed" />
+                                        <TextBlock
+                                            x:Name="AdvPortStatus"
+                                            HorizontalAlignment="Right"
+                                            Style="{StaticResource FieldHintTextStyle}"
                                             TextWrapping="NoWrap"
                                             Visibility="Collapsed" />
                                     </StackPanel>

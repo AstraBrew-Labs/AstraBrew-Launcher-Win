@@ -279,9 +279,10 @@
                                             controls:Loc.Text="About.Channel.Label" />
                                         <ComboBox
                                             x:Name="UpdateChannelSelect"
-                                            MinWidth="112"
+                                            MinWidth="128"
                                             FontSize="12"
                                             SelectionChanged="UpdateChannel_SelectionChanged">
+                                            <ComboBoxItem controls:Loc.Content="About.Channel.Option.Auto" />
                                             <ComboBoxItem controls:Loc.Content="About.Channel.Option.0" />
                                             <ComboBoxItem controls:Loc.Content="About.Channel.Option.1" />
                                             <ComboBoxItem controls:Loc.Content="About.Channel.Option.2" />
@@ -339,6 +340,39 @@
                                     VerticalAlignment="Center"
                                     Style="{StaticResource FootnoteTextStyle}" />
                             </Grid>
+
+                            <!--
+                                更新日志：只有「真的检测到新版本」时才出现，内容取自 Release 的简介
+                                （也就是发布时写的那段 Markdown），整理规则见 Services/ReleaseNotes.cs。
+
+                                不折叠、不加「展开」按钮：点完检查更新最想看的就是这个，
+                                再让他多点一次是多余的。高度给上限，长了自己滚。
+                            -->
+                            <StackPanel
+                                x:Name="ReleaseNotesPanel"
+                                Margin="0,12,0,0"
+                                Spacing="6"
+                                Visibility="Collapsed">
+                                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                <TextBlock
+                                    x:Name="ReleaseNotesTitle"
+                                    Margin="0,4,0,0"
+                                    FontSize="12"
+                                    FontWeight="SemiBold" />
+                                <ScrollViewer
+                                    MaxHeight="150"
+                                    HorizontalScrollBarVisibility="Disabled"
+                                    HorizontalScrollMode="Disabled"
+                                    VerticalScrollBarVisibility="Auto">
+                                    <TextBlock
+                                        x:Name="ReleaseNotesText"
+                                        FontSize="12"
+                                        LineHeight="19"
+                                        IsTextSelectionEnabled="True"
+                                        TextWrapping="Wrap"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </ScrollViewer>
+                            </StackPanel>
                         </StackPanel>
                     </Grid>
                 </Border>

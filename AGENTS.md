@@ -56,7 +56,8 @@ dotnet build "AstraBrew Launcher.csproj" -c Release -p:Platform=x64
   | Debug | `0.3.0-Debug.0` | 同上，后缀 `Debug.N` |
   | Release | `0.3.0` | 不给 `VersionSuffix` |
 
-  - `0.3.x` 是版本号，`-Channel` 是渠道，`.N` 是**同版本下的迭代次数**（同一版本里快速修个 bug 就 +1）；
+  - `0.3.x` 是版本号，`-Channel` 是渠道，`.N` 是**同版本下的迭代次数**——
+    **什么时候才允许 +1 见下面的「版本号规则」，默认不动**；
   - 只改 csproj 的 `VersionPrefix` 与 `ChannelIteration` 两个值，四个渠道自动跟着变；
   - `VersionSuffix` 只进 `ProductVersion` / `InformationalVersion`（后者末尾还有 SDK 自动加的
     `+<git sha>`）。`AssemblyVersion` / `FileVersion` 仍是纯数字 `0.3.0.0`，**别指望它们带字母**；
@@ -67,6 +68,76 @@ dotnet build "AstraBrew Launcher.csproj" -c Release -p:Platform=x64
   两枚摆一起高度与基线才齐平（最初用小一号的 10.5 + 1,2 内边距，比旁边矮 4 px，看着一高一低）。
   关于页主卡那三枚（版本 / 渠道 / 架构）同理，纵向内边距统一取 `1,2`
   ——版本胶囊原来是 `2,3`，比旁边两枚高 2 px。
+
+## 版本号规则（`VersionPrefix` + `ChannelIteration`）
+
+版本号只有一个源头：csproj 的 `<VersionPrefix>` 与 `<ChannelIteration>`，四个渠道共用，
+后缀由配置自动拼（`Alpha.N` / `Beta.N` / `Debug.N`，正式版没有后缀）。
+
+### 默认不动
+
+**没经过用户确认，不要动版本号。** 一个版本号从定下来到发出去之间可以装任意多个改动，
+每修一个功能就 +1，版本号就失去了意义——用户看到 Beta.2 / Beta.3 / Beta.4 连着三个包，
+分不清哪个才是「这一版」。内部测试包随便打多少次，版本号始终是同一个。
+
+### 允许 +1 的条件（两条同时满足）
+
+1. **GitHub 与 GitCode 的 Releases 里都已经有这个版本号**（两端的 tag 都存在）；
+2. **用户明确说要发新版本**（一句「升版本」「发版」都算，自己觉得该升不算）。
+
+少一条就不动。只有一端有 tag 说明同步还没做完，这时 +1 会让另一端的更新源落后一个版本。
+
+查两端现状（看返回里有没有目标 tag）：
+
+```bash
+curl -s "https://api.github.com/repos/AstraBrew-Labs/AstraBrew-Launcher-Win/releases?per_page=20" \
+  | python -c "import sys,json;print([r['tag_name'] for r in json.load(sys.stdin)])"
+
+curl -s "https://api.gitcode.com/api/v5/repos/AstraBrew-Labs/AstraBrew-Launcher-Win/releases?per_page=20" \
+  | python -c "import sys,json;print([r['tag_name'] for r in json.load(sys.stdin)])"
+```
+
+### 加多少
+
+- 平时只把 `ChannelIteration` 加 1（`Beta.1` → `Beta.2`）。
+- `VersionPrefix`（`0.3.0`）只在用户明确要求升小版本 / 修订号时才动；改它等于换一个系列，
+  `ChannelIteration` 同时归零。
+- **不要跳号**：Beta.3 没发过就直接用 Beta.3，会让人以为中间丢了一个版本。
+
+### 自增多了要改回去
+
+如果当前版本号已经超过「最后一个两端都有的 tag + 1」，说明之前多增了，**直接改回去**：
+未发布的号没有语义，可以随便复用。判断依据永远是两端的 Releases，不是本地打包记录。
+
+## 更新日志（`CHANGELOG.md`）
+
+`CHANGELOG.md` 是改动记录的唯一去处，也是 Releases 简介的来源：启动器「检查更新」后
+显示的那段文字，读的就是 Release 的简介（`LauncherRelease.Notes`）。
+
+### 写什么
+
+- 分 `新增 / 修复 / 优化` 三类，一条一句，句尾不加句号。
+- **只写用户能感知的改动**：「修了更新渠道的默认值」要写；「重构了 SettingsStore」不写。
+- 写人话，不写提交信息那种流水账——这段文字最终会原样显示在用户的关于页上。
+- 提到版本或渠道时写全（`0.3.0-Beta.2`），不要写「上一版」。
+
+### 什么时候写
+
+- **改完就写，进「未发布」**。不要等打包时回忆，更不要用 git log 反推。
+- 同一次改动涉及几处，就补几条；合并同类项，一件事别写三行。
+
+### 什么时候落版本号
+
+- **只在发布时**（用户确认发版）把 `## [未发布]` 改成 `## [0.3.0-Beta.N] - YYYY-MM-DD`，
+  日期取发布当天。
+- 内部测试包**不落版本号、不新开小节**：改动一直累积在「未发布」下，同版本号可以打任意多次包。
+- 发布后立刻在顶部补一个空的 `## [未发布]`，下次改动有地方写。
+
+### 与打包的配合
+
+- 包名带版本号（`AstraBrewLauncher-0.3.0-Beta.2-win-x64.zip`）；版本号没变时重新打包会
+  **覆盖同名文件**，这是预期行为，不是 bug。
+- 发布到 Releases 时把该小节正文粘进简介；标题用 tag 名，正文里不要再写一遍版本号。
 
 ## 打包（安装包 / 免安装包）
 
@@ -166,12 +237,20 @@ GitCode → 加速 + GitHub → 直连 GitHub
 
 ### 两条必须守住的规则
 
-1. **渠道是用户选的，不是构建出来的**：关于页有「更新渠道」三档——稳定版 / 测试版 / 预览版，
-   落盘在 `settings.toml` 的 `[update] channel`（`stable | beta | alpha`）。
-   **默认稳定版**：Beta/Alpha 构建也默认跟正式线，不由构建渠道推导——
-   否则「我装的明明是测试版，更新却给我换成正式版」，反过来同样成立。
-   **没有「开发版」档**：debug 包不对外发布，选了也没东西可更。
-   切渠道会立刻强查一次，缓存里带渠道标识，切完旧结论自动作废。
+1. **渠道默认跟随当前版本**：关于页四档——跟随当前版本 / 稳定版 / 测试版 / 预览版
+   （`UpdateChannelSetting.Auto / Stable / Beta / Alpha`，顺序即界面下标）。
+   落盘在 `settings.toml` 的 `[update] channel`（`auto | stable | beta | alpha`）+ `channel_explicit`
+   （用户是否手动定过）。
+   - `Auto` 由 `LauncherSettings.DefaultUpdateChannel` 按构建渠道推导：
+     Alpha → 预览、Beta → 测试、**其余（Release / Debug）→ 稳定**。
+     规则是「下拉里没有对应档位的构建就回落稳定」——开发版没有这一档，也没有发布过 debug 包，
+     跟着任何测试/预览线都只会收到不该装的东西。查更新一律走 `EffectiveUpdateChannel`。
+   - **`channel_explicit` 是后加的标记**：老配置里只有 `channel`，而且旧版本每次落盘都写
+     （连默认值也写），分不清是用户选的还是默认值。缺失时一律按「没定过」→ Auto，
+     否则从 Beta.0 升上来的测试版用户会一直卡在稳定线上，看起来「修了跟没修一样」。
+   - 用户手动选过之后（含选回「跟随当前版本」）标记为 true，此后不再跟随构建渠道变化。
+   - **没有「开发版」档**：debug 包不对外发布，选了也没东西可更。
+   - 切渠道会立刻强查一次，缓存里带渠道标识，切完旧结论自动作废。
 2. **只收所选渠道的发布**：Debug 版装上 beta 包会把渠道标记改掉，那种「更新」比不更新更糟。
    筛选在 `LauncherRelease.PickLatest(releases, channel)`。
 
@@ -229,11 +308,18 @@ v[版本号]-[type]     v0.0.0-Beta.0 v0.3.0-Beta.0 v1.0.0-preview.2
   **这两处文本不能挂 `Loc.Text`**——Loc 在首帧会把文本重置回资源值，把「正在下载 42%」直接盖掉
   （踩过：状态行永远显示「尚未检查更新」）。初值在构造函数里 `ApplyUpdateState()` 给。
 - 「更新渠道」是 hero 卡右上角、三枚胶囊下面那组「标签 + ComboBox」（`UpdateChannelSelect`，
-  选项文案 `About.Channel.Option.0/1/2`，顺序必须与 `UpdateChannelSetting` 一致）。
+  四项：`About.Channel.Option.Auto` + `Option.0/1/2`，**顺序必须与 `UpdateChannelSetting` 一致**，
+  也就是「跟随当前版本」必须排最前）。`UpdateChannelHint()` 把当前实际跟的线写进 ToolTip——
+  只显示「跟随当前版本」四个字，用户看不出到底会不会收到测试包。
   那组控件带 `Margin="0,15,0,0"`，用来和**左列简介**（「装环境、管版本…」那行）拉到同一水平线——
   左列是「40 高的标识 + 10 间距 + 一行简介」，改标识高度或间距时这个 15 要跟着改。
   回填 `SelectedIndex` 时必须用 `_syncingChannel` 挡住 `SelectionChanged`，否则「回填」会被当成
   用户切换，白跑一次强制检查。
+- **检测到新版本就地把更新日志显示出来**：hero 卡里更新按钮下方那块 `ReleaseNotesPanel`，
+  内容是 Release 的简介（`LauncherRelease.Notes`）。只在 `Available / Downloading / Installing`
+  三种状态出现，其余状态收起——没新版却挂着上一轮的日志，看着像还有更新没装。
+  日志是 Markdown，整理规则在 `Services/ReleaseNotes.cs`（标题去 `#`、列表换 `•`、
+  去加粗、`[文字](地址)` 展开成「文字（地址）」），**版本页的酒馆发布说明共用这一份**。
 - **开发版（Debug）不参与自动检查**：`LauncherUpdateService.AutoCheckEnabled` 为 false 时，
   启动后不查、进关于页不自动回填，状态行直接写「开发版不自动检查更新」。
   手动点按钮、手动切渠道仍然会查——那两条是用户主动行为，留着方便验证发布。
@@ -531,6 +617,40 @@ ToolTip 里写清楚去哪装。`PrimaryAction_Click` 里再兜一层同样的�
   （`Node != null && Npm != null`），探测完由 `SyncRuntimeLabelAsync()` 回写并重算按钮。
 - 两个标记的初值都是 `true`：首帧还没探测完就把按钮画灰，会让人以为坏了。
 
+## 端口占用：先检测、再尝试解除、最后才引导
+
+端口冲突有两个入口，共用 `Services/PortProbe.cs`：
+
+### 配置页：输入时就告诉你
+
+改端口后 320 ms 防抖，再**真的绑一次**（`PortProbe.IsFree`）——查 netstat 会漏掉
+「已经绑上、还没 LISTEN」的窗口期，绑定测试是唯一可靠的判据。
+
+- **防抖期间不禁用输入框，真正开始测才禁用**（`SetPortEditing(false)`）。
+  把 320 ms 也算进禁用窗口的话，用户每敲一次数字手都会被锁住；反过来完全不禁用又会出现
+  「提示是旧端口的结论、用户以为在说新端口」。
+- 检测完无论结果都恢复可编辑（`finally` 里，取消路径由新一次检测负责）。
+  **离开页面要主动取消并恢复**：禁用是检测加上去的，取消后没人负责撤销，页面复用时会一直是灰的。
+- 空闲 → 「端口 11451 可用」；被占用 → 「端口 11451 已被 python.exe 占用，请换一个」
+  （占用时才查 netstat 拿进程名，空闲路径不付这个代价）。
+- 范围错误（< 1024 / > 65535）另有「范围错误」一行，两个提示不要合成一行互相盖掉。
+
+### 启动前：先自己解决，再让人改
+
+`TavernRuntime.StartCoreAsync` 第 5 段：端口不可绑时先 `PortProbe.ReleaseOwnAsync`。
+
+- **只结束「可执行文件在启动器数据目录里的 node 进程」**（`AppPaths.RoamingRoot` /
+  `LocalRoot`）。判据刻意不看当前选的是内置还是系统环境——用户切到系统环境后，
+  上次用内置 node 起的酒馆可能还挂在端口上，那种残留同样得能清掉。
+- 外部程序（数据库、别的 Node 项目）**一律不杀**：端口冲突不该以「帮你关掉别人的程序」收场。
+- 解除成功：日志记一条，继续启动，不打扰用户。
+- 解除失败：`PortAttention.Request(port)` 登记 + `NavigateTo("tavern", force: true)` +
+  `AppNotify.Error`。配置页 `Loaded` 里 `TryConsume` 拿到端口号，做三件事：
+  红框（`BorderThickness=2` + 危险色）、提示「已被占用，请换一个」、`StartBringIntoView` 滚到可见。
+- **必须走 force 导航**：页面可能正开着（用户刚改完端口就点启动），不重建就不会重新读配置，
+  高亮也没有地方挂。用户开始改端口时 `ClearPortHighlight()` 把边框还给主题默认值
+  （`ClearValue`，不是写死一个颜色）。
+
 ### 启动模式只有一个真值
 
 - `LauncherSettings.StartMode`（普通 / 桌面 / 服务器）是**唯一**的模式来源。
@@ -657,10 +777,11 @@ ToolTip 里写清楚去哪装。`PrimaryAction_Click` 里再兜一层同样的�
   因此加速行**常显**，选镜像时也不收起。
 - **一个开关管两条路，别拆成两个开关**：
   - 应用内 HTTP / 下载 —— `GithubAccel` 在地址前拼 `gh-proxy.org`；
-  - 命令行 git —— `Services/GitGlobalConfig.cs` 把 `insteadOf` 写进 `~/.gitconfig`。
-  命令行拿到的是干净的 `https://github.com/…`，拼不了前缀，只能让 git 自己改写；
-  酒馆自动更新、酒馆里装扩展都靠这条。两者**必须同开同关**，否则会出现「界面显示已加速、
-  酒馆更新却还是直连」的错位。**不要再给全局 git 规则单独做一个开关。**
+  - 命令行 git —— `Services/TavernGitConfig.cs` 把 `insteadOf` 写进**酒馆专属**的 gitconfig，
+    再通过 `GIT_CONFIG_GLOBAL` 让相关进程读它。命令行拿到的是干净的 `https://github.com/…`，
+    拼不了前缀，只能让 git 自己改写；酒馆自动更新、酒馆里装扩展都靠这条。
+    两者**必须同开同关**，否则会出现「界面显示已加速、酒馆更新却还是直连」的错位。
+    **不要再给 git 规则单独做一个开关。**
 - **用法照官方文档**（gh-proxy.com/docs/github-accelerator）：把完整 GitHub 资源 URL
   **原样**拼在中转域名后面，路径与查询串都不改，例如
   `https://gh-proxy.org/https://github.com/o/r/releases/download/v1/x.zip`。
@@ -695,29 +816,50 @@ ToolTip 里写清楚去哪装。`PrimaryAction_Click` 里再兜一层同样的�
 - 配置文件里的 `download_channel` 只有 `gitee / gitcode / github` 三个合法值，
   **不留旧值兼容**：读不到就按默认 `GitCode` 处理，不写迁移分支。
 
-### 全局 git 规则（insteadOf）
+### 酒馆专属 git 配置（insteadOf）
 
 加速开关打开时，除了应用内拼前缀，还要让**命令行里的 git** 也走加速，否则酒馆自动更新、
-酒馆里装扩展这类「不在我们手里发请求」的场景会漏掉。做法照 GH-Proxy 文档的
-「Git 全局自动替换 (insteadOf)」：
+酒馆里装扩展这类「不在我们手里发请求」的场景会漏掉。
+
+**规则写进启动器自己管的一份 gitconfig，不碰用户的 `~/.gitconfig`**：
 
 ```
-git config --global url."https://gh-proxy.org/https://github.com/".insteadOf "https://github.com/"
-git config --global --unset url."https://gh-proxy.org/https://github.com/".insteadOf
+文件：%AppData%\AstraBrew Launcher\data\git\gitconfig
+
+[url "https://gh-proxy.org/https://github.com/"]
+	insteadOf = https://github.com/
 ```
 
-- 全部逻辑只在 `Services/GitGlobalConfig.cs`：`ApplyAsync` / `RevertAsync` / `IsAppliedAsync` /
-  `SyncAsync(enabled)`。**不要直接读改 `~/.gitconfig` 文本**，让 git 自己去写。
+为什么不用全局：`~/.gitconfig` 是用户的东西。写进去之后，用户在终端 clone **任何**仓库
+都会被改写成中转地址，而且关掉应用也还在——加速服务没有资格改别人电脑上的全局行为。
+代价是这份配置里没有用户的用户名 / 凭据；拉公共仓库不需要，确实需要时就往这个文件里
+写一份 `include`（它就是个普通 gitconfig）。
+
+生效靠三个注入点，都在 `TavernGitConfig.Apply(ProcessStartInfo)` 这一处调用：
+
+| 注入点 | 覆盖的场景 |
+|---|---|
+| `GitCommand.CreateBase` | 测速、连通性探测（`isolateGlobalConfig` 会在之后覆盖成空配置） |
+| `TavernExtensions.BuildStartInfo` | 扩展克隆 / `ls-remote` 查更新 |
+| `TavernInstaller.CloneAsync` | 内置实例安装与换版 |
+| `TavernRuntime` 启动 node | 酒馆内部 spawn 的 git（继承环境变量） |
+
+- 全部逻辑在 `Services/TavernGitConfig.cs`：`Apply` / `ApplyAsync` / `RevertAsync` /
+  `IsAppliedAsync` / `SyncAsync(enabled)`。**不要直接读改 gitconfig 文本**，让 git 自己写
+  （`--file <path>`，不是 `--global`）。
+- 文件不存在时 `Apply` **什么都不设**：没有专属配置就按 git 默认走用户全局，
+  不会因为「指了一个空文件」把用户名 / 凭据一起弄丢。
 - 键名里带完整 URL（`url.<前缀>https://github.com/.insteadOf`），所以它天然只命中 github.com，
   相当于一张白名单；Gitee / GitCode / 自建服务、`git@github.com:` 这类 scp 写法都不会被改写。
 - 写入用 `--replace-all`：反复开关不会攒出一串重复项。移除用 `--unset-all`——
-  用 `--unset` 在存在多值时会失败并**把规则留在配置里**，那时用户以为已恢复直连、实际还在加速。
+  用 `--unset` 在存在多值时会失败并**把规则留在配置里**。
 - `git config --unset` 在键不存在时返回 5，等价于「已经是目标状态」，按成功处理；其余非 0 才算失败。
-- 以 **git 实际配置为真相源**：进设置页跑一次 `SyncAsync` 对齐（用户可能在终端里手动 `--unset`
-  过、或换过机器），开关状态始终取加速开关本身，不用另一个布尔值记录。
-- 失败不回滚开关：加速服务对应用内请求仍然有效，只是命令行那条路没铺好，用 Warning 说明；
+- **升级迁移**：旧版本写的是 `~/.gitconfig`（`--global`）。`App.OnLaunched` 会跑一次
+  `CleanLegacyGlobalAsync` 把那条规则撤掉，成功后在 `data/git/.global-cleaned` 留标记，只做一次。
+  没装 Git 时不写标记，下次启动再试——**这条迁移不能省**，否则升级后用户的终端仍被改写。
+- 失败不回滚开关：加速服务对应用内请求仍然有效，只是 git 那条路没铺好，用 Warning 说明；
   关闭时删不掉规则更严重——git 会继续走加速，用 Error。
-- 没有 Git 时不报错也不阻断：规则写不上，说明里写清「命令行仍是直连」。
+- 没有 Git 时不报错也不阻断：规则写不上，说明里写清「实例与扩展的拉取仍是直连」。
 
 ## 内置实例安装
 
@@ -1431,7 +1573,7 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
   `--depth 1 --single-branch --no-tags --progress`），真把约 100 MB 的文件传下来，
   结果写「24.4 秒」而不是毫秒。以前用 `--filter=blob:none --no-checkout` 只取元数据：
   一两秒就绿，可安装时下的是完整仓库——测的根本不是同一件事（中转常见「元数据秒回、拉文件很慢」）。
-- **必须隔离全局 git 配置**（`isolateGlobalConfig: true`）：加速开关会往 `~/.gitconfig` 写 `insteadOf`，
+- **必须隔离 git 配置**（`isolateGlobalConfig: true`）：加速开关会把 `insteadOf` 注入给 git 进程，
   不隔离的话「直连」会被 git 自己改写成加速地址，那一行的绿是错的那条线给的。
 - **进度要报出来**：`GitProgressParser`（`Services/GitProgress.cs`，与测速共用一份正则）解析 stderr 的
   `Receiving objects: 45% …, 1.2 MiB/s`，折算成 0~100 后经 `IProgress<GithubCloneProgress>`
@@ -1469,7 +1611,7 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
 - 测试并发跑（`Task.WhenAll`），HTTP 超时 10 秒、克隆单线路 45 秒 / 总预算 90 秒；串行四条能让人等到关弹窗。
   克隆本身在线程池里跑（`Task.Run` + 轮询进程状态），不占 UI 线程。
 
-## 首次引导（4 步）
+## 首次引导（5 步）
 
 `Views/OnboardingView.xaml` 是外壳（840×500 卡片 + 左侧 208 宽竖向时间轴 + 底部按钮），
 每步的内容是 `Views/Onboarding/OnboardingStepN*.xaml` 里的独立面板，
@@ -1477,7 +1619,7 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
 `EnterAsync` / `Leave` / `Reset` + `StateChanged` 事件）。
 
 - **左轨是时间轴，不是列表**：`OnboardingRailItem` 一节固定 71 高（圆点 24 + 标题 13/18 + 副标 11/15），
-  连线画在条目内部的第二行（`Line` 2×47，从圆点底一路连到下一节圆点顶），四节叠起来才是一条不断的线。
+  连线画在条目内部的第二行（`Line` 2×47，从圆点底一路连到下一节圆点顶），五节叠起来才是一条不断的线。
   **连线必须显式给 Width/Height**：`Shape` 的 `MeasureOverride` 只按几何包围盒算，竖线的包围盒宽度是 0，
   靠 `Stretch` 撑开就画不出来（踩过）。跳过态用虚线 + 空心圆，`Skipped` 只在 `Finish(Skipped)` 时下发。
 - **文案规范**：主文案 ≤14 汉字、说明 ≤22 汉字；`8.8.8.8`、`403`、`浅克隆`、`bin\`、`.migrate-*`
@@ -1645,6 +1787,19 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
 - 内置：`TavernReleases` 取最新稳定版 + 当前通道 + 镜像可用性 → `TavernInstaller.InstallAsync`，
   装完 `ReloadBuiltin()` 再 `Use()`（版本以磁盘为准），缺依赖时有「补装依赖」。
 - 任一实例启用后「完成」才可点；`TavernInstaller` 有 `IsRunning` 闸门，避免与版本页同时安装。
+
+### 第 5 步 · 酒馆配置（`Views/Onboarding/OnboardingStep5Config.xaml`）
+
+实例装完不等于能跑：没有 `config.yaml` 酒馆起不来（端口、模型、扩展全从它读），所以单独一步判定。
+
+- **只看「在不在」，不在这里编辑**：端口/模型那套表单在「酒馆配置」页，引导里塞精简版只会让人
+  以为两处设置不一样。已存在就显示路径 + 端口，然后「完成」。
+- **没有配置时页脚主按钮变成「创建」**：靠 `IOnboardingStep.WantsPrimaryAction`，
+  点击走 `PrimaryActionAsync` → `GlobalTavernConfig.FetchAsync`（镜像 → 加速 → 直连）。
+  成功后 `Refresh()` 立刻反映「已找到」，按钮自动变回「完成」——不用用户再找一遍。
+- 按钮文案不能写死：`WantsPrimaryAction` 的默认文案是「补全环境」（环境那一步用的），
+  这里用 `PrimaryActionLabelKey` / `PrimaryActionTipKey` 覆写成「创建」与对应提示。
+- 失败不清空已有文件（`FetchAsync` 只在成功时写盘），提示留在状态卡里让用户重试。
 
 ## 路径显示
 

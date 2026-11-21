@@ -75,11 +75,12 @@ namespace AstraBrew_Launcher.Services
         public static bool AutoCheckEnabled => BuildChannelInfo.Channel != BuildChannel.Debug;
 
         /// <summary>
-        /// 当前选中的更新渠道。**这是用户的选择，不是构建渠道**：关于页可以在
-        /// 稳定版 / 测试版 / 预览版之间切，默认值才按构建渠道推导（见 LauncherSettings）。
+        /// 当前实际跟的渠道。取 <see cref="LauncherSettings.EffectiveUpdateChannel"/>：
+        /// 用户没手动定过（Auto）时按构建渠道推导——测试版跟测试线、正式版跟正式线。
         /// </summary>
-        public static ReleaseChannel LocalChannel => LauncherSettings.UpdateChannel switch
+        public static ReleaseChannel LocalChannel => LauncherSettings.EffectiveUpdateChannel switch
         {
+            UpdateChannelSetting.Stable => ReleaseChannel.Release,
             UpdateChannelSetting.Beta => ReleaseChannel.Beta,
             UpdateChannelSetting.Alpha => ReleaseChannel.Alpha,
             _ => ReleaseChannel.Release,

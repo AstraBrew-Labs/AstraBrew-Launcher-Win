@@ -70,6 +70,8 @@ namespace AstraBrew_Launcher.Views
             UpdateChannelSelect.SelectedIndex = (int)LauncherSettings.UpdateChannel;
             _syncingChannel = false;
 
+            UpdateChannelHint();
+
             // 更新按钮与状态行是状态驱动的，XAML 里刻意没挂 Loc.Text——首帧文案在这里给
             ApplyUpdateState();
 
@@ -102,6 +104,7 @@ namespace AstraBrew_Launcher.Views
             ApplyBrandLockup();
             ApplyUpdateState();
             ApplyDocsLink();
+            UpdateChannelHint();
         }
 
         /// <summary>
@@ -238,6 +241,35 @@ namespace AstraBrew_Launcher.Views
             await CheckForUpdatesAsync(force: true);
         }
 
+        /// <summary>渠道档位的显示名（不含「跟随版本」，那一档没有具体线路）。</summary>
+        private static string ChannelOptionName(UpdateChannelSetting channel) => channel switch
+        {
+            UpdateChannelSetting.Stable => L.Get("About.Channel.Option.0"),
+            UpdateChannelSetting.Beta => L.Get("About.Channel.Option.1"),
+            UpdateChannelSetting.Alpha => L.Get("About.Channel.Option.2"),
+            _ => L.Get("About.Channel.Option.Auto"),
+        };
+
+        /// <summary>
+        /// 下拉框的悬停说明：选「跟随版本」时要说清现在实际跟的是哪条线，
+        /// 否则这四个字读起来像「什么都不做」，用户不知道会不会收到测试包。
+        /// </summary>
+        private void UpdateChannelHint()
+        {
+            if (UpdateChannelSelect is null)
+            {
+                return;
+            }
+
+            string effective = ChannelOptionName(LauncherSettings.EffectiveUpdateChannel);
+
+            ToolTipService.SetToolTip(
+                UpdateChannelSelect,
+                LauncherSettings.UpdateChannel == UpdateChannelSetting.Auto
+                    ? L.F("About.Channel.Tip.Auto", effective)
+                    : L.F("About.Channel.Tip.Fixed", effective));
+        }
+
         /// <summary>
         /// 切换更新渠道。落盘后**立刻强制重查**：用户切完最想看到的就是「这条线上有没有新版」，
         /// 让他再点一次「检查更新」属于多余的一步。缓存里带着渠道，换了渠道旧结论自动作废。
@@ -261,8 +293,10 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            // SetUpdateChannel 会经 LauncherSettings.Changed 触发 SettingsStore 的防抖落盘
+            // SetUpdateChannel 会经 LauncherSettings.Changed 触发 SettingsStore 的防抖落盘；
+            // 它同时打上「手动定过」标记，此后不再跟随构建渠道（选回「跟随版本」也是显式选择）
             LauncherSettings.SetUpdateChannel(channel);
+            UpdateChannelHint();
 
             _latest = null;
             _lastStatus = UpdateStatus.Unknown;
@@ -458,6 +492,34 @@ namespace AstraBrew_Launcher.Views
             }
 
             ApplyVersionBadge();
+            ApplyReleaseNotes();
+        }
+
+        /// <summary>
+        /// 新版本的更新日志（Release 简介）。
+        ///
+        /// 只在「确实拿到了新版」的三种状态下显示：检查完发现没新版就该收起，
+        /// 否则上一轮的日志会一直挂在页面上，看着像还有更新没装。
+        /// </summary>
+        private void ApplyReleaseNotes()
+        {
+            if (ReleaseNotesPanel is null || ReleaseNotesTitle is null || ReleaseNotesText is null)
+            {
+                return;
+            }
+
+            bool show = _updateState
+                is UpdateCheckState.Available or UpdateCheckState.Downloading or UpdateCheckState.Installing;
+
+            if (!show || _latest is null)
+            {
+                ReleaseNotesPanel.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            ReleaseNotesTitle.Text = L.F("About.Update.Notes.Title", _latest.DisplayVersion);
+            ReleaseNotesText.Text = ReleaseNotes.Format(_latest.Notes, L.Get("About.Update.Notes.Empty"));
+            ReleaseNotesPanel.Visibility = Visibility.Visible;
         }
 
         /// <summary>

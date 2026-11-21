@@ -37,6 +37,15 @@ namespace AstraBrew_Launcher.Views.Onboarding
         bool WantsPrimaryAction => false;
 
         /// <summary>
+        /// 页脚主按钮在 <see cref="WantsPrimaryAction"/> 为 true 时的文案键。
+        /// 默认是「补全环境」——目前只有那一步这么用过；创建配置那一步会覆写成「创建」。
+        /// </summary>
+        string PrimaryActionLabelKey => "Setup.Action.Fill";
+
+        /// <summary>上面那颗按钮的 ToolTip 文案键。</summary>
+        string PrimaryActionTipKey => "Setup.Action.FillTip";
+
+        /// <summary>
         /// 页脚主按钮在 <see cref="WantsPrimaryAction"/> 为 true 时被点击。
         /// 默认什么都不做，避免每个步骤都被迫实现一遍。
         /// </summary>

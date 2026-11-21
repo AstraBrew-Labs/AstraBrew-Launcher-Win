@@ -408,6 +408,9 @@ namespace AstraBrew_Launcher.Services
                 StandardErrorEncoding = Encoding.UTF8,
             };
 
+            // 实例是从 GitHub 拉的，走酒馆专属 git 配置（insteadOf），不改用户的全局配置
+            TavernGitConfig.Apply(startInfo);
+
             // 长路径：酒馆的 data/ 目录名经常很深，Windows 默认 260 字符会中途报错
             foreach (string arg in new[]
             {

@@ -1,0 +1,21 @@
+{
+  "Setup.Step5.Title": ["酒馆配置", "Tavern config"],
+  "Setup.Step5.Hint": ["生成 config.yaml，端口、模型与扩展都从这份文件读。", "Create config.yaml — port, models and extensions are read from it."],
+  "Setup.Rail.Step5.Title": ["酒馆配置", "Tavern config"],
+  "Setup.Rail.Step5.Subtitle": ["生成配置文件", "Create the config file"],
+  "Setup.S5.Found.Title": ["已找到配置文件", "Config file found"],
+  "Setup.S5.Found.Body": ["当前端口 {0}，下一步会用它启动酒馆。需要改端口或模型，可以装完后再到「酒馆配置」里调。", "Port {0}. You can change the port or models later in Tavern config."],
+  "Setup.S5.Missing.Title": ["还没有配置文件", "No config file yet"],
+  "Setup.S5.Missing.Body": ["酒馆没有 config.yaml 起不来：端口、模型与扩展配置都在里面。点下面的「创建」下载一份官方默认配置。", "Tavern cannot start without config.yaml. Choose Create to download the official default."],
+  "Setup.S5.Note.Found": ["这一步只是确认文件在不在，不会改动你已有的设置。", "This step only checks that the file exists; your settings stay untouched."],
+  "Setup.S5.Note.Missing": ["下载的是官方默认配置，端口会自动避开占用；装完之后随时可以改。", "The downloaded default picks a free port automatically, and you can change it later."],
+  "Setup.S5.Blocking.Busy": ["正在创建配置文件…", "Creating the config file…"],
+  "Setup.S5.Blocking.Missing": ["还没有配置文件，点「创建」下载一份", "No config file yet — choose Create"],
+  "Setup.S5.Failed.Body": ["没能下载默认配置，检查网络后再点一次「创建」。", "Couldn't download the default config. Check your network and try Create again."],
+  "Setup.S5.Notify.Created.Title": ["配置文件已创建", "Config file created"],
+  "Setup.S5.Notify.Created.Body": ["用的是{0}的默认配置，可以在「酒馆配置」里修改端口和模型。", "Using the default from {0}. You can change port and models in Tavern config."],
+  "Setup.S5.Notify.Failed.Title": ["没能创建配置文件", "Couldn't create the config file"],
+  "Setup.S5.Notify.Failed.Body": ["下载失败，检查网络后重试。", "Download failed. Check your network and try again."],
+  "Setup.Action.CreateConfig": ["创建", "Create"],
+  "Setup.Action.CreateConfigTip": ["下载一份官方默认配置，完成后就能继续", "Download the official default config, then continue"]
+}

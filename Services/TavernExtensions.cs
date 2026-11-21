@@ -1110,6 +1110,9 @@ namespace AstraBrew_Launcher.Services
                 startInfo.ArgumentList.Add(argument);
             }
 
+            // 扩展克隆 / 查更新都算「酒馆的操作」，走酒馆专属 git 配置，不碰用户的全局配置
+            TavernGitConfig.Apply(startInfo);
+
             // 内置 MinGit 的 git.exe 调用的辅助程序在相邻目录里
             if (System.IO.Path.GetDirectoryName(git) is { Length: > 0 } gitDir)
             {

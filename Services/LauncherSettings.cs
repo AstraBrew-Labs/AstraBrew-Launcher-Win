@@ -101,12 +101,20 @@ namespace AstraBrew_Launcher.Services
     /// <summary>
     /// 更新渠道：用户自己选跟哪条发布线，跟「这个 exe 是哪个渠道编出来的」是两件事。
     ///
-    /// 顺序就是关于页那排分段按钮的顺序（稳定版 / 测试版 / 预览版），**不要随手调换**：
+    /// 顺序就是关于页下拉框的顺序（跟随版本 / 稳定版 / 测试版 / 预览版），**不要随手调换**：
     /// 界面按下标存取，调换等于把用户的选择整体平移一位。
     /// 没有「开发版」这一档：debug 构建不对外发布，选了也没有包可更。
     /// </summary>
     public enum UpdateChannelSetting
     {
+        /// <summary>
+        /// 跟随当前版本（默认）：测试版跟测试线、正式版跟正式线。
+        ///
+        /// 装的是哪个渠道的包，就只在同一条线上更新——测试版用户不会被悄悄换成正式版，
+        /// 正式版用户也不会突然收到测试包。用户手动选定某一档之后就不再跟随。
+        /// </summary>
+        Auto,
+
         /// <summary>稳定版：只收正式发布（tag 里不带渠道词）。</summary>
         Stable,
 
@@ -252,10 +260,38 @@ namespace AstraBrew_Launcher.Services
         public static bool GithubAcceleration => _githubAcceleration;
 
         /// <summary>
-        /// 更新渠道。默认稳定版，与这个 exe 是从哪条线编出来的无关；
-        /// 用户在关于页选什么就落什么盘，切换后立刻重查一次。
+        /// 更新渠道（用户存下来的原值，可能是 <see cref="UpdateChannelSetting.Auto"/>）。
+        /// 要拿去查更新请用 <see cref="EffectiveUpdateChannel"/>。
         /// </summary>
         public static UpdateChannelSetting UpdateChannel => _updateChannel;
+
+        /// <summary>
+        /// 用户有没有手动定过更新渠道。
+        ///
+        /// 用来区分「一直没动过」和「主动选了跟当前版本相同的那一档」：后者以后换了渠道的包
+        /// 也不该跟着变。旧配置里没有这个标记，读出来按「没定过」处理（见 SettingsStore）。
+        /// </summary>
+        public static bool UpdateChannelExplicit => _updateChannelExplicit;
+
+        /// <summary>
+        /// 实际生效的渠道：<see cref="UpdateChannelSetting.Auto"/> 时按当前构建渠道推导。
+        /// </summary>
+        public static UpdateChannelSetting EffectiveUpdateChannel =>
+            _updateChannel == UpdateChannelSetting.Auto ? DefaultUpdateChannel : _updateChannel;
+
+        /// <summary>
+        /// 当前这份构建「本该」跟的更新渠道。
+        ///
+        /// 只有下拉里存在的三档才按构建渠道一一对应（预览 → 预览、测试 → 测试），
+        /// **没有对应档位的构建一律回落到稳定版**：开发版（Debug）下拉里没有这一项，
+        /// 也没有对外发布过 debug 包，跟着任何一条测试/预览线都只会收到「不该装的东西」。
+        /// </summary>
+        public static UpdateChannelSetting DefaultUpdateChannel => BuildChannelInfo.Channel switch
+        {
+            BuildChannel.Alpha => UpdateChannelSetting.Alpha,
+            BuildChannel.Beta => UpdateChannelSetting.Beta,
+            _ => UpdateChannelSetting.Stable,
+        };
 
         /// <summary>代理方式。</summary>
         public static ProxyModeSetting Proxy => _proxy;
@@ -378,7 +414,39 @@ namespace AstraBrew_Launcher.Services
 
         public static void SetGithubAcceleration(bool value) => Set(ref _githubAcceleration, value);
 
-        public static void SetUpdateChannel(UpdateChannelSetting value) => Set(ref _updateChannel, value);
+        /// <summary>
+        /// 用户在关于页选定渠道。会打上「手动定过」的标记，此后不再跟随构建渠道。
+        /// </summary>
+        public static void SetUpdateChannel(UpdateChannelSetting value)
+        {
+            bool sameValue = Equals(_updateChannel, value);
+            bool wasExplicit = _updateChannelExplicit;
+
+            _updateChannelExplicit = true;
+
+            if (sameValue)
+            {
+                // 值没变但标记从「没定过」变成「定过」也要落盘：否则用户选的正好是跟随值，
+                // 文件里一直不写标记，下次启动又被当成没定过
+                if (!wasExplicit && _batchDepth == 0)
+                {
+                    Changed?.Invoke(null, EventArgs.Empty);
+                }
+
+                return;
+            }
+
+            Set(ref _updateChannel, value);
+        }
+
+        /// <summary>
+        /// 从配置文件恢复渠道。**不打「手动定过」标记**——它只反映文件里写了什么。
+        /// </summary>
+        internal static void RestoreUpdateChannel(UpdateChannelSetting value, bool explicitSet)
+        {
+            _updateChannelExplicit = explicitSet;
+            Set(ref _updateChannel, value);
+        }
 
         public static void SetProxy(ProxyModeSetting value) => Set(ref _proxy, value);
 
@@ -444,7 +512,8 @@ namespace AstraBrew_Launcher.Services
             _npmRegistry = NpmRegistrySource.Npmmirror;
             _channel = DownloadChannel.GitCode;
             _githubAcceleration = true;
-            _updateChannel = UpdateChannelSetting.Stable;
+            _updateChannel = UpdateChannelSetting.Auto;
+            _updateChannelExplicit = false;
             _proxy = ProxyModeSetting.System;
             _customProxy = "http://127.0.0.1:7890";
             _githubBestLatency = null;
@@ -482,11 +551,14 @@ namespace AstraBrew_Launcher.Services
         private static bool _githubAcceleration = true;
 
         /// <summary>
-        /// 更新渠道。**默认稳定版**：绝大多数用户应该跟正式发布，想尝鲜的自己去关于页切。
-        /// 不按构建渠道推导——Beta/Alpha 构建也默认跟稳定线，避免「我装的明明是测试版，
-        /// 更新却给我换成正式版」这种意外，反过来同样成立。
+        /// 更新渠道。**默认跟随当前版本**（<see cref="UpdateChannelSetting.Auto"/>）：
+        /// 测试版跟测试线、正式版跟正式线，用户在关于页手动选过之后才固定下来。
+        /// 这样装测试包的人不会因为默认值「稳定版」而收不到测试版更新，反之亦然。
         /// </summary>
-        private static UpdateChannelSetting _updateChannel = UpdateChannelSetting.Stable;
+        private static UpdateChannelSetting _updateChannel = UpdateChannelSetting.Auto;
+
+        /// <summary>用户是否手动定过渠道；见 <see cref="UpdateChannelExplicit"/>。</summary>
+        private static bool _updateChannelExplicit;
         private static ProxyModeSetting _proxy = ProxyModeSetting.System;
         private static string _customProxy = "http://127.0.0.1:7890";
         private static int? _githubBestLatency;

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="AstraBrew_Launcher.Views.Onboarding.OnboardingStep5Config"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <StackPanel Spacing="12">
+        <!--
+            状态卡：只有「有 / 没有」两种结论，用图标 + 一句话说清楚。
+            路径单独一行且可选中等宽字体——引导里唯一需要用户「确认是不是这个文件」的地方。
+        -->
+        <Border Style="{StaticResource SectionCardStyle}">
+            <StackPanel Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <FontIcon
+                        x:Name="StateIcon"
+                        VerticalAlignment="Center"
+                        FontSize="17"
+                        Glyph="&#xE9D9;" />
+                    <TextBlock
+                        x:Name="StateTitle"
+                        VerticalAlignment="Center"
+                        FontSize="13.5"
+                        FontWeight="SemiBold" />
+                </StackPanel>
+
+                <TextBlock
+                    x:Name="StateBody"
+                    Style="{StaticResource FieldHintTextStyle}"
+                    TextWrapping="Wrap" />
+
+                <TextBlock
+                    x:Name="PathText"
+                    FontFamily="Consolas"
+                    FontSize="11"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                    IsTextSelectionEnabled="True"
+                    TextWrapping="Wrap"
+                    Visibility="Collapsed" />
+            </StackPanel>
+        </Border>
+
+        <TextBlock
+            x:Name="NoteText"
+            Style="{StaticResource FieldHintTextStyle}"
+            TextWrapping="Wrap" />
+    </StackPanel>
+</UserControl>

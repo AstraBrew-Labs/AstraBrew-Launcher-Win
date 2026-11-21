@@ -1,0 +1,13 @@
+{
+  "Settings.Row.GithubAccel.Description.OnChecking": ["应用内走中转；正在核对酒馆的 git 配置。", "In-app traffic uses the proxy; checking the tavern git config."],
+  "Version.Builtin.Route.MirrorMissAccel": ["{0} 没有 {1}，改用 GitHub；加速服务已开启，酒馆内的 git 拉取会自动经中转。", "{0} lacks {1}; falling back to GitHub with the proxy for tavern git operations."],
+  "Miss.GitCfg.NoGitSoft": ["没有找到 Git，酒馆专属的加速规则没能写入；实例与扩展的 GitHub 拉取仍是直连。", "Git not found, so the tavern git config wasn't written; GitHub fetches stay direct."],
+  "Miss.GitCfg.WriteFail": ["写入酒馆的 git 配置失败。", "Couldn't write the tavern git config."],
+  "Miss.GitCfg.ReadBack": ["配置写完后没能读到，可能是文件被占用，请重试。", "The config couldn't be read back — the file may be locked. Try again."],
+  "Miss.GitCfg.RemoveFail": ["移除酒馆的 git 配置失败。", "Couldn't remove the tavern git config entry."],
+  "Store.GithubAcceleration": ["所有 GitHub 链接是否走 gh-proxy.org 加速（同时写入酒馆专属 git insteadOf 规则，不改你的全局配置）", "Whether GitHub links use gh-proxy.org (also writes an insteadOf rule into the tavern-only git config, never yours)"],
+  "Setp.GitCfgFail.Title": ["酒馆的 git 规则没写上", "Couldn't write the tavern git rule"],
+  "Setp.GitCfgRemoveFail.Title": ["酒馆的 git 规则没能移除", "Couldn't remove the tavern git rule"],
+  "Setp.AccelOn.Body": ["应用内请求已走中转；酒馆的 git 配置也写好了，实例更新与扩展安装里的 GitHub 拉取同样加速。", "In-app traffic uses the proxy, and the tavern git config is written — instance and extension fetches are proxied too."],
+  "Setp.AccelOff.Body": ["应用内请求恢复直连，酒馆 git 配置里的加速规则也已移除。", "In-app traffic is direct again and the tavern git rule has been removed."]
+}
