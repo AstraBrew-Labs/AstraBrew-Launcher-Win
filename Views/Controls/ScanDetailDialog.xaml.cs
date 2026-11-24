@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -354,6 +354,15 @@ namespace AstraBrew_Launcher.Views.Controls
                     Path = hit.Path,
                 });
             }
+
+            // 新找到的实例在末尾：不跟到底部的话，用户盯着那块永远只看见最早两个。
+            // 先 UpdateLayout 再滚：ChangeView 用的是 ScrollableHeight，条目还没排完时它是旧值，
+            // 表现就是「有时候滚了、有时候没滚」。
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                HitList.UpdateLayout();
+                HitScroll.ChangeView(null, HitScroll.ScrollableHeight, null);
+            });
         }
     }
 }

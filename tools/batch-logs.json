@@ -1,0 +1,55 @@
+{
+  "Shell.Nav.Logs.Content": ["日志", "Logs"],
+
+  "Logs.Page.Title": ["日志", "Logs"],
+  "Logs.Page.Subtitle": ["启动器与酒馆的运行记录，可按时间与级别筛选。", "Runtime records from the launcher and the tavern, filterable by time and level."],
+
+  "Logs.Tab.Launcher.Label": ["启动器日志", "Launcher logs"],
+  "Logs.Tab.Launcher.Name": ["启动器日志", "Launcher logs"],
+  "Logs.Tab.Tavern.Label": ["酒馆日志", "Tavern logs"],
+  "Logs.Tab.Tavern.Name": ["酒馆日志", "Tavern logs"],
+
+  "Logs.Range.Option.Count": ["4", "4"],
+  "Logs.Range.Option.0": ["今天", "Today"],
+  "Logs.Range.Option.1": ["近 7 天", "7 days"],
+  "Logs.Range.Option.2": ["近 30 天", "30 days"],
+  "Logs.Range.Option.3": ["全部", "All"],
+  "Logs.Range.Custom.From": ["开始日期", "From"],
+  "Logs.Range.Custom.To": ["结束日期", "To"],
+  "Logs.Range.Custom.Clear": ["清除日期", "Clear dates"],
+
+  "Logs.Level.All": ["全部级别", "All levels"],
+  "Logs.Level.Info": ["信息", "Info"],
+  "Logs.Level.Warning": ["警告", "Warning"],
+  "Logs.Level.Error": ["错误", "Error"],
+
+  "Logs.Origin.Runtime": ["运行日志", "Runtime"],
+  "Logs.Origin.Install": ["安装日志", "Install"],
+
+  "Logs.Empty.Title": ["这个范围内没有日志", "No logs in this range"],
+  "Logs.Empty.Hint": ["换个时间范围，或放宽级别筛选再看看。", "Try a different time range or relax the level filter."],
+
+  "Logs.Action.OpenFolder": ["打开日志目录", "Open log folder"],
+  "Logs.Action.Refresh": ["刷新", "Refresh"],
+  "Logs.Action.Follow": ["跟随最新", "Follow latest"],
+
+  "Logs.Count.Format": ["{0} 行", "{0} lines"],
+  "Logs.Footnote.Limit": ["只显示最新的 {0} 行，完整内容在日志目录里。", "Showing the latest {0} lines; the rest is in the log folder."],
+  "Logs.Loading": ["正在读取日志…", "Loading logs…"],
+
+  "Settings.Group.Logs.Title": ["日志", "Logs"],
+  "Settings.Group.Logs.Hint": ["日志保留策略与磁盘占用上限。", "How logs are kept and how much disk they may use."],
+
+  "Settings.Row.KeepLatestLogs.Title": ["只保留最新日志", "Keep only the latest logs"],
+  "Settings.Row.KeepLatestLogs.Description": ["关闭后按日期保留全部历史，只受下面的容量上限约束。", "Turn off to keep history by date, limited only by the size cap below."],
+
+  "Settings.Row.LogMaxSize.Title": ["日志容量上限", "Log size limit"],
+  "Settings.Row.LogMaxSize.Description": ["运行日志超过这个大小就从最旧的开始清理；安装日志不受影响。", "Oldest runtime logs are removed past this size. Install logs are never touched."],
+  "Settings.Row.LogMaxSize.Unit": ["MB", "MB"],
+
+  "Settings.Row.LogFolder.Title": ["日志目录", "Log folder"],
+  "Settings.Row.LogFolder.Description": ["运行日志按天存放在这里，安装日志在上一级目录。", "Runtime logs are stored here by day; install logs sit one level up."],
+
+  "Store.KeepLatestLogs": ["是否只保留当天的运行日志", "whether only today's runtime logs are kept"],
+  "Store.LogMaxSize": ["运行日志目录上限（MB），最小 {0}，最大 {1}", "runtime log folder cap (MB); minimum {0}, maximum {1}"]
+}

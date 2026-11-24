@@ -168,6 +168,7 @@ namespace AstraBrew_Launcher.Services
                 ApplyDesktop(document);
                 ApplyTavern(document);
                 ApplyConsole(document);
+                ApplyLogging(document);
                 ApplyRuntime(document);
                 ApplyNetwork(document);
                 ApplyUpdate(document);
@@ -268,9 +269,13 @@ namespace AstraBrew_Launcher.Services
                 LauncherSettings.SetStartMode(mode);
             }
 
-            if (document.Bool("startup", "stop_tavern_on_close") is { } stopOnClose)
+            // 旧版「关闭窗口时停止酒馆」已并入「关闭启动器后继续运行」：
+            // 只有新键缺失、且用户当年明确选了「不停止」时，才迁移成「要后台常驻」——
+            // 否则升级一次，用户当年那个「关窗不停」的选择就白设了。
+            if (document.Bool("tavern", "allow_background") is null
+                && document.Bool("startup", "stop_tavern_on_close") == false)
             {
-                LauncherSettings.SetStopTavernOnWindowClose(stopOnClose);
+                LauncherSettings.SetAllowBackground(true);
             }
 
             if (document.Bool("startup", "remember_tavern_window") is { } rememberTavern)
@@ -333,6 +338,20 @@ namespace AstraBrew_Launcher.Services
             if (document.Bool("console", "show_startup_command") is { } show)
             {
                 LauncherSettings.SetShowStartupCommand(show);
+            }
+        }
+
+        /// <summary>日志策略。缺键即出厂值（只保留当天 / 10 MB），不需要迁移。</summary>
+        private static void ApplyLogging(TomlDocument document)
+        {
+            if (document.Bool("logging", "keep_latest_only") is { } keepLatest)
+            {
+                LauncherSettings.SetKeepLatestLogsOnly(keepLatest);
+            }
+
+            if (document.Int("logging", "max_size_mb") is { } maxSize)
+            {
+                LauncherSettings.SetLogMaxSizeMb(maxSize); // 夹取在 SetXxx 里做
             }
         }
 
@@ -538,7 +557,6 @@ namespace AstraBrew_Launcher.Services
             writer.Section("startup");
             writer.Bool("auto_launch", LauncherSettings.AutoLaunch, L.Get("Store.AutoLaunch"));
             writer.String("mode", IdOf(StartModes, LauncherSettings.StartMode), "browser | desktop | server");
-            writer.Bool("stop_tavern_on_close", LauncherSettings.StopTavernOnWindowClose);
             writer.Bool(
                 "remember_tavern_window",
                 LauncherSettings.RememberTavernWindow,
@@ -566,6 +584,13 @@ namespace AstraBrew_Launcher.Services
 
             writer.Section("console");
             writer.Bool("show_startup_command", LauncherSettings.ShowStartupCommand);
+
+            writer.Section("logging");
+            writer.Bool("keep_latest_only", LauncherSettings.KeepLatestLogsOnly, L.Get("Store.KeepLatestLogs"));
+            writer.Int(
+                "max_size_mb",
+                LauncherSettings.LogMaxSizeMb,
+                L.F("Store.LogMaxSize", LauncherSettings.MinLogMaxSizeMb, LauncherSettings.MaxLogMaxSizeMb));
 
             writer.Section("runtime");
             writer.String("source", IdOf(RuntimeSources, LauncherSettings.Runtime), "builtin | system");

@@ -159,6 +159,15 @@
                                 <FontIcon Glyph="&#xE756;" />
                             </NavigationViewItem.Icon>
                         </NavigationViewItem>
+                        <!--
+                            日志紧挨控制台：两者都是「看运行情况」的入口。
+                            **不要**给它加实例就绪闸门——没有可用实例时，恰恰最需要翻日志找原因。
+                        -->
+                        <NavigationViewItem x:Name="NavLogs" controls:Loc.Content="Shell.Nav.Logs.Content" Tag="logs">
+                            <NavigationViewItem.Icon>
+                                <FontIcon Glyph="&#xE9D9;" />
+                            </NavigationViewItem.Icon>
+                        </NavigationViewItem>
                         <NavigationViewItem controls:Loc.Content="Shell.Nav.Settings.Content" Tag="settings">
                             <NavigationViewItem.Icon>
                                 <FontIcon Glyph="&#xE713;" />

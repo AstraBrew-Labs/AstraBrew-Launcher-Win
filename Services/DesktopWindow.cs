@@ -762,12 +762,14 @@ namespace AstraBrew_Launcher.Services
 
             if (!wasClosing)
             {
-                // 用户自己关的窗口：按「关闭窗口时停止酒馆」决定是收工还是留后台。
+                // 用户自己关的窗口：按「关闭启动器后继续运行」决定是收工还是留后台。
                 // 这里必须是**桌面窗口**的关闭，不是启动器的——以前只挂在主窗口关闭上，
-                // 于是设置里明明开着，关掉酒馆窗口后进程还在后台占着端口。
-                if (LauncherSettings.StopTavernOnWindowClose)
+                // 于是关掉酒馆窗口后进程还在后台占着端口。
+                if (!LauncherSettings.AllowBackground)
                 {
-                    if (TavernRuntime.State.HasProcess)
+                    TavernProcessState state = TavernRuntime.State;
+
+                    if (state.HasProcess || state.ManagedByPm2)
                     {
                         _ = TavernRuntime.StopAsync();
 
@@ -778,9 +780,13 @@ namespace AstraBrew_Launcher.Services
                 }
                 else if (TavernRuntime.IsRunning)
                 {
+                    // 托管与未托管要说不同的话：没托管时「继续运行」只能撑到关闭启动器为止，
+                    // 照抄「仍在后台运行」就是在骗人
                     AppNotify.Info(
                         L.Get("Dw.Closed.Title"),
-                        L.Get("Dw.Closed.Keeping"),
+                        L.Get(TavernRuntime.State.ManagedByPm2
+                            ? "Dw.Closed.Keeping"
+                            : "Dw.Closed.KeepingUnmanaged"),
                         L.Get("Dw.Reopen"),
                         () => Open(TavernRuntime.State.Url, out _));
                 }

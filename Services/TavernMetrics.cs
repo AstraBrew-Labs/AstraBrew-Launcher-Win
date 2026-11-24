@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -326,9 +326,37 @@ namespace AstraBrew_Launcher.Services
         /// 放在这里而不是页面：页面卸载会丢状态，两次采样之间隔多久也就没法算了。
         /// </summary>
         public static (long MemoryBytes, double? CpuPercent) SampleProcess()
-        {
-            Process? process = TavernRuntime.LiveProcess;
+            => SampleProcess(TavernRuntime.LiveProcess);
 
+        /// <summary>
+        /// 按 pid 采样。PM2 托管时我们没有常驻的 <see cref="Process"/> 句柄，只有 pid：
+        /// 每次现开一个、采完就关，句柄不滞留。
+        /// </summary>
+        public static (long MemoryBytes, double? CpuPercent) SampleProcess(int? pid)
+        {
+            if (pid is not { } id)
+            {
+                return SampleProcess((Process?)null);
+            }
+
+            try
+            {
+                using Process process = Process.GetProcessById(id);
+                return SampleProcess(process);
+            }
+            catch (Exception)
+            {
+                // 进程刚退出：指标显示「—」比抛异常合理
+                return SampleProcess((Process?)null);
+            }
+        }
+
+        /// <summary>
+        /// 按给定进程采样。PM2 托管时我们没有 <see cref="Process"/> 句柄，只有 pid——
+        /// 传 null 就退化成「—」，别让指标条在托管时变成空白。
+        /// </summary>
+        public static (long MemoryBytes, double? CpuPercent) SampleProcess(Process? process)
+        {
             if (process is null)
             {
                 _lastCpuTime = TimeSpan.Zero;

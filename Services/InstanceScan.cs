@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -341,6 +341,16 @@ namespace AstraBrew_Launcher.Services
 
             Raise();
             Announce(phase, added);
+
+            ActivityLog.Record(
+                ActivityCategory.Scan,
+                phase switch
+                {
+                    ScanPhase.Done => L.F("Activity.Scan.Done", report?.Hits.Count ?? added),
+                    ScanPhase.Cancelled => L.Get("Activity.Scan.Cancelled"),
+                    _ => L.Get("Activity.Scan.Failed"),
+                },
+                error);
         }
 
         private static void Announce(ScanPhase phase, int added)

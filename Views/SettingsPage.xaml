@@ -365,20 +365,39 @@
                                     SelectionChanged="StartModePicker_SelectionChanged" />
                             </controls:SettingRow>
 
-                            <!--  仅桌面模式与这几项有关：普通模式在浏览器里跑，没有可停止 / 可记位置的宿主窗口  -->
-                            <StackPanel x:Name="DesktopRows" Visibility="Collapsed">
-                                <Rectangle Style="{StaticResource RowDividerStyle}" />
+                            <Rectangle Style="{StaticResource RowDividerStyle}" />
 
-                                <controls:SettingRow
-                                    DescriptionKey="Settings.Row.StopOnClose.Description"
-                                    Glyph="&#xE71A;"
-                                    TitleKey="Settings.Row.StopOnClose.Title"
-                                    WrapAt="0">
+                            <!--
+                                关窗行为与启动方式无关：普通 / 桌面 / 服务器模式下，关掉启动器该不该停服是同一件事。
+                                以前它锁在「服务器模式」子行里，桌面模式用户根本看不到，
+                                「开着继续运行却被杀掉」于是成了必然。
+                            -->
+                            <controls:SettingRow
+                                x:Name="KeepRunningRow"
+                                DescriptionKey="Settings.Row.KeepRunning.Description"
+                                Glyph="&#xE9F5;"
+                                TitleKey="Settings.Row.KeepRunning.Title"
+                                WrapAt="560">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
                                     <ToggleSwitch
-                                        x:Name="StopOnCloseSwitch"
+                                        x:Name="BackgroundSwitch"
                                         Style="{StaticResource RowSwitchStyle}"
-                                        Toggled="StopOnCloseSwitch_Toggled" />
-                                </controls:SettingRow>
+                                        Toggled="BackgroundSwitch_Toggled" />
+                                    <Border
+                                        x:Name="BackgroundBlockedPill"
+                                        Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
+                                        Style="{StaticResource StatePillStyle}"
+                                        Visibility="Collapsed">
+                                        <TextBlock
+                                            Style="{StaticResource StatePillTextStyle}"
+                                            Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                            controls:Loc.Text="Settings.Runtime.NeedsPm2" />
+                                    </Border>
+                                </StackPanel>
+                            </controls:SettingRow>
+
+                            <!--  仅桌面模式与这几项有关：普通模式在浏览器里跑，没有可记位置的宿主窗口  -->
+                            <StackPanel x:Name="DesktopRows" Visibility="Collapsed">
 
                                 <Rectangle Style="{StaticResource RowDividerStyle}" />
 
@@ -468,30 +487,6 @@
                                         SelectionChanged="ScopePicker_SelectionChanged" />
                                 </controls:SettingRow>
 
-                                <Rectangle Style="{StaticResource RowDividerStyle}" />
-
-                                <controls:SettingRow
-                                    DescriptionKey="Settings.Row.KeepRunning.Description"
-                                    Glyph="&#xE9F5;"
-                                    TitleKey="Settings.Row.KeepRunning.Title"
-                                    WrapAt="560">
-                                    <StackPanel Orientation="Horizontal" Spacing="10">
-                                        <ToggleSwitch
-                                            x:Name="BackgroundSwitch"
-                                            Style="{StaticResource RowSwitchStyle}"
-                                            Toggled="BackgroundSwitch_Toggled" />
-                                        <Border
-                                            x:Name="BackgroundBlockedPill"
-                                            Background="{ThemeResource SystemFillColorCautionBackgroundBrush}"
-                                            Style="{StaticResource StatePillStyle}"
-                                            Visibility="Collapsed">
-                                            <TextBlock
-                                                Style="{StaticResource StatePillTextStyle}"
-                                                Foreground="{ThemeResource SystemFillColorCautionBrush}"
-                                                controls:Loc.Text="Settings.Runtime.NeedsPm2" />
-                                        </Border>
-                                    </StackPanel>
-                                </controls:SettingRow>
 
                                 <StackPanel x:Name="InternetRows" Visibility="Collapsed">
                                     <Rectangle Style="{StaticResource RowDividerStyle}" />
@@ -586,6 +581,72 @@
                                     Style="{StaticResource RowSwitchStyle}"
                                     Toggled="StartupCommandSwitch_Toggled" />
                             </controls:SettingRow>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!--  ==================== 日志 ====================  -->
+                <StackPanel x:Name="LogSection" Spacing="11">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border
+                            Background="#1F0E7490"
+                            Style="{StaticResource SectionIconTileStyle}">
+                            <FontIcon FontSize="17" Foreground="#FF0E7490" Glyph="&#xE9D9;" />
+                        </Border>
+                        <StackPanel
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            Spacing="2">
+                            <TextBlock Style="{StaticResource SectionHeaderTitleStyle}" controls:Loc.Text="Settings.Group.Logs.Title" />
+                            <TextBlock Style="{StaticResource FieldHintTextStyle}" controls:Loc.Text="Settings.Group.Logs.Hint" />
+                        </StackPanel>
+                    </Grid>
+
+                    <Border Style="{StaticResource SectionCardStyle}">
+                        <StackPanel>
+                            <controls:SettingRow
+                                DescriptionKey="Settings.Row.KeepLatestLogs.Description"
+                                Glyph="&#xE9D9;"
+                                TitleKey="Settings.Row.KeepLatestLogs.Title"
+                                WrapAt="0">
+                                <ToggleSwitch
+                                    x:Name="KeepLatestLogsSwitch"
+                                    Style="{StaticResource RowSwitchStyle}"
+                                    Toggled="KeepLatestLogsSwitch_Toggled" />
+                            </controls:SettingRow>
+
+                            <Rectangle
+                                x:Name="LogSizeDivider"
+                                Style="{StaticResource RowDividerStyle}" />
+
+                            <controls:SettingRow
+                                x:Name="LogSizeRow"
+                                DescriptionKey="Settings.Row.LogMaxSize.Description"
+                                Glyph="&#xE8B7;"
+                                TitleKey="Settings.Row.LogMaxSize.Title"
+                                WrapAt="620">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <NumberBox
+                                        x:Name="LogSizeBox"
+                                        Width="120"
+                                        LargeChange="10"
+                                        Maximum="200"
+                                        Minimum="1"
+                                        SmallChange="1"
+                                        SpinButtonPlacementMode="Compact"
+                                        ValidationMode="InvalidInputOverwritten"
+                                        ValueChanged="LogSizeBox_ValueChanged" />
+                                    <TextBlock
+                                        VerticalAlignment="Center"
+                                        FontSize="13"
+                                        controls:Loc.Text="Settings.Row.LogMaxSize.Unit" />
+                                </StackPanel>
+                            </controls:SettingRow>
+
                         </StackPanel>
                     </Border>
                 </StackPanel>

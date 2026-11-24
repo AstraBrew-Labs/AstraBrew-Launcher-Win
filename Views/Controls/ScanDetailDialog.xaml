@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <ContentDialog
     x:Class="AstraBrew_Launcher.Views.Controls.ScanDetailDialog"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -16,71 +16,97 @@
 
         这里不重复右下角常驻消息里已经说过的话（扫了多少、找到几个、用了多久），
         只放那儿看不见的细节：每块盘各自的进度环、还要多久、此刻翻到了哪个目录。
+
+        **容器必须是 Grid，不能是 StackPanel**：内容是「4 块盘 + 机械盘提示 + 若干实例」时，
+        StackPanel 只会一路往下长，超出弹窗可视区的部分被边框直接裁掉，
+        「找到的实例」列表连自己的滚动条都露不出来（内容看起来「显示不全」就是这么来的）。
+        现在盘列表限高可滚，实例列表占满剩余行并自己滚动，两边都不会被裁。
     -->
     <ContentDialog.Resources>
-        <!--  内容宽 620，默认 548 的弹窗会把每块盘右侧的剩余时间挤掉  -->
-        <x:Double x:Key="ContentDialogMaxWidth">760</x:Double>
+        <!--  内容宽 720，默认 548 的弹窗会把每块盘右侧的剩余时间挤掉  -->
+        <x:Double x:Key="ContentDialogMaxWidth">820</x:Double>
     </ContentDialog.Resources>
 
-    <Grid Width="620">
-        <StackPanel Spacing="12">
+    <Grid
+        Width="720"
+        Height="560"
+        RowSpacing="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <!--  找到的实例：吃掉剩余高度，内容多了在框内滚动  -->
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
-            <!--  状态头  -->
-            <Grid ColumnSpacing="10">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
+        <!--  状态头  -->
+        <Grid ColumnSpacing="10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
 
-                <Border
-                    Width="36"
-                    Height="36"
-                    VerticalAlignment="Center"
-                    Background="#1F2B88D8"
-                    CornerRadius="8">
-                    <FontIcon
-                        FontSize="16"
-                        Foreground="#FF2B88D8"
-                        Glyph="&#xE721;" />
-                </Border>
+            <Border
+                Width="36"
+                Height="36"
+                VerticalAlignment="Center"
+                Background="#1F2B88D8"
+                CornerRadius="8">
+                <FontIcon
+                    FontSize="16"
+                    Foreground="#FF2B88D8"
+                    Glyph="&#xE721;" />
+            </Border>
 
-                <StackPanel
-                    Grid.Column="1"
-                    VerticalAlignment="Center"
-                    Spacing="2">
-                    <TextBlock
-                        x:Name="PhaseText"
-                        FontSize="14"
-                        FontWeight="SemiBold"
-                        Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                        controls:Loc.Text="Sdd.Phase.Scanning" />
-                    <TextBlock
-                        x:Name="PhaseHintText"
-                        Style="{StaticResource MetaChipTextStyle}"
-                        controls:Loc.Text="Sdd.ThreadsPending" />
-                </StackPanel>
-
-                <HyperlinkButton
-                    x:Name="CancelScanBtn"
-                    Grid.Column="2"
-                    Padding="8,4"
-                    VerticalAlignment="Center"
-                    Click="CancelScan_Click"
-                    controls:Loc.Content="Sdd.Cancel" />
-            </Grid>
-
-            <!--  逐盘进度：每块盘一个环 + 还要多久  -->
-            <Grid>
-                <TextBlock Style="{StaticResource SubSectionTitleTextStyle}" controls:Loc.Text="Sdd.Section.Progress" />
+            <StackPanel
+                Grid.Column="1"
+                VerticalAlignment="Center"
+                Spacing="2">
                 <TextBlock
-                    x:Name="RangeText"
-                    HorizontalAlignment="Right"
-                    VerticalAlignment="Center"
+                    x:Name="PhaseText"
+                    FontSize="14"
+                    FontWeight="SemiBold"
+                    Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                    controls:Loc.Text="Sdd.Phase.Scanning" />
+                <TextBlock
+                    x:Name="PhaseHintText"
                     Style="{StaticResource MetaChipTextStyle}"
-                    Text="" />
-            </Grid>
+                    controls:Loc.Text="Sdd.ThreadsPending" />
+            </StackPanel>
 
+            <HyperlinkButton
+                x:Name="CancelScanBtn"
+                Grid.Column="2"
+                Padding="8,4"
+                VerticalAlignment="Center"
+                Click="CancelScan_Click"
+                controls:Loc.Content="Sdd.Cancel" />
+        </Grid>
+
+        <!--  逐盘进度标题  -->
+        <Grid Grid.Row="1">
+            <TextBlock Style="{StaticResource SubSectionTitleTextStyle}" controls:Loc.Text="Sdd.Section.Progress" />
+            <TextBlock
+                x:Name="RangeText"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Center"
+                Style="{StaticResource MetaChipTextStyle}"
+                Text="" />
+        </Grid>
+
+        <!--
+            逐盘进度：盘多的时候先让这里滚，别去挤下面的实例列表。
+            限高 186 = 三张卡（58 + 6 间距）整整齐齐，不会露出第四张的半个边。
+        -->
+        <ScrollViewer
+            Grid.Row="2"
+            MaxHeight="186"
+            HorizontalScrollMode="Disabled"
+            VerticalScrollBarVisibility="Auto">
             <ItemsControl x:Name="DriveList" ItemsSource="{x:Bind Drives}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
@@ -89,7 +115,7 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="controls:ScanDriveRow">
-                        <Border Padding="12,10" Style="{StaticResource SubPanelStyle}">
+                        <Border Padding="12,8" Style="{StaticResource SubPanelStyle}">
                             <Grid ColumnSpacing="13">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
@@ -99,12 +125,12 @@
 
                                 <!--  环就是这块盘的完成度：百分比压在环心里，不用另起一行  -->
                                 <Grid
-                                    Width="46"
-                                    Height="46"
+                                    Width="42"
+                                    Height="42"
                                     VerticalAlignment="Center">
                                     <ProgressRing
-                                        Width="46"
-                                        Height="46"
+                                        Width="42"
+                                        Height="42"
                                         Foreground="{ThemeResource AccentFillColorDefaultBrush}"
                                         IsIndeterminate="{x:Bind IsIndeterminate, Mode=OneWay}"
                                         Value="{x:Bind Percent, Mode=OneWay}" />
@@ -168,73 +194,86 @@
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
+        </ScrollViewer>
 
-            <!--
-                机械盘提示：只在扫描范围里真有机械盘时出现。
-                固态盘上等十几秒是正常的，机械盘可能要好几分钟——不解释一句，
-                用户会以为卡死了。
-            -->
-            <InfoBar
-                x:Name="HddNotice"
-                IsClosable="False"
-                IsOpen="False"
-                Severity="Warning" />
+        <!--
+            机械盘提示：只在扫描范围里真有机械盘时出现。
+            固态盘上等十几秒是正常的，机械盘可能要好几分钟——不解释一句，
+            用户会以为卡死了。
+        -->
+        <InfoBar
+            x:Name="HddNotice"
+            Grid.Row="3"
+            IsClosable="False"
+            IsOpen="False"
+            Severity="Warning" />
 
-            <!--  找到的实例：扫到一个就加一条，不用等全盘扫完  -->
-            <Grid>
-                <TextBlock Style="{StaticResource SubSectionTitleTextStyle}" controls:Loc.Text="Sdd.Section.Found" />
-                <TextBlock
-                    x:Name="AddedText"
-                    HorizontalAlignment="Right"
-                    VerticalAlignment="Center"
-                    Style="{StaticResource MetaChipTextStyle}"
-                    Text="" />
-            </Grid>
-
-            <Border Padding="12,10" Style="{StaticResource SubPanelStyle}">
-                <Grid>
-                    <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
-                        <ItemsControl x:Name="HitList" ItemsSource="{x:Bind Hits}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Spacing="6" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="controls:ScanHitRow">
-                                    <StackPanel Spacing="1">
-                                        <TextBlock
-                                            FontSize="12"
-                                            FontWeight="SemiBold"
-                                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"
-                                            Text="{x:Bind Version}" />
-                                        <TextBlock
-                                            FontFamily="Consolas"
-                                            FontSize="11"
-                                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                                            Text="{x:Bind Path}"
-                                            TextWrapping="Wrap" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-
-                    <TextBlock
-                        x:Name="HitEmptyText"
-                        Padding="0,6"
-                        Style="{StaticResource FieldHintTextStyle}"
-                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                        controls:Loc.Text="Sdd.Empty.Pending" />
-                </Grid>
-            </Border>
-
+        <!--  找到的实例标题  -->
+        <Grid Grid.Row="4">
+            <TextBlock Style="{StaticResource SubSectionTitleTextStyle}" controls:Loc.Text="Sdd.Section.Found" />
             <TextBlock
-                x:Name="FootHintText"
-                Style="{StaticResource FieldHintTextStyle}"
-                Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-                controls:Loc.Text="Sdd.Note.Running"
-                TextWrapping="Wrap" />
-        </StackPanel>
+                x:Name="AddedText"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Center"
+                Style="{StaticResource MetaChipTextStyle}"
+                Text="" />
+        </Grid>
+
+        <!--
+            找到的实例：占满剩余高度，扫到一个就加一条，不用等全盘扫完。
+            这里**不再写死 MaxHeight**——写死等于把「能看几条」交给一个与窗口无关的魔数，
+            而弹窗可用高度是变化的；交给 Grid 的 * 行，列表总归有地方滚。
+        -->
+        <Border
+            Grid.Row="5"
+            Padding="12,10"
+            Style="{StaticResource SubPanelStyle}">
+            <Grid>
+                <ScrollViewer
+                    x:Name="HitScroll"
+                    HorizontalScrollMode="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+                    <ItemsControl x:Name="HitList" ItemsSource="{x:Bind Hits}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Spacing="8" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="controls:ScanHitRow">
+                                <StackPanel Spacing="1">
+                                    <TextBlock
+                                        FontSize="12"
+                                        FontWeight="SemiBold"
+                                        Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                        Text="{x:Bind Version}" />
+                                    <TextBlock
+                                        FontFamily="Consolas"
+                                        FontSize="11"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Text="{x:Bind Path}"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+
+                <TextBlock
+                    x:Name="HitEmptyText"
+                    Padding="0,6"
+                    Style="{StaticResource FieldHintTextStyle}"
+                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                    controls:Loc.Text="Sdd.Empty.Pending" />
+            </Grid>
+        </Border>
+
+        <TextBlock
+            x:Name="FootHintText"
+            Grid.Row="6"
+            Style="{StaticResource FieldHintTextStyle}"
+            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+            controls:Loc.Text="Sdd.Note.Running"
+            TextWrapping="Wrap" />
     </Grid>
 </ContentDialog>

@@ -134,6 +134,7 @@ namespace AstraBrew_Launcher.Views
             LanguageSwitch.LanguageChanged -= OnLanguageChanged;
             LanguageSwitch.LanguageChanged += OnLanguageChanged;
 
+
             ApplyLocalizedChrome();
             ApplyTab();
             SyncFromCatalog();
@@ -1404,6 +1405,42 @@ namespace AstraBrew_Launcher.Views
             }
 
             AppNotify.Success(title, body);
+
+            // 装完就收：结果已经进了系统通知，页面里这块再挂着只会挡住下面的版本列表。
+            // 以前这里什么都不做——面板与摊开的日志会一直留在页面上，用户得切走再回来才消失。
+            SwitchLogExpander.IsExpanded = false;
+            _ = DismissSwitchPanelAsync();
+        }
+
+        /// <summary>
+        /// 成功后过一会儿撤掉进度面板：留两秒半让人看见 100%，再收起来。
+        ///
+        /// 用延时而不是立刻收起，是因为「点完就没了」会让人怀疑到底装没装成功；
+        /// 也不做成常驻（那正是要修的 bug）。期间又发起新安装则直接跳过，别把新一轮的面板收掉。
+        /// </summary>
+        private async Task DismissSwitchPanelAsync()
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2.5));
+
+            if (_switching || SwitchProgressPanel is null)
+            {
+                return;
+            }
+
+            // 明确回 UI 线程再动控件：这里是 await 之后的续体，不该指望上下文一定还在
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_switching)
+                {
+                    return;
+                }
+
+                SwitchProgressPanel.Visibility = Visibility.Collapsed;
+                SwitchLogExpander.IsExpanded = false;
+                SwitchLog.Text = string.Empty;
+                SwitchBar.Value = 0;
+                SwitchPercentText.Text = "0%";
+            });
         }
 
         /// <summary>

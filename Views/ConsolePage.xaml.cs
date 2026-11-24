@@ -127,6 +127,11 @@ namespace AstraBrew_Launcher.Views
                 ? L.F("Console.Meta.Mode", L.Get(state.ModeKey), L.Get(state.EnvKey))
                 : "—";
 
+            // 托管标记独立成胶囊：混在模式文字里等于没标
+            Pm2Pill.Visibility = state.ManagedByPm2 && (running || busy)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
             NetworkButton.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
 
             // 桌面模式下这颗按钮不是「看地址」而是「访问酒馆」：页面装在内嵌窗口里，

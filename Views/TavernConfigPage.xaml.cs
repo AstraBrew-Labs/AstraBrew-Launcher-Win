@@ -88,6 +88,12 @@ namespace AstraBrew_Launcher.Views
         /// <summary>x:Bind 数据源：两个版本的白名单列表指向同一个集合。</summary>
         public ObservableCollection<WhitelistEntry> Whitelist => TavernSettings.Whitelist;
 
+        /// <summary>
+        /// 高手版那块只读镜像的数据源：实际写进 <c>privateAddressWhitelist.allowedRanges</c> 的内容。
+        /// 全部按锁定项处理——这里不提供删除入口。
+        /// </summary>
+        public ObservableCollection<WhitelistEntry> PrivateRanges { get; } = new();
+
         // ==================== 生命周期 ====================
 
         private void OnLoaded(object sender, RoutedEventArgs e)
@@ -610,6 +616,33 @@ namespace AstraBrew_Launcher.Views
                         ? L.Get("Cfg.Whitelist.Adv.Scope")
                         : L.Get("Cfg.Whitelist.Adv.On");
             }
+
+            SyncPrivateRanges();
+        }
+
+        /// <summary>
+        /// 刷新只读镜像。它跟着白名单变动（白名单变了，写进去的 allowedRanges 也变），
+        /// 同时坦白两种「写了但没生效」的情况：老版本配置里没有这一段，或者还一条都没有。
+        /// </summary>
+        private void SyncPrivateRanges()
+        {
+            if (AdvPrivateRanges is null)
+            {
+                return;
+            }
+
+            // 改集合本身，不要碰 AdvPrivateRanges.Items：
+            // 那个 ItemsControl 的 ItemsSource 绑在 PrivateRanges 上，直接动 Items 会抛 COMException
+            PrivateRanges.Clear();
+
+            foreach (string value in TavernSettings.PrivateRanges)
+            {
+                // 锁定项：镜像只用来核对，不给删除按钮
+                PrivateRanges.Add(new WhitelistEntry(value, isLocked: true));
+            }
+
+            AdvPrivateRangesMissing.Visibility =
+                GlobalTavernConfig.HasPrivateAddressWhitelist ? Visibility.Collapsed : Visibility.Visible;
         }
 
         private void AddWhitelistSimple_Click(object sender, RoutedEventArgs e)

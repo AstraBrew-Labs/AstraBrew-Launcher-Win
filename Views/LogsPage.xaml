@@ -1,0 +1,436 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="AstraBrew_Launcher.Views.LogsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:AstraBrew_Launcher.Views.Controls"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:local="using:AstraBrew_Launcher.Views"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    Loaded="OnLoaded"
+    Unloaded="OnUnloaded"
+    mc:Ignorable="d">
+
+    <Page.Resources>
+        <!--
+            行内小按钮：SettingRow / 设置页里那份是**页面私有**资源，这里用不到，
+            必须自己复制一份——少了它页面会在 InitializeComponent 里直接崩。
+        -->
+        <Style x:Key="RowButtonStyle" TargetType="Button">
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="Padding" Value="12,4" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+    </Page.Resources>
+
+    <Grid Padding="24,20,24,20" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!--  ==================== 页头 ====================  -->
+        <Grid ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Border
+                Background="#1F0E7490"
+                Style="{StaticResource SectionIconTileStyle}">
+                <FontIcon FontSize="17" Foreground="#FF0E7490" Glyph="&#xE9D9;" />
+            </Border>
+
+            <StackPanel
+                Grid.Column="1"
+                VerticalAlignment="Center"
+                Spacing="2">
+                <TextBlock Style="{StaticResource PageTitleTextStyle}" controls:Loc.Text="Logs.Page.Title" />
+                <TextBlock Style="{StaticResource PageSubtitleTextStyle}" controls:Loc.Text="Logs.Page.Subtitle" />
+            </StackPanel>
+
+            <StackPanel
+                Grid.Column="2"
+                VerticalAlignment="Center"
+                Orientation="Horizontal"
+                Spacing="8">
+                <ToggleSwitch
+                    x:Name="FollowSwitch"
+                    IsOn="True"
+                    MinWidth="0"
+                    OffContent=""
+                    OnContent=""
+                    Toggled="Follow_Toggled" />
+                <TextBlock
+                    x:Name="FollowLabel"
+                    VerticalAlignment="Center"
+                    Style="{StaticResource FieldHintTextStyle}"
+                    controls:Loc.Text="Logs.Action.Follow" />
+                <Button
+                    Click="Refresh_Click"
+                    controls:Loc.Content="Logs.Action.Refresh"
+                    Style="{StaticResource RowButtonStyle}" />
+                <Button
+                    Click="OpenFolder_Click"
+                    controls:Loc.Content="Logs.Action.OpenFolder"
+                    Style="{StaticResource RowButtonStyle}" />
+            </StackPanel>
+        </Grid>
+
+        <!--  ==================== 筛选 ====================  -->
+        <Border
+            Grid.Row="1"
+            Padding="16,12"
+            Style="{StaticResource CardStyle}">
+            <StackPanel Spacing="10">
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <controls:SegmentedPicker
+                        x:Name="RangePicker"
+                        VerticalAlignment="Center"
+                        OptionsKey="Logs.Range.Option"
+                        SelectedIndex="0"
+                        SelectionChanged="Range_Changed" />
+
+                    <CalendarDatePicker
+                        x:Name="FromDate"
+                        VerticalAlignment="Center"
+                        controls:Loc.Placeholder="Logs.Range.Custom.From"
+                        DateChanged="Date_Changed" />
+
+                    <CalendarDatePicker
+                        x:Name="ToDate"
+                        VerticalAlignment="Center"
+                        controls:Loc.Placeholder="Logs.Range.Custom.To"
+                        DateChanged="Date_Changed" />
+
+                    <Button
+                        x:Name="ClearDatesButton"
+                        VerticalAlignment="Center"
+                        Click="ClearDates_Click"
+                        controls:Loc.Content="Logs.Range.Custom.Clear"
+                        Style="{StaticResource RowButtonStyle}"
+                        Visibility="Collapsed" />
+
+                    <!--  操作记录点进来时显示「只看这一份」，点掉就回到按日期浏览  -->
+                    <Button
+                        x:Name="ScopeChip"
+                        VerticalAlignment="Center"
+                        Click="ClearScope_Click"
+                        Style="{StaticResource RowButtonStyle}"
+                        ToolTipService.ToolTip="取消"
+                        Visibility="Collapsed" />
+                </StackPanel>
+
+                <StackPanel
+                    x:Name="LevelChipsRow"
+                    Orientation="Horizontal"
+                    Spacing="8">
+                    <ToggleButton
+                        x:Name="InfoChip"
+                        Click="Level_Changed"
+                        controls:Loc.Content="Logs.Level.Info"
+                        IsChecked="True" />
+                    <ToggleButton
+                        x:Name="WarningChip"
+                        Click="Level_Changed"
+                        controls:Loc.Content="Logs.Level.Warning"
+                        IsChecked="True" />
+                    <ToggleButton
+                        x:Name="ErrorChip"
+                        Click="Level_Changed"
+                        controls:Loc.Content="Logs.Level.Error"
+                        IsChecked="True" />
+
+                    <Rectangle
+                        Width="1"
+                        Height="18"
+                        Margin="6,0"
+                        VerticalAlignment="Center"
+                        Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                    <!--  来源切换挪到左侧导航：启动器日志这一页里，左选类别、右看内容  -->
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!--  ==================== 页签 ====================  -->
+        <Grid Grid.Row="2" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Orientation="Horizontal" Spacing="0">
+                <RadioButton
+                    x:Name="LauncherTab"
+                    Checked="Tab_Checked"
+                    controls:Loc.Name="Logs.Tab.Launcher.Name"
+                    GroupName="LogTabs"
+                    IsChecked="True"
+                    Style="{StaticResource TabStripRadioStyle}">
+                    <StackPanel Orientation="Horizontal" Spacing="7">
+                        <FontIcon FontSize="14" Glyph="&#xE7C3;" />
+                        <TextBlock controls:Loc.Text="Logs.Tab.Launcher.Label" />
+                    </StackPanel>
+                </RadioButton>
+
+                <RadioButton
+                    x:Name="TavernTab"
+                    Checked="Tab_Checked"
+                    controls:Loc.Name="Logs.Tab.Tavern.Name"
+                    GroupName="LogTabs"
+                    Style="{StaticResource TabStripRadioStyle}">
+                    <StackPanel Orientation="Horizontal" Spacing="7">
+                        <FontIcon FontSize="14" Glyph="&#xE9F5;" />
+                        <TextBlock controls:Loc.Text="Logs.Tab.Tavern.Label" />
+                    </StackPanel>
+                </RadioButton>
+
+                <!--
+                    PM2 单独一页：它记的是「我们怎么指挥 PM2」（命令、退出码、耗时），
+                    与酒馆自己的输出是两回事。混在酒馆页里，排错时分不清是谁说的话。
+                -->
+                <RadioButton
+                    x:Name="Pm2Tab"
+                    Checked="Tab_Checked"
+                    controls:Loc.Name="Logs.Tab.Pm2.Name"
+                    GroupName="LogTabs"
+                    Style="{StaticResource TabStripRadioStyle}">
+                    <StackPanel Orientation="Horizontal" Spacing="7">
+                        <FontIcon FontSize="14" Glyph="&#xE964;" />
+                        <TextBlock controls:Loc.Text="Logs.Tab.Pm2.Label" />
+                    </StackPanel>
+                </RadioButton>
+            </StackPanel>
+
+            <Border
+                Grid.Column="1"
+                Padding="8,1,8,2"
+                VerticalAlignment="Center"
+                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                CornerRadius="9">
+                <TextBlock
+                    x:Name="CountText"
+                    FontSize="11"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Border>
+        </Grid>
+
+        <!--  ==================== 列表：左导航 + 右内容 ====================  -->
+        <Grid Grid.Row="3" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!--
+                左侧导航只在「启动器日志」页签出现：那一页有三类内容（运行 / 下载 / 操作），
+                竖排一列比顶部横排更好扫，也不占筛选区的位置。酒馆与 PM2 各只有一类，整宽显示。
+            -->
+            <Border
+                x:Name="SourceSidebar"
+                Width="164"
+                Padding="6"
+                Style="{StaticResource SectionCardStyle}"
+                Visibility="Collapsed">
+                <ListView
+                    x:Name="SourceList"
+                    SelectionChanged="Source_SelectionChanged"
+                    SelectionMode="Single"
+                    ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="MinHeight" Value="0" />
+                            <Setter Property="Padding" Value="10,8" />
+                            <Setter Property="Margin" Value="0,1" />
+                            <Setter Property="CornerRadius" Value="6" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="local:SourceNavItem">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <FontIcon FontSize="15" Glyph="{x:Bind Glyph}" />
+                                <TextBlock VerticalAlignment="Center" FontSize="13" Text="{x:Bind Label}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Border>
+
+            <Grid Grid.Column="1">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Border Padding="0" Style="{StaticResource SectionCardStyle}">
+                <Grid>
+                    <ListView
+                        x:Name="LogList"
+                        Padding="0,6,0,6"
+                        IsItemClickEnabled="False"
+                        SelectionMode="None"
+                        ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="MinHeight" Value="0" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="local:LogRow">
+                                <Grid
+                                    Padding="14,1"
+                                    ColumnSpacing="10"
+                                    ToolTipService.ToolTip="{x:Bind FileName}">
+                                    <Grid.ColumnDefinitions>
+                                        <!--  固定宽度：每行是独立 Grid，Auto 会让正文起始位置随级别标签长短跳动  -->
+                                        <ColumnDefinition Width="106" />
+                                        <ColumnDefinition Width="52" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock
+                                        VerticalAlignment="Top"
+                                        FontFamily="Consolas"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Text="{x:Bind TimeText}" />
+
+                                    <TextBlock
+                                        Grid.Column="1"
+                                        VerticalAlignment="Top"
+                                        FontFamily="Consolas"
+                                        FontSize="12"
+                                        FontWeight="SemiBold"
+                                        Foreground="{x:Bind LevelBrush}"
+                                        Text="{x:Bind LevelTag}" />
+
+                                    <TextBlock
+                                        Grid.Column="2"
+                                        FontFamily="Consolas"
+                                        FontSize="12.5"
+                                        IsTextSelectionEnabled="True"
+                                        LineHeight="19"
+                                        Text="{x:Bind Text}"
+                                        TextWrapping="Wrap" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+
+                    <!--
+                        操作记录：一行一个用户动作，点一下就跳到它对应的日志。
+                        与上面的日志列表共用这块区域，同一时刻只显示一个。
+                    -->
+                    <ListView
+                        x:Name="ActivityList"
+                        Padding="0,6,0,6"
+                        IsItemClickEnabled="True"
+                        ItemClick="Activity_ItemClick"
+                        SelectionMode="None"
+                        ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                        Visibility="Collapsed">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Setter Property="MinHeight" Value="0" />
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="local:ActivityRow">
+                                <Grid
+                                    Padding="14,5"
+                                    ColumnSpacing="10"
+                                    ToolTipService.ToolTip="{x:Bind Hint}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="106" />
+                                        <ColumnDefinition Width="52" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock
+                                        VerticalAlignment="Top"
+                                        FontFamily="Consolas"
+                                        FontSize="12"
+                                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                        Text="{x:Bind TimeText}" />
+
+                                    <FontIcon
+                                        Grid.Column="1"
+                                        HorizontalAlignment="Left"
+                                        VerticalAlignment="Top"
+                                        FontSize="14"
+                                        Foreground="{x:Bind KindBrush}"
+                                        Glyph="{x:Bind Glyph}" />
+
+                                    <StackPanel Grid.Column="2" Spacing="2">
+                                        <TextBlock
+                                            FontSize="13"
+                                            FontWeight="SemiBold"
+                                            Text="{x:Bind Text}"
+                                            TextWrapping="Wrap" />
+                                        <TextBlock
+                                            Style="{StaticResource FieldHintTextStyle}"
+                                            Text="{x:Bind Detail}"
+                                            TextWrapping="Wrap"
+                                            Visibility="{x:Bind DetailVisibility}" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+
+                    <!--  空状态：没有匹配的日志时盖住列表，别让用户对着空白卡片猜  -->
+                    <StackPanel
+                        x:Name="EmptyState"
+                        MaxWidth="360"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="8"
+                        Visibility="Collapsed">
+                        <FontIcon
+                            HorizontalAlignment="Center"
+                            FontSize="26"
+                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                            Glyph="&#xE9D9;" />
+                        <TextBlock
+                            HorizontalAlignment="Center"
+                            FontSize="14"
+                            FontWeight="SemiBold"
+                            controls:Loc.Text="Logs.Empty.Title" />
+                        <TextBlock
+                            HorizontalAlignment="Center"
+                            Style="{StaticResource FieldHintTextStyle}"
+                            controls:Loc.Text="Logs.Empty.Hint"
+                            TextAlignment="Center"
+                            TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <ProgressRing
+                        x:Name="LoadingRing"
+                        Width="28"
+                        Height="28"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        IsActive="False" />
+                </Grid>
+            </Border>
+
+                <TextBlock
+                    x:Name="FootnoteText"
+                    Grid.Row="1"
+                    Margin="2,6,2,0"
+                    Style="{StaticResource FieldHintTextStyle}"
+                    Visibility="Collapsed" />
+            </Grid>
+        </Grid>
+    </Grid>
+</Page>

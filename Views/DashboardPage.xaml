@@ -156,13 +156,13 @@
                                     Spacing="10"
                                     VerticalAlignment="Center">
                                     <Grid
-                                        Width="14"
-                                        Height="14"
+                                        Width="20"
+                                        Height="20"
                                         VerticalAlignment="Center">
                                         <Ellipse
                                             x:Name="StatusHalo"
-                                            Width="14"
-                                            Height="14"
+                                            Width="20"
+                                            Height="20"
                                             Fill="{ThemeResource SystemFillColorSuccessBrush}"
                                             Opacity="0.28" />
                                         <Ellipse
@@ -180,15 +180,36 @@
                                             VerticalAlignment="Center"
                                             Fill="{ThemeResource SystemFillColorCriticalBrush}"
                                             Visibility="Collapsed" />
+
+                                        <!--
+                                            起停过程中的状态灯：既不绿也不红，转到有结果为止。
+                                            以前只有「运行 / 未运行」两种，点了启动之后灯直接变红，
+                                            看起来像启动失败——这正是要补 third state 的原因。
+                                        -->
+                                        <ProgressRing
+                                            x:Name="StatusRing"
+                                            Width="20"
+                                            Height="20"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                            IsActive="False"
+                                            Visibility="Collapsed" />
                                     </Grid>
                                     <TextBlock
                                         x:Name="ServiceStateText"
                                         VerticalAlignment="Center"
                                         Style="{StaticResource SectionTitleTextStyle}" />
-                                    <Border Style="{StaticResource StatusPillStyle}">
-                                        <TextBlock
-                                            x:Name="HeroVersionPillText"
-                                            Style="{StaticResource StatusPillTextStyle}" />
+                                    <!--
+                                        这里原本还有一枚「内置 · v1.19.0」胶囊。
+                                        顶部有版本信息、下面也有版本卡，同一件事说三遍只会挤掉状态文字，已移除。
+                                    -->
+                                    <!--  托管标记：只在「运行中 + 由 PM2 管」时出现，与版本胶囊同款  -->
+                                    <Border
+                                        x:Name="Pm2Pill"
+                                        Style="{StaticResource StatusPillStyle}"
+                                        Visibility="Collapsed">
+                                        <TextBlock Style="{StaticResource StatusPillTextStyle}" controls:Loc.Text="Console.Meta.Pm2" />
                                     </Border>
                                 </StackPanel>
 

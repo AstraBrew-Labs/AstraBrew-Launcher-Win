@@ -911,6 +911,51 @@
                                     TextWrapping="Wrap" />
                             </StackPanel>
 
+                            <!--
+                                私有地址放行范围：只读镜像。
+                                它和上面的白名单是同一份数据（另加本机网段），写入 privateAddressWhitelist.allowedRanges，
+                                所以不给第二个编辑入口——两个都能改必然有一天对不上。
+                            -->
+                            <Border Style="{StaticResource SettingRowCardStyle}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock Style="{StaticResource FieldTitleTextStyle}" panels:Loc.Text="Cfg.G2.PrivateRanges.Title" />
+                                    <TextBlock
+                                        x:Name="AdvPrivateRangesSubtitle"
+                                        Style="{StaticResource FieldHintTextStyle}"
+                                        panels:Loc.Text="Cfg.G2.PrivateRanges.Hint"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
+                            <StackPanel
+                                x:Name="PrivateRangesPanel"
+                                Spacing="8">
+                                <ItemsControl
+                                    x:Name="AdvPrivateRanges"
+                                    ItemTemplate="{StaticResource WhitelistTagTemplate}"
+                                    ItemsSource="{x:Bind PrivateRanges}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <panels:WrapPanel HorizontalSpacing="6" VerticalSpacing="6" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                </ItemsControl>
+
+                                <TextBlock
+                                    x:Name="AdvPrivateRangesNote"
+                                    Style="{StaticResource FieldHintTextStyle}"
+                                    panels:Loc.Text="Cfg.G2.PrivateRanges.Note"
+                                    TextWrapping="Wrap" />
+
+                                <TextBlock
+                                    x:Name="AdvPrivateRangesMissing"
+                                    Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                    Style="{StaticResource FieldHintTextStyle}"
+                                    panels:Loc.Text="Cfg.G2.PrivateRanges.Missing"
+                                    TextWrapping="Wrap"
+                                    Visibility="Collapsed" />
+                            </StackPanel>
+
                             <Border Style="{StaticResource SettingRowCardStyle}">
                                 <Grid ColumnSpacing="16">
                                     <Grid.ColumnDefinitions>

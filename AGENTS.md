@@ -335,7 +335,7 @@ v[版本号]-[type]     v0.0.0-Beta.0 v0.3.0-Beta.0 v1.0.0-preview.2
 - `Strings/zh-CN/Resources.resw` 是**源语言，必须 100% 完整**；`en-US` 允许残缺，缺条目自动回退中文。
 - key 写法 `模块.元素.属性`，例如 `Settings.Row.Language.Title`、`Shell.Nav.About.Content`。
   前缀固定为 `Common / Shell / Dashboard / Tavern / Versions / Extensions / Resources / Workbench /
-  Console / Settings / About / Setup / Dialog / Notify / Enum / Error / Format`。
+  Console / Logs / Settings / About / Setup / Dialog / Notify / Enum / Error / Format`。
 - **叶子必须带后缀，且同一前缀不能既当资源又当范围**（血泪教训，报了三种 PRI 错）：
   - ❌ `Settings.Level.Simple` + `Settings.Level.Simple.Title` → `PRI278`（同一实体既是资源又是范围）；
   - ✅ `Settings.Level.Simple.Label` + `Settings.Level.Simple.Title`；
@@ -483,6 +483,172 @@ v[版本号]-[type]     v0.0.0-Beta.0 v0.3.0-Beta.0 v1.0.0-preview.2
 
 > 不要把 `ControlCornerRadius` 全局改成 8 —— 那会连带改掉输入框、下拉框、滑块等一大片控件。
 
+## PM2 托管（关闭启动器后继续运行）
+
+分工：`Services/Pm2Installer.cs` **只负责装**；`Services/Pm2Service.cs` 负责起 / 停 / 删 / 列。
+两者别混——装包与改 daemon 进程表是完全不同的失败模式。
+
+- **用 node 跑 `<InstallRoot>\node_modules\pm2\bin\pm2`，不走 `pm2.cmd`**：后者要先起 cmd.exe，
+  退出码与输出编码都会拐一道弯，拿不到真实失败原因。
+- **环境变量只能靠 ecosystem 的 `env` 字段传**：PM2 拉起的进程继承的是 **daemon** 的环境，
+  不是我们调 pm2 的那个子进程环境。代理、`GIT_CONFIG_GLOBAL`、`NODE_OPTIONS`、PATH 全写在
+  `logs\runtime\pm2\<app>.ecosystem.json` 里，每次启动前重写。
+- **`args` 里不能再放 `server.js`**：ecosystem 的 `script` 已经是它，重复会变成
+  `node server.js server.js`，酒馆直接起不来。
+- **PATH 只放 node / git / System32**（`BuildPm2Path`）：照抄 `BuildPath` 会把整个宿主 PATH
+  写进 json，文件撑到几十万字符，还把这些无关目录带进常驻进程。
+- **`--interpreter` 必须是 node 绝对路径**：daemon 常驻，它的 PATH 停留在自己第一次被拉起时，
+  用户后来切换内置 / 系统 node，daemon 不会跟着变。
+- **启动判定以端口为准，`jlist` 只是辅助**：`pm2 start` 的退出码只代表「注册成功」；
+  而 `jlist` 在部分 Windows 环境会返回空表（PM2 依赖 wmic 之类的系统工具，被组策略或安全软件
+  拦掉就会这样）。所以：超时后先查表、再给端口 6 秒，**端口在听就算托管成功**；
+  等待就绪时 `app is null` 不判死，只有明确 `errored/stopped` 才提前失败。
+- **停进程只用 `pm2 delete`，绝不对 PM2 的子进程用 taskkill**：PM2 会发现进程没了并 autorestart，
+  形成「杀掉又占端口」的死循环。同理，端口预检的 `ReleaseOwnAsync` 必须传
+  `skip: pid => pm2Pids.Contains(pid)`。
+- **不做 `pm2 save` / `pm2 startup`**：前者会让 `pm2 resurrect` 复活我们已删的 app，
+  后者往注册表加东西、卸载不干净。每次启动都是先 `delete` 再 `start`，表里永远是最新的。
+- **命名不带版本号**（`astrabrew-tavern-builtin` / `astrabrew-tavern-local-<hash8>`）：
+  换版本不该换名字，否则每次换版都在表里留一个删不掉的旧 app；本地实例用路径哈希，
+  避免中文路径进命令行。起新 app 前 `DeleteSiblingsAsync(null)` 清场。
+- **日志回灌必须按前缀扫目录**：PM2 在重启过 / 多实例的情况下会把输出写成
+  `<app>-out-0.log`、`<app>-err-1.log`，只盯 `<app>-out.log` 会永远读到空文件——
+  这正是「托管后控制台没有酒馆输出」的直接原因。`Pm2LogTail` 每次轮询枚举
+  `<app>-out*.log` / `<app>-err*.log`，新文件从 0 读，已有文件按 offset 续读。
+- **接管时控制台用存档，不从 PM2 重放**（`StartTail(appName, adopted: true)`）：控制台的内容由
+  `ConsoleArchive`（`logs\runtime\console.log`）提供，关掉启动器时是什么样，重开就是什么样。
+  从 PM2 的 out 文件重放会缺我们自己的行（`$ pm2 start …`、启动耗时…）、时间戳全变成「现在」，
+  内容结构每次都不一样——用户明确否掉过这条路。
+- 只有在**连存档都没有**时才退回「回放最后 64 KB + `Run.Log.TailHistory` 提示」
+  （首次升级上来的用户）。判断依据是 `_consoleHistoryLoaded`，不要读 `_logs.Count`
+  （那是 UI 线程的集合，后台线程读它是数据竞争）。
+- 本次新启动则从 0 读（文件刚被 `PrepareLogFiles` 清空，读到的就是本次输出）。
+- **回放行的时长是「现在」**：PM2 的日志文件不带时间戳，回灌进来只能按当前时间写盘。
+  想让行里带上真实时间就得给 PM2 加 `--time`，那会把时间戳塞进正文、和我们的行格式打两遍架，
+  所以宁可接受「同一批行时间戳相同」这个事实。
+
+### 酒馆日志从 PM2 补全（`ImportPm2History`）
+
+启动器没开时，酒馆的输出只写在 PM2 的 out / err 里。接管（`AdoptPm2`）时把这份文件的尾部
+（`Pm2LogTail.AdoptReplayBytes` = 64 KB）一次性读出来补进**日志页**，否则「酒馆」页签只有启动器自己那几行。
+
+- 补进来的行 `mirrorToConsole: false`：控制台由存档负责，再灌一遍重开就是成倍重复。
+- **去重按次数扣减**（`RecentTavernTexts` 返回 `Dictionary<string,int>`）：分隔线、重复横幅这类
+  同一句会出现多次，用 `HashSet` 会把第二次以后的新行也当成重复吞掉——实测每次启动都会多补一条分隔线。
+- 补完打一行 `Run.Log.Pm2History`（补了几行）。**补 0 行不打**，否则每次开启动器都刷一条噪音。
+
+### 操作记录（`Services/ActivityLog.cs` + `ActivityLabels.cs`）
+
+「用户做了什么」与「程序说了什么」分开：运行日志记后者，操作记录记前者，两者用时间 + 日志文件关联。
+
+- 存储 `logs\runtime\activity\activity-yyyyMMdd.jsonl`，一行一条 JSON（正文可能有换行/分隔符，
+  拼字符串迟早解析错）。保留 90 天，由 `RuntimeLog.StartSession` 调 `Maintain` 清理。
+- 记录点：`LauncherSettings.Set<T>`（`[CallerMemberName]` → `ActivityLabels` 映射到设置行标题）、
+  `InstallLog.Create`（每次安装，`logFile` 指向那份安装日志）、酒馆启停 / 接管 / 关窗保活、
+  实例扫描结束、恢复默认设置（**整条记一次**，别让 30 个字段各记一条）。
+- `ActivityLog.Enabled` 在 `App.OnLaunched` 里打开：之前的写入都是「载入配置」，不是用户操作。
+  `Reset()` 与 `LoadFromConfig` 期间用 `_suspendActivity` 屏蔽。
+- 详情只写能说人话的：布尔「开 → 关」、数字直接写；枚举与字符串一律不写（`Npmmirror`、代理地址不适合进日志）。
+
+### 日志页：左导航 + 右内容
+
+「启动器日志」页签里有三类内容，用左侧竖排导航切换：运行日志 / 下载日志 / 操作记录。
+酒馆与 PM2 各只有一类，左导航收起、列表占满整宽。
+
+- **每种来源各自记住时间范围**（`RangeBySource`）：运行日志看今天，下载日志可能几个月才有一次，
+  共用一个范围切过去十有八九是空白——这类「看起来坏了」比多写十行代码更贵。
+- 点一条操作记录：有 `LogFile` 就直接只显示那份安装日志（`LogQuery.ExactFile`，并给出
+  「只看 xxx.log · 点此取消」的胶囊）；否则切回运行日志并把列表滚到当时那一行。
+- `ExactFile` **只在「启动器 + 下载日志」生效**（`BuildQuery` 里判）。少了这个判断会出现
+  「酒馆日志页签里显示 caddy 安装日志」的串台，换页签时也要清掉。
+- 操作记录没有级别，`LevelChipsRow` 整行收起；`ItemsSource` 已绑集合的控件不能再动 `Items`。
+
+### 控制台存档（`Services/ConsoleArchive.cs`，控制台的历史来源）
+
+- 文件：`logs\runtime\console.log`，**固定名字、不按天切**——`RuntimeLog.Maintain` 只清理
+  「前缀-日期」形式的名字，取这个名字它就不会被当成运行日志删掉（也正是「跨天还能看到上次那屏」的前提）。
+- 写入：`RuntimeLog` 的落盘线程里，`LogArea.Tavern` 的行写完全间日志后同时追加一份到存档，
+  格式与运行日志一致（`yyyy-MM-dd HH:mm:ss.fff TAG  文字`）。读回来按 TAG 还原级别。
+- 读取：`TavernRuntime.RestoreConsoleHistory()` 在 `App.OnLaunched` 里、**认领 PM2 之前**调用一次，
+  把最近 2000 行填回 `_logs` 并触发 `Cleared`，控制台由此重画。
+- 大小：超过 2 MB 时在会话开始裁到 1 MB（按行首对齐），自己管，不指望清理策略。
+- 为什么不用 `tavern-*.log`：那份受「只保留当天 + 容量上限」约束，昨天下班前的内容今天就没了，
+  而控制台要的是「上次那屏」。两份数据内容相同、生命周期不同，各存一份是刻意的。
+
+### PM2 页签（`LogArea.Pm2`）
+
+- `logs\runtime\pm2-*.log`，由 `RuntimeLog.Pm2(...)` 写入，只有 `Pm2Service` 会调。
+- 内容：每条 pm2 命令 + 退出码 + 耗时，失败带原因。`jlist` **不记**——启动等待期间每 1.5 秒一次，
+  记下来只会把真信息淹掉。
+- 只进日志页的「PM2」页签，**不进控制台**：控制台是给用户看的操作记录，pm2 的调用细节属于后台排错。
+- **`PrepareLogFiles` 要通配清空**：只清 `<app>-out.log` 的话，带实例后缀的旧文件
+  会在下次启动被尾随器扫到并回放。
+- **`_queue` 必须在 PM2 判定前就位**：`Post` 在 `_queue` 为 null 时直接同步执行，
+  而尾随器的回灌来自计时器的线程池线程 → `Logged` 跨线程 → 控制台动视觉树抛异常
+  → 被 `Pump` 吞掉 → 「处理过了但没显示」。
+- **pid 要在就绪后回写**：`pm2 start` 返回时 app 常是 `launching`（pid=0，被归一成 null），
+  只在那时取一次 pid 的话 `TavernProcessState.Pid` 会整个会话停在 null，
+  仪表盘的内存 / CPU / PID 三处全是「—」。`WaitReadyPm2Async` 每轮 jlist 都要把 pid 补写回来
+  （只在变化时 `Raise`）。
+- **子进程隐藏窗口靠 NODE_OPTIONS 补丁**（`Services/NodeShim.cs`）：黑框来自酒馆自己的
+  `command-exists` → `execSync('where git')`，它没设 `windowsHide`，而 PM2 拉起的父进程
+  没有控制台，Windows 只能给这个 `cmd.exe` 新建一个。补丁 patch 了 `child_process` 的
+  六个启动入口，**路径必须用正斜杠**（NODE_OPTIONS 由 node 再解析一遍，反斜杠会被吃掉，
+  实测变成 `C:UsersY_ALA...` 直接 Cannot find module）。脚本整段 try/catch，
+  写不出来就不注入——宁可闪一下，不能让酒馆起不来。
+- **PM2 托管用独立胶囊标**（仪表盘状态行、控制台 meta 行各一颗），不要拼进状态文字：
+  「运行中 · PM2」挤在状态后面等于没有标记。`FinishStopped` / `Fail` 必须清
+  `ManagedByPm2`，否则停止后会残留「已停止 · PM2」这种假标记，还会让关窗误判成有保活。
+- **关窗的单一真值**：`AllowBackground && State.ManagedByPm2`。
+  · 关着 → 停（用户要求进程跟随启动器）；
+  · 开着但本次回退成直连 → 也停：没有 PM2 保活，留下只可能是占端口的孤儿；
+  · 开着且托管 → 只记一行日志，不动进程。
+- **停进程后必须等端口真的放开**（`PortProbe.WaitFree`，预算 3 秒）：只杀进程不校验端口，
+  下次启动会撞上 TIME_WAIT 或杀失败的残留。若等不到，`ReleaseOwn` 兜底强清一次占用者
+  （只认启动器目录下的 node）——用户要求的是「关掉启动器就放开端口」。
+- **`allow_background` 存的是「用户意图」**：界面显示 `意图 && Pm2Service.IsAvailable`，
+  运行时生效 `意图 && IsAvailable`。禁用期间点按一律丢弃（`BackgroundSwitch_Toggled` 里的
+  `!IsEnabled` 守卫），否则 PM2 一卸一装，用户的选择就被抹掉了。
+- 这一行**常显在「基础」分组**，不跟着启动方式收起：关窗行为与启动方式无关，
+  以前锁在「服务器模式」子行里，桌面模式用户根本看不到——那正是「开着继续运行却被杀掉」的来源。
+- 旧版「关闭窗口时停止酒馆」已删除；`SettingsStore` 里有一条迁移：新键缺失且旧键为 false 时
+  迁移成「要后台常驻」，别让老用户当年的选择白设。
+
+## 日志（运行日志 / 安装日志）
+
+两套日志职责不同，**不要合并**：
+
+| | 安装日志 | 运行日志 |
+|---|---|---|
+| 实现 | `Services/InstallLog.cs` | `Services/RuntimeLog.cs` |
+| 位置 | `%AppData%\AstraBrew Launcher\logs\<task>-<时间戳>.log` | `logs\runtime\launcher-YYYYMMDD.log` / `tavern-YYYYMMDD.log` |
+| 粒度 | 一个安装任务一份，`FileMode.Create` | 按天滚动，单日超限分卷（`-2`、`-3`） |
+| 行格式 | `[HH:mm:ss.fff] INFO/WARN/FAIL 消息` | `yyyy-MM-dd HH:mm:ss.fff SYS/INFO/OK/WARN/ERROR/OUT 消息` |
+| 清理 | **永不清理** | 受「只保留最新日志」与容量上限约束 |
+
+- **运行日志落 <c>logs\runtime</c> 子目录**，清理只扫这一层，从结构上保证永远碰不到安装记录。
+- 写入走**有界队列（4096）+ 后台单线程泵**，UI 只入队；`FileShare.ReadWrite | Delete`
+  让页面读取与清理删除都不被写句柄挡住；任何 IO 异常都会停掉该 Sink，不影响功能。
+- **采集点刻意只有五处**：启动头部（版本/系统/设置快照）、退出、酒馆每一行输出、
+  更新检查的失败与「有新版」、崩溃摘要。**不要**逐条记录设置变更——
+  `Changed` 有 400ms 防抖，拖一下滑杆就能刷满一屏。
+- 酒馆日志写的是 `TavernLogEntry.Display` 的**成品文字**（写盘瞬间的语言）。
+  代价是历史行不随界面语言变化，换来的是「记事本打开就能读」；页面上的标签/页签仍跟着语言走。
+- 清理时机：启动时、跨天/分卷轮转后、日志设置真的变化时、每 10 分钟兜底。
+  规则：`KeepLatestLogsOnly` 为真时删掉早于今天的**全部**日期；再按容量从最旧删到不超上限。
+  **跳过正在写的文件与 2 秒内写过的文件**，绝不截断活跃文件。
+- 删除后不能再读 `FileInfo.Length`（属性是缓存的，会抛异常并被外层 catch 吞掉，
+  表现就是「只删一个就停手」）——**先取大小再删**。
+- 日志页 `Views/LogsPage.xaml(.cs)`：两个页签（启动器 / 酒馆）、时间预设 + 自定义日期、
+  级别与来源筛选、`ListView` 虚拟化 + 5000 行上限（脚注提示截断）。
+  实时追加靠 `RuntimeLog.Written`（已在 UI 线程）+ 120ms 合并刷新；
+  **不要**接 `TavernRuntime.Cleared`——那是内存缓冲清空，磁盘历史不该跟着消失。
+- 日志页**不设实例就绪闸门**：没有可用实例时，恰恰最需要翻日志找原因。
+- **设置页只放策略，不放路径**：日志目录的展示与「打开」入口在「关于」页已经有了，
+  设置里再放一遍是重复——两处都写，改一个忘一个就成了不一致。
+- **日志分组只在高手版出现**（与「控制台」同处理）：日志策略是排错用的调参项，
+  小白版不给。改动等级时记得同步 `LevelCount`（小白版 5 组 / 高手版 6 组）。
+
 ## 全局消息提示
 
 **所有「说一声」的提示都走全局消息**（装好了、复制了、删掉了、失败了、刷新完了……），
@@ -495,6 +661,11 @@ v[版本号]-[type]     v0.0.0-Beta.0 v0.3.0-Beta.0 v1.0.0-preview.2
 - 展示在 `Views/Controls/NotifyHost`，由 `MainWindow` 挂在内容区右下角、`ContentRoot` 之外
   —— 那层带界面缩放，消息卡跟着缩放会和窗口边缘错开（同弹窗，按 100% 呈现）。
   同屏最多三条，超出时先撤掉最早的一条，保证新消息立刻可见。
+- **页面里的切换进度面板要自己收**：`FinishInstall` 成功后立刻收起日志 `SwitchLogExpander`，
+  2.5 秒后由 `DismissSwitchPanelAsync` 把整块 `SwitchProgressPanel` 撤掉（延时是为了让人看见 100%）。
+  以前这里什么都不做，面板会一直挂在版本卡下面，必须切页重建才消失——用户报的就是这个。
+  失败路径**不撤**：面板与日志是查看失败原因的地方，留着；新安装开始时会重新撑开。
+  收起走 `DispatcherQueue.TryEnqueue`，并用 `_switching` 挡住「上一轮刚结束、下一轮已经开了」的竞态。
 - 文案按「一眼读完」写：标题是结论（「内置实例已安装」），正文一句细节 + 下一步点哪儿。
   耗时、路径、退出码留在页面日志里；消息卡正文最多 4 行，超了省略。
 - 停留时长按严重程度分：成功 / 提示 5 秒、警告 8 秒、**失败常驻**（必须点关闭）——
@@ -1084,6 +1255,60 @@ ToolTip 里写清楚去哪装。`PrimaryAction_Click` 里再兜一层同样的�
 - 起服务前 `TavernRuntime` 读 `WhitelistHosts` 快照写盘并打一行
   `白名单（普通模式）：127.0.0.1、::1、…`——排查「连不上」先看它。
 - 集合绑在 ItemsControl 上，**改集合必须在 UI 线程**：`ReplaceWhitelist` 会自己转投。
+- `ItemsSource` 已经绑了集合的 `ItemsControl`，**不能再动 `Items`**：`Items.Clear()` 会抛
+  `COMException` 并让整页导航失败（第一次做只读镜像就踩了）。要改就改被绑的那个集合。
+
+### 私有地址放行范围（`privateAddressWhitelist`，与白名单成对写）
+
+`config.yaml` 里还有第二张名单：`privateAddressWhitelist.allowedRanges` + `enabled`。它管的是**出站**
+（酒馆能连哪些私有地址，比如本机 / 局域网上的模型服务），与 `whitelist` 的「谁能连进来」是两件事，
+但**必须成对写**：只写 `whitelist` 时，`listen: true` 下酒馆每次启动都会刷
+「To enable, provide trusted addresses in privateAddressWhitelist.allowedRanges…」；用户按提示自己改，
+两条名单迟早对不上。
+
+- 唯一写入点仍是 `GlobalTavernConfig.ApplyWhitelist(hosts, privateRanges)`：两张表加两个开关
+  （`whitelistMode` / `privateAddressWhitelist.enabled`）一起对，内容没变不写盘。
+- 范围 = 白名单 + 本机网段（`TavernSettings.BuildPrivateRanges`）。**不完全照抄**白名单：
+  桌面模式的访问白名单只放行回环，照抄会把局域网上的模型一并挡掉——补上本机网段才不会把人锁在门外。
+- 界面上**只有一个可编辑列表**（小白版 / 高手版共用同一份数据），高手版那块「私有地址放行范围」
+  是只读镜像，条目全部按锁定项渲染。做成两个都能改的列表，必然有一天对不上。
+- 老版本 `config.yaml` 没有这一段时，`SetScalar` / `SetList` 找不到键就原样返回——不凭空造段；
+  界面用 `HasPrivateAddressWhitelist` 提示「这一项不会写入」，而不是假装已经同步好了。
+- 迁移读的是**两张表的并集**（`ReadWhitelist()` + `ReadPrivateRanges()`），
+  并把 `127.0.0.0/8` / `::1/128` 折回 `127.0.0.1` / `::1`：用户只改过其中一张时，另一张不会把他的选择冲掉。
+- 起服务时打两行：「白名单（…）：…」与「私有地址放行范围：…」，排查「连不上」先看它们。
+- 顺带修的一处日志口径：**`stderr` 不等于错误**。Node 连 `console.warn` 都走 stderr，一律标红的话，
+  代理与私有过滤同时开启时那两条「请求代理已启用」的提示会红着出现，真错误反而被淹。
+  现在 `ClassifyLine` 只在有 `error` / `ERR!` 关键字时标 ERROR，其余 stderr 降为 WARN。
+
+## 扫描详情弹窗（`ScanDetailDialog`）：Grid 分行，别用 StackPanel
+
+内容是「状态头 + 逐盘进度 + 机械盘提示 + 找到的实例 + 脚注」五段，其中两段会长（盘多、实例多）。
+
+- **根容器必须是 Grid + 固定高度**（720 × 560），不能是 StackPanel：StackPanel 只会一路长高，
+  超出 ContentDialog 可视区的部分被边框直接裁掉——这就是「找到的实例显示不全、滚动条都露不出来」的成因。
+- 行分配：盘列表 `Auto` + `ScrollViewer MaxHeight="186"`（正好三张卡，58 + 6 间距，不露半张）；
+  实例列表 `*`（吃掉剩余高度，自己滚）。**不要给实例列表写死 MaxHeight**，那是把「能看几条」
+  绑在一个与窗口无关的魔数上。
+- 高度要保守：ContentDialog 的可用高度 = 窗口高 − 标题 − 页脚 − 内边距。写 640 时脚注（最后一行 Auto）
+  会被挤出可视区并塌成 0×0，肉眼就是「脚注不见了」。560 在 975 高的默认窗口里刚好全放下。
+- 新命中用 `DispatcherQueue.TryEnqueue` 再 `ChangeView(null, ScrollableHeight, null)` 滚到底：
+  不等一次布局的话 `ScrollableHeight` 还是旧值（等于没滚）。
+- 弹窗只是观察窗口：关掉不停扫描，「取消扫描」是另一个明确动作。
+
+## 仪表盘状态灯（三态：进行中 / 运行 / 未运行）
+
+`SetServiceRunning()` 一处决定：`StatusRing`（ProgressRing）、`StatusHalo` + `StatusDotRunning`、
+`StatusDotStopped` 三者互斥。
+
+- **进行中（`state.IsBusy`：Starting / Stopping）** → 只显示转圈，两个圆点与光晕都收起。
+  少了这一态，点下「启动」的瞬间灯就变红，看着像已经失败——这是这一态存在的唯一理由。
+- 运行态才启动呼吸动画（`StartStatusPulse`），停止 / 进行中都 `StopStatusPulse`。
+- 判据是 `settled = running && !busy`，别写成 `running`：重启过程中 `Running` 可能短暂为真。
+- 状态文字沿用 `Dashboard.Service.*` 的五个键（启动中 / 运行中 / 停止中 / 失败 / 已停止），不需要另加。
+
+状态卡片里**不再显示版本胶囊**：顶部标题栏有「内置 · v1.19.0」，下面还有「当前版本」卡，
+同一件事说三遍只会把状态文字挤窄。版本信息只保留在那两处。
 
 ## 全局数据目录（只显示、不可改）
 
@@ -1834,6 +2059,10 @@ Primary=覆盖 / Secondary=合并 / Close=取消），两者都只写全局那�
 │   │           └── settings.json ← 全局模式酒馆WebUI设置
 │   └── local_instances.json
 ├── logs/                    ← 软件日志目录
+│   ├── <task>-<时间戳>.log   ← 安装日志（一个任务一份，只增不删）
+│   └── runtime/             ← 运行日志（按天滚动，受清理策略约束）
+│       ├── launcher-YYYYMMDD.log
+│       └── tavern-YYYYMMDD.log
 ├── sillytavern/             ← 内置酒馆路径
 ├── bin/                    ← 内置环境目录 (内置 NodeJS、MinGit 等)
 │   ├── nodejs/             ← 内置 NodeJS 目录

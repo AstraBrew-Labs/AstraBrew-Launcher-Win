@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
   <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
     <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
@@ -256,12 +256,6 @@
   <data name="Settings.Row.StartMode.Description" xml:space="preserve">
     <value>Browser, standalone window, or server mode.</value>
   </data>
-  <data name="Settings.Row.StopOnClose.Title" xml:space="preserve">
-    <value>Stop tavern on close</value>
-  </data>
-  <data name="Settings.Row.StopOnClose.Description" xml:space="preserve">
-    <value>Ends the tavern with the window, so no orphan holds the port.</value>
-  </data>
   <data name="Settings.Row.TavernPlacement.Title" xml:space="preserve">
     <value>Remember tavern window position</value>
   </data>
@@ -290,7 +284,7 @@
     <value>Keep running after exit</value>
   </data>
   <data name="Settings.Row.KeepRunning.Description" xml:space="preserve">
-    <value>Runs under PM2, so it survives closing the launcher.</value>
+    <value>Run through PM2 so the service keeps running after you close the launcher or the tavern window.</value>
   </data>
   <data name="Settings.Row.ReverseProxy.Title" xml:space="preserve">
     <value>Reverse proxy</value>
@@ -3454,7 +3448,7 @@ It goes to the recycle bin first, so it can be restored if needed.</value>
     <value>Add to whitelist</value>
   </data>
   <data name="Cfg.Whitelist.Note.Editable" xml:space="preserve">
-    <value>Only listed addresses can reach the tavern; 127.0.0.1 and ::1 are always kept, the rest can be added or removed.</value>
+    <value>Only addresses in this list can reach the tavern; 127.0.0.1 and ::1 are always kept, the rest are editable. The same list is also synced to the private address ranges.</value>
   </data>
   <data name="Cfg.Whitelist.Note.Desktop" xml:space="preserve">
     <value>Desktop mode only allows local access through the built-in window; the list is fixed to 127.0.0.1 and ::1 and needs no edits.</value>
@@ -5174,7 +5168,7 @@ Merge: keep the current config and only add the keys it is missing.</value>
     <value>The desktop window was closed</value>
   </data>
   <data name="Dw.Closed.Stopping" xml:space="preserve">
-    <value>Stopping the tavern service. To keep it running in the background after closing, turn off "Stop the tavern when the window closes" in Settings.</value>
+    <value>Stopping the tavern service. To keep it running, turn on "Keep running after the launcher closes" (requires PM2).</value>
   </data>
   <data name="Dw.Closed.Keeping" xml:space="preserve">
     <value>The tavern is still running; open the window again from Dashboard or Console with "Open tavern".</value>
@@ -6975,5 +6969,290 @@ Merge: keep the current config and only add the keys it is missing.</value>
   </data>
   <data name="Setup.Action.CreateConfigTip" xml:space="preserve">
     <value>Download the official default config, then continue</value>
+  </data>
+  <data name="Shell.Nav.Logs.Content" xml:space="preserve">
+    <value>Logs</value>
+  </data>
+  <data name="Logs.Page.Title" xml:space="preserve">
+    <value>Logs</value>
+  </data>
+  <data name="Logs.Page.Subtitle" xml:space="preserve">
+    <value>Runtime records from the launcher and the tavern, filterable by time and level.</value>
+  </data>
+  <data name="Logs.Tab.Launcher.Label" xml:space="preserve">
+    <value>Launcher logs</value>
+  </data>
+  <data name="Logs.Tab.Launcher.Name" xml:space="preserve">
+    <value>Launcher logs</value>
+  </data>
+  <data name="Logs.Tab.Tavern.Label" xml:space="preserve">
+    <value>Tavern logs</value>
+  </data>
+  <data name="Logs.Tab.Tavern.Name" xml:space="preserve">
+    <value>Tavern logs</value>
+  </data>
+  <data name="Logs.Range.Option.Count" xml:space="preserve">
+    <value>4</value>
+  </data>
+  <data name="Logs.Range.Option.0" xml:space="preserve">
+    <value>Today</value>
+  </data>
+  <data name="Logs.Range.Option.1" xml:space="preserve">
+    <value>7 days</value>
+  </data>
+  <data name="Logs.Range.Option.2" xml:space="preserve">
+    <value>30 days</value>
+  </data>
+  <data name="Logs.Range.Option.3" xml:space="preserve">
+    <value>All</value>
+  </data>
+  <data name="Logs.Range.Custom.From" xml:space="preserve">
+    <value>From</value>
+  </data>
+  <data name="Logs.Range.Custom.To" xml:space="preserve">
+    <value>To</value>
+  </data>
+  <data name="Logs.Range.Custom.Clear" xml:space="preserve">
+    <value>Clear dates</value>
+  </data>
+  <data name="Logs.Level.All" xml:space="preserve">
+    <value>All levels</value>
+  </data>
+  <data name="Logs.Level.Info" xml:space="preserve">
+    <value>Info</value>
+  </data>
+  <data name="Logs.Level.Warning" xml:space="preserve">
+    <value>Warning</value>
+  </data>
+  <data name="Logs.Level.Error" xml:space="preserve">
+    <value>Error</value>
+  </data>
+  <data name="Logs.Origin.Runtime" xml:space="preserve">
+    <value>Runtime</value>
+  </data>
+  <data name="Logs.Origin.Install" xml:space="preserve">
+    <value>Install</value>
+  </data>
+  <data name="Logs.Empty.Title" xml:space="preserve">
+    <value>No logs in this range</value>
+  </data>
+  <data name="Logs.Empty.Hint" xml:space="preserve">
+    <value>Try a different time range or relax the level filter.</value>
+  </data>
+  <data name="Logs.Action.OpenFolder" xml:space="preserve">
+    <value>Open log folder</value>
+  </data>
+  <data name="Logs.Action.Refresh" xml:space="preserve">
+    <value>Refresh</value>
+  </data>
+  <data name="Logs.Action.Follow" xml:space="preserve">
+    <value>Follow latest</value>
+  </data>
+  <data name="Logs.Count.Format" xml:space="preserve">
+    <value>{0} lines</value>
+  </data>
+  <data name="Logs.Footnote.Limit" xml:space="preserve">
+    <value>Showing the latest {0} lines; the rest is in the log folder.</value>
+  </data>
+  <data name="Logs.Loading" xml:space="preserve">
+    <value>Loading logs…</value>
+  </data>
+  <data name="Settings.Group.Logs.Title" xml:space="preserve">
+    <value>Logs</value>
+  </data>
+  <data name="Settings.Group.Logs.Hint" xml:space="preserve">
+    <value>How logs are kept and how much disk they may use.</value>
+  </data>
+  <data name="Settings.Row.KeepLatestLogs.Title" xml:space="preserve">
+    <value>Keep only the latest logs</value>
+  </data>
+  <data name="Settings.Row.KeepLatestLogs.Description" xml:space="preserve">
+    <value>Turn off to keep history by date, limited only by the size cap below.</value>
+  </data>
+  <data name="Settings.Row.LogMaxSize.Title" xml:space="preserve">
+    <value>Log size limit</value>
+  </data>
+  <data name="Settings.Row.LogMaxSize.Description" xml:space="preserve">
+    <value>Oldest runtime logs are removed past this size. Install logs are never touched.</value>
+  </data>
+  <data name="Settings.Row.LogMaxSize.Unit" xml:space="preserve">
+    <value>MB</value>
+  </data>
+  <data name="Store.KeepLatestLogs" xml:space="preserve">
+    <value>whether only today's runtime logs are kept</value>
+  </data>
+  <data name="Store.LogMaxSize" xml:space="preserve">
+    <value>runtime log folder cap (MB); minimum {0}, maximum {1}</value>
+  </data>
+  <data name="Settings.KeepRunning.Pm2Tip" xml:space="preserve">
+    <value>Install PM2 to keep the tavern running after the launcher closes.</value>
+  </data>
+  <data name="Dw.Closed.KeepingUnmanaged" xml:space="preserve">
+    <value>The tavern is still running. It was started directly, so it stops when you close the launcher.</value>
+  </data>
+  <data name="Console.Meta.Pm2" xml:space="preserve">
+    <value>PM2</value>
+  </data>
+  <data name="Run.Log.Pm2Cleanup" xml:space="preserve">
+    <value>Cleaned up {0} leftover PM2 app(s).</value>
+  </data>
+  <data name="Run.Log.Pm2Started" xml:space="preserve">
+    <value>Handed to PM2 ({0} · PID {1}), waiting for port {2}…</value>
+  </data>
+  <data name="Run.Log.Pm2Adopted" xml:space="preserve">
+    <value>Adopted running PM2 app {0} · port {1}</value>
+  </data>
+  <data name="Run.Log.Pm2Fallback" xml:space="preserve">
+    <value>PM2 start failed, falling back to a direct launch: {0}</value>
+  </data>
+  <data name="Run.Log.Pm2Unavailable" xml:space="preserve">
+    <value>PM2 not found; "keep running after closing" will not apply this time.</value>
+  </data>
+  <data name="Run.Log.Pm2Stop" xml:space="preserve">
+    <value>Stopping PM2 app {0}…</value>
+  </data>
+  <data name="Run.Log.Pm2Exited" xml:space="preserve">
+    <value>The PM2 app did not stay up ({0}). Check the output above.</value>
+  </data>
+  <data name="Run.Log.Pm2PortStuck" xml:space="preserve">
+    <value>PM2 stopped, but port {0} is still in use; the next launch will handle it.</value>
+  </data>
+  <data name="Run.Pm2Fallback.Title" xml:space="preserve">
+    <value>Could not hand over to PM2</value>
+  </data>
+  <data name="Run.Pm2Fallback.Body" xml:space="preserve">
+    <value>The tavern started directly, so it will stop when you close the launcher ({0}).</value>
+  </data>
+  <data name="Run.ClosePortStuck.Title" xml:space="preserve">
+    <value>Port still in use</value>
+  </data>
+  <data name="Run.ClosePortStuck.Body" xml:space="preserve">
+    <value>The tavern stopped, but port {0} is still in use; the next launch will handle it.</value>
+  </data>
+  <data name="Cfg.G2.PrivateRanges.Title" xml:space="preserve">
+    <value>Private address ranges</value>
+  </data>
+  <data name="Cfg.G2.PrivateRanges.Hint" xml:space="preserve">
+    <value>Written to privateAddressWhitelist.allowedRanges, kept in sync with the IP whitelist above plus your local subnet. The tavern only allows requests to these private addresses when enabled.</value>
+  </data>
+  <data name="Cfg.G2.PrivateRanges.Note" xml:space="preserve">
+    <value>Generated automatically. Edit the whitelist above and this list follows.</value>
+  </data>
+  <data name="Cfg.G2.PrivateRanges.Missing" xml:space="preserve">
+    <value>This config.yaml has no privateAddressWhitelist section (older SillyTavern), so nothing will be written. Update the tavern and reopen this page.</value>
+  </data>
+  <data name="Run.Log.PrivateRanges" xml:space="preserve">
+    <value>Private address ranges: {0}</value>
+  </data>
+  <data name="Run.Log.TailHistory" xml:space="preserve">
+    <value>Tavern output recorded earlier by PM2 (history from before this session)</value>
+  </data>
+  <data name="Logs.Tab.Pm2.Label" xml:space="preserve">
+    <value>PM2</value>
+  </data>
+  <data name="Logs.Tab.Pm2.Name" xml:space="preserve">
+    <value>PM2 logs</value>
+  </data>
+  <data name="Run.Log.Pm2History" xml:space="preserve">
+    <value>Imported {0} line(s) from the PM2 log into the tavern log</value>
+  </data>
+  <data name="Activity.Setting.Changed" xml:space="preserve">
+    <value>Changed setting: {0}</value>
+  </data>
+  <data name="Activity.Setting.Reset" xml:space="preserve">
+    <value>Reset all settings</value>
+  </data>
+  <data name="Activity.Value.On" xml:space="preserve">
+    <value>On</value>
+  </data>
+  <data name="Activity.Value.Off" xml:space="preserve">
+    <value>Off</value>
+  </data>
+  <data name="Activity.Item.Level" xml:space="preserve">
+    <value>Interface detail level</value>
+  </data>
+  <data name="Activity.Item.UpdateChannel" xml:space="preserve">
+    <value>Update channel</value>
+  </data>
+  <data name="Activity.Service.Start" xml:space="preserve">
+    <value>Started the tavern ({0})</value>
+  </data>
+  <data name="Activity.Service.Stop" xml:space="preserve">
+    <value>Stopped the tavern</value>
+  </data>
+  <data name="Activity.Service.Adopt" xml:space="preserve">
+    <value>Adopted the running tavern (port {0})</value>
+  </data>
+  <data name="Activity.Service.Shutdown" xml:space="preserve">
+    <value>Closed the launcher and stopped the tavern</value>
+  </data>
+  <data name="Activity.Service.Keep" xml:space="preserve">
+    <value>Closed the launcher; the tavern keeps running</value>
+  </data>
+  <data name="Activity.Install.Started" xml:space="preserve">
+    <value>Download / install: {0}</value>
+  </data>
+  <data name="Activity.Install.Tavern" xml:space="preserve">
+    <value>Tavern files</value>
+  </data>
+  <data name="Activity.Install.Deps" xml:space="preserve">
+    <value>Tavern dependencies</value>
+  </data>
+  <data name="Activity.Install.Git" xml:space="preserve">
+    <value>Git</value>
+  </data>
+  <data name="Activity.Install.Node" xml:space="preserve">
+    <value>Node.js</value>
+  </data>
+  <data name="Activity.Install.Pm2" xml:space="preserve">
+    <value>PM2</value>
+  </data>
+  <data name="Activity.Install.Caddy" xml:space="preserve">
+    <value>Caddy</value>
+  </data>
+  <data name="Activity.Install.Other" xml:space="preserve">
+    <value>Component {0}</value>
+  </data>
+  <data name="Activity.Scan.Done" xml:space="preserve">
+    <value>Scanned for instances: {0} found</value>
+  </data>
+  <data name="Activity.Scan.Cancelled" xml:space="preserve">
+    <value>Instance scan cancelled</value>
+  </data>
+  <data name="Activity.Scan.Failed" xml:space="preserve">
+    <value>Instance scan failed</value>
+  </data>
+  <data name="Logs.Source.Count" xml:space="preserve">
+    <value>3</value>
+  </data>
+  <data name="Logs.Source.0" xml:space="preserve">
+    <value>Runtime</value>
+  </data>
+  <data name="Logs.Source.1" xml:space="preserve">
+    <value>Downloads</value>
+  </data>
+  <data name="Logs.Source.2" xml:space="preserve">
+    <value>Activity</value>
+  </data>
+  <data name="Logs.Count.Activity" xml:space="preserve">
+    <value>{0} entries</value>
+  </data>
+  <data name="Logs.Scope.File" xml:space="preserve">
+    <value>Only {0} · click to clear</value>
+  </data>
+  <data name="Logs.Activity.Hint.Setting" xml:space="preserve">
+    <value>Click to open the runtime log around that moment</value>
+  </data>
+  <data name="Logs.Activity.Hint.Service" xml:space="preserve">
+    <value>Click to open the runtime log around that moment</value>
+  </data>
+  <data name="Logs.Activity.Hint.Install" xml:space="preserve">
+    <value>Click to see only this install log</value>
+  </data>
+  <data name="Logs.Activity.Hint.Scan" xml:space="preserve">
+    <value>Click to open the runtime log around that moment</value>
+  </data>
+  <data name="Logs.Activity.Hint.File" xml:space="preserve">
+    <value>Click to see only this log: {0}</value>
   </data>
 </root>

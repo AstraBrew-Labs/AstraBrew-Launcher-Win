@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace AstraBrew_Launcher.Services
@@ -54,6 +55,90 @@ namespace AstraBrew_Launcher.Services
                 // 权限之类的问题：不能断言可用，按占用处理（宁可误报也不能让启动撞车）
                 return false;
             }
+        }
+
+        /// <summary>
+        /// 等端口真正释放。**同步版**，只给窗口关闭路径用。
+        ///
+        /// 那里没有事件循环再转一圈的机会，异步收尾跑不完；用 Thread.Sleep 而不是 Task.Delay，
+        /// 是因为退出阶段定时器的粒度不可靠。
+        /// </summary>
+        /// <returns>超时前是否释放。false 表示端口被别人占着，调用方只该记日志、不该继续等。</returns>
+        public static bool WaitFree(int port, TimeSpan timeout)
+        {
+            DateTime deadline = DateTime.UtcNow + timeout;
+
+            while (true)
+            {
+                if (IsFree(port))
+                {
+                    return true;
+                }
+
+                if (DateTime.UtcNow >= deadline)
+                {
+                    return false;
+                }
+
+                Thread.Sleep(80);
+            }
+        }
+
+        /// <summary>等端口释放（异步版）：停止服务后的收尾用。</summary>
+        public static async Task<bool> WaitFreeAsync(int port, TimeSpan timeout)
+        {
+            DateTime deadline = DateTime.UtcNow + timeout;
+
+            while (true)
+            {
+                if (IsFree(port))
+                {
+                    return true;
+                }
+
+                if (DateTime.UtcNow >= deadline)
+                {
+                    return false;
+                }
+
+                await Task.Delay(100).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
+        /// 同步兜底：结束占用该端口的「启动器目录下的 node」，再等端口放开。
+        ///
+        /// 只给关窗路径用：那时 PM2 的 delete 可能因为 daemon 通信失败没生效，
+        /// 而用户的要求是「关掉启动器就把端口放开」——这里做最后一层强制清理。
+        /// 外部程序仍然不碰。
+        /// </summary>
+        public static bool ReleaseOwn(int port, TimeSpan timeout)
+        {
+            if (port is < 1 or > 65535)
+            {
+                return true;
+            }
+
+            foreach (PortOwnerInfo owner in FindOwners(port))
+            {
+                if (!IsOwnNodeProcess(owner.Pid))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    using Process process = Process.GetProcessById(owner.Pid);
+                    process.Kill(entireProcessTree: true);
+                    process.WaitForExit(1500);
+                }
+                catch (Exception)
+                {
+                    // 已经退了 / 没权限：交给后面的端口检测
+                }
+            }
+
+            return WaitFree(port, timeout);
         }
 
         /// <summary>查找占用者（仅 LISTENING）。查不到返回空列表，不代表端口空闲。</summary>
@@ -145,7 +230,14 @@ namespace AstraBrew_Launcher.Services
         ///
         /// 返回真正结束掉的进程数；端口仍然没释放时返回 0。
         /// </summary>
-        public static async Task<int> ReleaseOwnAsync(IReadOnlyList<PortOwnerInfo> owners, int port)
+        /// <param name="skip">
+        /// 额外豁免。PM2 托管的子进程同样是「启动器目录下的 node」，但**绝对不能杀**——
+        /// PM2 会立刻 autorestart，形成「启动 → 杀掉 → 又占端口」的死循环。
+        /// </param>
+        public static async Task<int> ReleaseOwnAsync(
+            IReadOnlyList<PortOwnerInfo> owners,
+            int port,
+            Func<int, bool>? skip = null)
         {
             if (owners.Count == 0)
             {
@@ -157,6 +249,11 @@ namespace AstraBrew_Launcher.Services
             foreach (PortOwnerInfo owner in owners)
             {
                 if (!IsOwnNodeProcess(owner.Pid))
+                {
+                    continue;
+                }
+
+                if (skip is not null && skip(owner.Pid))
                 {
                     continue;
                 }
@@ -183,17 +280,9 @@ namespace AstraBrew_Launcher.Services
             }
 
             // 进程退出到端口真正释放之间有一小段延迟，别急着下结论
-            for (int attempt = 0; attempt < 20; attempt++)
-            {
-                if (IsFree(port))
-                {
-                    return released;
-                }
-
-                await Task.Delay(100).ConfigureAwait(false);
-            }
-
-            return IsFree(port) ? released : 0;
+            return await WaitFreeAsync(port, TimeSpan.FromSeconds(2)).ConfigureAwait(false)
+                ? released
+                : 0;
         }
 
         /// <summary>

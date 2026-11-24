@@ -185,7 +185,6 @@ namespace AstraBrew_Launcher.Views
                 AutoLaunchSwitch.IsOn = LauncherSettings.AutoLaunch;
                 CpuPicker.SelectedIndex = (int)LauncherSettings.CpuCores;
                 StartModePicker.SelectedIndex = (int)LauncherSettings.StartMode;
-                StopOnCloseSwitch.IsOn = LauncherSettings.StopTavernOnWindowClose;
                 RememberTavernSwitch.IsOn = LauncherSettings.RememberTavernWindow;
 
                 // 先给上限再给值：反过来的话，旧上限（默认 4096）会先把值夹一次
@@ -203,6 +202,13 @@ namespace AstraBrew_Launcher.Views
                 ShowPath(GlobalDataPathText, GlobalTavernConfig.GlobalDataRoot);
 
                 StartupCommandSwitch.IsOn = LauncherSettings.ShowStartupCommand;
+
+                KeepLatestLogsSwitch.IsOn = LauncherSettings.KeepLatestLogsOnly;
+
+                // 先给上下限再给值：顺序反过来会被旧上下限夹一次
+                LogSizeBox.Minimum = LauncherSettings.MinLogMaxSizeMb;
+                LogSizeBox.Maximum = LauncherSettings.MaxLogMaxSizeMb;
+                LogSizeBox.Value = LauncherSettings.LogMaxSizeMb;
 
                 RuntimePicker.SelectedIndex = (int)LauncherSettings.Runtime;
                 NpmPicker.SelectedIndex = (int)LauncherSettings.NpmRegistry;
@@ -266,10 +272,9 @@ namespace AstraBrew_Launcher.Views
                 Pick(DataLocationPicker, (int)LauncherSettings.DataLocation);
                 Pick(ProxyPicker, (int)LauncherSettings.Proxy);
 
-                Toggle(StopOnCloseSwitch, LauncherSettings.StopTavernOnWindowClose);
                 Toggle(RememberTavernSwitch, LauncherSettings.RememberTavernWindow);
-                Toggle(BackgroundSwitch, LauncherSettings.AllowBackground);
                 Toggle(StartupCommandSwitch, LauncherSettings.ShowStartupCommand);
+                Toggle(KeepLatestLogsSwitch, LauncherSettings.KeepLatestLogsOnly);
             }
             finally
             {
@@ -354,7 +359,7 @@ namespace AstraBrew_Launcher.Views
                 ? "Settings.Level.Simple.Hint"
                 : "Settings.Level.Advanced.Hint");
 
-            // 组数写死在这里：小白版藏掉「控制台」，其余 5 组全在；高手版 6 组全显示
+            // 组数写死在这里：小白版藏掉「控制台」与「日志」，其余 5 组全在；高手版 6 组全显示
             LevelCount.Text = L.F("Settings.Level.Count", simple ? 5 : 6);
 
             UiSectionHint.Text = L.Get(simple
@@ -387,8 +392,9 @@ namespace AstraBrew_Launcher.Views
             SetShown(DividerBeforeGlobalData, !simple);
             SetShown(GlobalDataRow, !simple);
 
-            // 整组收起
+            // 整组收起：控制台与日志都是排错用的，小白版不需要
             SetShown(ConsoleSection, !simple);
+            SetShown(LogSection, !simple);
 
             // 运行环境：小白版一行结论，高手版保留明细
             SetShown(RuntimeSummaryRow, simple);
@@ -437,13 +443,31 @@ namespace AstraBrew_Launcher.Views
                 ? Visibility.Visible
                 : Visibility.Collapsed;
 
-            // 后台常驻依赖 PM2；PM2 又依赖 Node.js。缺一环就禁用开关并说明原因。
-            // 探测结果还没回来时不动开关，避免「刚进页面开关先灰一下」的闪烁。
-            var env = CurrentEnvironment;
-            var pm2Ready = env is null || env.Pm2 is not null;
-            BackgroundSwitch.IsEnabled = pm2Ready;
-            BackgroundSwitch.Opacity = pm2Ready ? 1 : 0.45;
-            BackgroundBlockedPill.Visibility = pm2Ready ? Visibility.Collapsed : Visibility.Visible;
+            // 判据就是 Pm2Service.IsAvailable（纯文件检查，不起进程，可以每次刷新都问）。
+            // 界面必须和运行时问同一个问题，否则又会回到「界面能开、运行时却不用」的老 bug。
+            bool pm2Available = Pm2Service.IsAvailable;
+
+            BackgroundSwitch.IsEnabled = pm2Available;
+            BackgroundSwitch.Opacity = pm2Available ? 1 : 0.45;
+            BackgroundBlockedPill.Visibility = pm2Available ? Visibility.Collapsed : Visibility.Visible;
+
+            // 显示值 = 意图 && 可用：PM2 缺了就显示为关（需求如此），但**存储里的意图一个字都不改**，
+            // 装回 PM2 后开关自动回到用户上次的选择
+            bool wasSyncing = _sync;
+            _sync = true;
+            try
+            {
+                BackgroundSwitch.IsOn = pm2Available && LauncherSettings.AllowBackground;
+            }
+            finally
+            {
+                _sync = wasSyncing;
+            }
+
+            // 禁用控件自身的 ToolTip 在 WinUI 里弹不出来（不参与命中测试），必须挂到整行上
+            ToolTipService.SetToolTip(
+                KeepRunningRow,
+                pm2Available ? null : L.Get("Settings.KeepRunning.Pm2Tip"));
         }
 
         /// <summary>当前环境来源的检测结果；null 表示这一套还没探测完。</summary>
@@ -1189,17 +1213,6 @@ namespace AstraBrew_Launcher.Views
             MarkDirty();
         }
 
-        private void StopOnCloseSwitch_Toggled(object sender, RoutedEventArgs e)
-        {
-            if (_sync)
-            {
-                return;
-            }
-
-            LauncherSettings.SetStopTavernOnWindowClose(StopOnCloseSwitch.IsOn);
-            MarkDirty();
-        }
-
         /// <summary>滑杆单位是 MB，显示成 GB；不是整 GB 时保留一位小数（如 2.5 GB）。</summary>
         private static string FormatMemory(int mb) => $"{mb / 1024.0:0.#} GB";
 
@@ -1260,7 +1273,9 @@ namespace AstraBrew_Launcher.Views
 
         private void BackgroundSwitch_Toggled(object sender, RoutedEventArgs e)
         {
-            if (_sync)
+            // 禁用的那一刻显示值会被强制成「关」（PM2 不在），那不是用户的意图：
+            // 这里直接丢弃，否则 PM2 一卸一装，用户当年的选择就被抹掉了
+            if (_sync || !BackgroundSwitch.IsEnabled)
             {
                 return;
             }
@@ -1290,6 +1305,31 @@ namespace AstraBrew_Launcher.Views
             }
 
             LauncherSettings.SetShowStartupCommand(StartupCommandSwitch.IsOn);
+            MarkDirty();
+        }
+
+        // ==================== 日志 ====================
+
+        private void KeepLatestLogsSwitch_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_sync)
+            {
+                return;
+            }
+
+            LauncherSettings.SetKeepLatestLogsOnly(KeepLatestLogsSwitch.IsOn);
+            MarkDirty();
+        }
+
+        private void LogSizeBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+        {
+            // 清空输入框时 Value 是 NaN：不能当成 0 写进去（会被夹成 1MB）
+            if (LogSizeBox is null || _sync || double.IsNaN(args.NewValue))
+            {
+                return;
+            }
+
+            LauncherSettings.SetLogMaxSizeMb((int)Math.Round(args.NewValue));
             MarkDirty();
         }
 

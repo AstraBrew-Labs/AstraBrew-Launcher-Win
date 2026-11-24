@@ -191,9 +191,6 @@ namespace AstraBrew_Launcher.Services
         /// <summary>默认启动方式。</summary>
         public static QuickStartMode StartMode => _startMode;
 
-        /// <summary>关闭窗口时顺带停止酒馆服务。</summary>
-        public static bool StopTavernOnWindowClose => _stopTavernOnWindowClose;
-
         /// <summary>桌面模式：记住酒馆窗口关闭前的位置与大小。</summary>
         public static bool RememberTavernWindow => _rememberTavernWindow;
 
@@ -233,7 +230,15 @@ namespace AstraBrew_Launcher.Services
         /// </summary>
         public static string UserWhitelist => _userWhitelist;
 
-        /// <summary>关闭窗口后酒馆继续在后台跑（依赖 PM2）。</summary>
+        /// <summary>
+        /// 关闭启动器后酒馆继续在后台跑（依赖 PM2）。
+        ///
+        /// **这个值是「用户意图」，不是「本次是否生效」**：
+        /// · 界面显示 = 意图 &amp;&amp; <see cref="Pm2Service.IsAvailable"/>（PM2 缺了就显示关闭 + 禁用 + 药丸）；
+        /// · 运行时生效 = 意图 &amp;&amp; IsAvailable（见 TavernRuntime 的启动分支）；
+        /// · 禁用期间用户的点按一律丢弃，绝不把「显示上的关闭」写回意图——
+        ///   那样 PM2 一卸一装，用户的选择就被抹掉了。
+        /// </summary>
         public static bool AllowBackground => _allowBackground;
 
         /// <summary>数据存放策略。</summary>
@@ -242,6 +247,25 @@ namespace AstraBrew_Launcher.Services
         /// <summary>全局数据目录。</summary>
         /// <summary>控制台里回显实际执行的启动命令。</summary>
         public static bool ShowStartupCommand => _showStartupCommand;
+
+        /// <summary>
+        /// 只保留最新日志（默认开）：运行日志按天切文件，启动时删掉更早的日期。
+        /// 关掉后按天保留全部历史，只受容量上限约束。
+        /// **只作用于 <c>logs\runtime</c>**，安装日志（<c>logs\*.log</c>）永远不动。
+        /// </summary>
+        public static bool KeepLatestLogsOnly => _keepLatestLogsOnly;
+
+        /// <summary>运行日志目录的容量上限（MB）。属性上也夹一次：旧配置可能超界。</summary>
+        public static int LogMaxSizeMb => Math.Clamp(_logMaxSizeMb, MinLogMaxSizeMb, MaxLogMaxSizeMb);
+
+        /// <summary>容量上限的下限：1 MB —— 再小连一次启动都记不全。</summary>
+        public const int MinLogMaxSizeMb = 1;
+
+        /// <summary>容量上限的上限：200 MB —— 日志不该成为磁盘占用的大头。</summary>
+        public const int MaxLogMaxSizeMb = 200;
+
+        /// <summary>容量上限的出厂值：10 MB。</summary>
+        public const int DefaultLogMaxSizeMb = 10;
 
         /// <summary>依赖来源。</summary>
         public static RuntimeSource Runtime => _runtime;
@@ -362,8 +386,6 @@ namespace AstraBrew_Launcher.Services
 
         public static void SetStartMode(QuickStartMode value) => Set(ref _startMode, value);
 
-        public static void SetStopTavernOnWindowClose(bool value) => Set(ref _stopTavernOnWindowClose, value);
-
         public static void SetRememberTavernWindow(bool value) => Set(ref _rememberTavernWindow, value);
 
         /// <summary>
@@ -405,6 +427,11 @@ namespace AstraBrew_Launcher.Services
         public static void SetDataLocation(DataLocationMode value) => Set(ref _dataLocation, value);
 
         public static void SetShowStartupCommand(bool value) => Set(ref _showStartupCommand, value);
+
+        public static void SetKeepLatestLogsOnly(bool value) => Set(ref _keepLatestLogsOnly, value);
+
+        public static void SetLogMaxSizeMb(int value) =>
+            Set(ref _logMaxSizeMb, Math.Clamp(value, MinLogMaxSizeMb, MaxLogMaxSizeMb));
 
         public static void SetRuntime(RuntimeSource value) => Set(ref _runtime, value);
 
@@ -489,6 +516,23 @@ namespace AstraBrew_Launcher.Services
         /// <summary>恢复出厂值：所有偏好回到首次启动时的状态。</summary>
         public static void Reset()
         {
+            // 一次「恢复默认」只该留一条操作记录，不是三十条设置变更
+            _suspendActivity = true;
+
+            try
+            {
+                ResetCore();
+            }
+            finally
+            {
+                _suspendActivity = false;
+            }
+
+            ActivityLog.Record(ActivityCategory.Setting, L.Get("Activity.Setting.Reset"));
+        }
+
+        private static void ResetCore()
+        {
             _theme = AppTheme.System;
             _language = AppLanguage.System;
             _level = SettingsLevel.Simple;
@@ -498,7 +542,6 @@ namespace AstraBrew_Launcher.Services
             _autoLaunch = false;
             _cpuCores = CpuCorePreference.Auto;
             _startMode = QuickStartMode.Normal;
-            _stopTavernOnWindowClose = true;
             _rememberTavernWindow = true;
             _tavernWindowRect = null;
             _webViewMemoryMb = DefaultWebViewMemoryMb;
@@ -508,6 +551,8 @@ namespace AstraBrew_Launcher.Services
             _allowBackground = true;
             _dataLocation = DataLocationMode.Global;
             _showStartupCommand = true;
+            _keepLatestLogsOnly = true;
+            _logMaxSizeMb = DefaultLogMaxSizeMb;
             _runtime = RuntimeSource.Builtin;
             _npmRegistry = NpmRegistrySource.Npmmirror;
             _channel = DownloadChannel.GitCode;
@@ -532,7 +577,6 @@ namespace AstraBrew_Launcher.Services
         private static bool _autoLaunch;
         private static CpuCorePreference _cpuCores = CpuCorePreference.Auto;
         private static QuickStartMode _startMode = QuickStartMode.Normal;
-        private static bool _stopTavernOnWindowClose = true;
         private static bool _rememberTavernWindow = true;
         private static TavernWindowRect? _tavernWindowRect;
         private static int _webViewMemoryMb = DefaultWebViewMemoryMb;
@@ -545,6 +589,12 @@ namespace AstraBrew_Launcher.Services
         private static bool _allowBackground = true;
         private static DataLocationMode _dataLocation = DataLocationMode.Global;
         private static bool _showStartupCommand = true;
+
+        /// <summary>只保留最新日志；见 <see cref="KeepLatestLogsOnly"/>。</summary>
+        private static bool _keepLatestLogsOnly = true;
+
+        /// <summary>运行日志容量上限（MB），由属性负责夹取。</summary>
+        private static int _logMaxSizeMb = DefaultLogMaxSizeMb;
         private static RuntimeSource _runtime = RuntimeSource.Builtin;
         private static NpmRegistrySource _npmRegistry = NpmRegistrySource.Npmmirror;
         private static DownloadChannel _channel = DownloadChannel.GitCode;
@@ -567,17 +617,32 @@ namespace AstraBrew_Launcher.Services
         /// <summary>批量写入深度；大于 0 时 Set 只改值不通知。</summary>
         private static int _batchDepth;
 
-        private static void Set<T>(ref T field, T value)
+        /// <summary>批量写入（载入配置、恢复默认）期间不记操作日志。</summary>
+        private static bool _suspendActivity;
+
+        private static void Set<T>(ref T field, T value, [System.Runtime.CompilerServices.CallerMemberName] string member = "")
         {
             if (Equals(field, value))
             {
                 return;
             }
 
+            T previous = field;
             field = value;
+
             if (_batchDepth == 0)
             {
                 Changed?.Invoke(null, EventArgs.Empty);
+            }
+
+            // 记「谁在什么时候改了什么」。载入配置与恢复默认时 _suspendActivity 为真：
+            // 那些不是用户操作，记进去只会把真正的改动淹掉
+            if (!_suspendActivity && ActivityLog.Enabled)
+            {
+                ActivityLog.Record(
+                    ActivityCategory.Setting,
+                    L.F("Activity.Setting.Changed", ActivityLabels.SettingTitle(member)),
+                    ActivityLabels.ValueDetail(previous, value));
             }
         }
     }

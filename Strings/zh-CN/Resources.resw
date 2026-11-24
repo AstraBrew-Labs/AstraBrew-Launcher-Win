@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
   <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
     <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
@@ -256,12 +256,6 @@
   <data name="Settings.Row.StartMode.Description" xml:space="preserve">
     <value>浏览器、独立窗口或服务器模式。</value>
   </data>
-  <data name="Settings.Row.StopOnClose.Title" xml:space="preserve">
-    <value>关闭窗口时停止酒馆</value>
-  </data>
-  <data name="Settings.Row.StopOnClose.Description" xml:space="preserve">
-    <value>关窗就结束酒馆，避免留下占端口的孤儿进程。</value>
-  </data>
   <data name="Settings.Row.TavernPlacement.Title" xml:space="preserve">
     <value>记住酒馆窗口的位置</value>
   </data>
@@ -290,7 +284,7 @@
     <value>关闭启动器后继续运行</value>
   </data>
   <data name="Settings.Row.KeepRunning.Description" xml:space="preserve">
-    <value>交给 PM2 托管，关掉启动器也不停。</value>
+    <value>交给 PM2 托管：关掉启动器或酒馆窗口后，服务继续在后台运行。</value>
   </data>
   <data name="Settings.Row.ReverseProxy.Title" xml:space="preserve">
     <value>反向代理</value>
@@ -3454,7 +3448,7 @@
     <value>添加白名单</value>
   </data>
   <data name="Cfg.Whitelist.Note.Editable" xml:space="preserve">
-    <value>只有名单里的地址能连上酒馆；127.0.0.1 与 ::1 固定保留，其余可以增删。</value>
+    <value>只有名单里的地址能连上酒馆；127.0.0.1 与 ::1 固定保留，其余可以增删。同一份名单也会同步到私有地址放行范围。</value>
   </data>
   <data name="Cfg.Whitelist.Note.Desktop" xml:space="preserve">
     <value>桌面模式只允许本机通过内置窗口访问，名单固定为 127.0.0.1 与 ::1，无需修改。</value>
@@ -5174,7 +5168,7 @@
     <value>桌面窗口已关闭</value>
   </data>
   <data name="Dw.Closed.Stopping" xml:space="preserve">
-    <value>正在停止酒馆服务。想让窗口关掉后继续挂后台，可以在设置里关掉「关闭窗口时停止酒馆」。</value>
+    <value>正在停止酒馆服务。想让它继续在后台运行，请打开「关闭启动器后继续运行」（需要 PM2）。</value>
   </data>
   <data name="Dw.Closed.Keeping" xml:space="preserve">
     <value>酒馆仍在运行，可以从仪表盘或控制台点「访问酒馆」再打开窗口。</value>
@@ -6975,5 +6969,290 @@
   </data>
   <data name="Setup.Action.CreateConfigTip" xml:space="preserve">
     <value>下载一份官方默认配置，完成后就能继续</value>
+  </data>
+  <data name="Shell.Nav.Logs.Content" xml:space="preserve">
+    <value>日志</value>
+  </data>
+  <data name="Logs.Page.Title" xml:space="preserve">
+    <value>日志</value>
+  </data>
+  <data name="Logs.Page.Subtitle" xml:space="preserve">
+    <value>启动器与酒馆的运行记录，可按时间与级别筛选。</value>
+  </data>
+  <data name="Logs.Tab.Launcher.Label" xml:space="preserve">
+    <value>启动器日志</value>
+  </data>
+  <data name="Logs.Tab.Launcher.Name" xml:space="preserve">
+    <value>启动器日志</value>
+  </data>
+  <data name="Logs.Tab.Tavern.Label" xml:space="preserve">
+    <value>酒馆日志</value>
+  </data>
+  <data name="Logs.Tab.Tavern.Name" xml:space="preserve">
+    <value>酒馆日志</value>
+  </data>
+  <data name="Logs.Range.Option.Count" xml:space="preserve">
+    <value>4</value>
+  </data>
+  <data name="Logs.Range.Option.0" xml:space="preserve">
+    <value>今天</value>
+  </data>
+  <data name="Logs.Range.Option.1" xml:space="preserve">
+    <value>近 7 天</value>
+  </data>
+  <data name="Logs.Range.Option.2" xml:space="preserve">
+    <value>近 30 天</value>
+  </data>
+  <data name="Logs.Range.Option.3" xml:space="preserve">
+    <value>全部</value>
+  </data>
+  <data name="Logs.Range.Custom.From" xml:space="preserve">
+    <value>开始日期</value>
+  </data>
+  <data name="Logs.Range.Custom.To" xml:space="preserve">
+    <value>结束日期</value>
+  </data>
+  <data name="Logs.Range.Custom.Clear" xml:space="preserve">
+    <value>清除日期</value>
+  </data>
+  <data name="Logs.Level.All" xml:space="preserve">
+    <value>全部级别</value>
+  </data>
+  <data name="Logs.Level.Info" xml:space="preserve">
+    <value>信息</value>
+  </data>
+  <data name="Logs.Level.Warning" xml:space="preserve">
+    <value>警告</value>
+  </data>
+  <data name="Logs.Level.Error" xml:space="preserve">
+    <value>错误</value>
+  </data>
+  <data name="Logs.Origin.Runtime" xml:space="preserve">
+    <value>运行日志</value>
+  </data>
+  <data name="Logs.Origin.Install" xml:space="preserve">
+    <value>安装日志</value>
+  </data>
+  <data name="Logs.Empty.Title" xml:space="preserve">
+    <value>这个范围内没有日志</value>
+  </data>
+  <data name="Logs.Empty.Hint" xml:space="preserve">
+    <value>换个时间范围，或放宽级别筛选再看看。</value>
+  </data>
+  <data name="Logs.Action.OpenFolder" xml:space="preserve">
+    <value>打开日志目录</value>
+  </data>
+  <data name="Logs.Action.Refresh" xml:space="preserve">
+    <value>刷新</value>
+  </data>
+  <data name="Logs.Action.Follow" xml:space="preserve">
+    <value>跟随最新</value>
+  </data>
+  <data name="Logs.Count.Format" xml:space="preserve">
+    <value>{0} 行</value>
+  </data>
+  <data name="Logs.Footnote.Limit" xml:space="preserve">
+    <value>只显示最新的 {0} 行，完整内容在日志目录里。</value>
+  </data>
+  <data name="Logs.Loading" xml:space="preserve">
+    <value>正在读取日志…</value>
+  </data>
+  <data name="Settings.Group.Logs.Title" xml:space="preserve">
+    <value>日志</value>
+  </data>
+  <data name="Settings.Group.Logs.Hint" xml:space="preserve">
+    <value>日志保留策略与磁盘占用上限。</value>
+  </data>
+  <data name="Settings.Row.KeepLatestLogs.Title" xml:space="preserve">
+    <value>只保留最新日志</value>
+  </data>
+  <data name="Settings.Row.KeepLatestLogs.Description" xml:space="preserve">
+    <value>关闭后按日期保留全部历史，只受下面的容量上限约束。</value>
+  </data>
+  <data name="Settings.Row.LogMaxSize.Title" xml:space="preserve">
+    <value>日志容量上限</value>
+  </data>
+  <data name="Settings.Row.LogMaxSize.Description" xml:space="preserve">
+    <value>运行日志超过这个大小就从最旧的开始清理；安装日志不受影响。</value>
+  </data>
+  <data name="Settings.Row.LogMaxSize.Unit" xml:space="preserve">
+    <value>MB</value>
+  </data>
+  <data name="Store.KeepLatestLogs" xml:space="preserve">
+    <value>是否只保留当天的运行日志</value>
+  </data>
+  <data name="Store.LogMaxSize" xml:space="preserve">
+    <value>运行日志目录上限（MB），最小 {0}，最大 {1}</value>
+  </data>
+  <data name="Settings.KeepRunning.Pm2Tip" xml:space="preserve">
+    <value>安装 PM2 后才能让酒馆在关闭启动器后继续运行。</value>
+  </data>
+  <data name="Dw.Closed.KeepingUnmanaged" xml:space="preserve">
+    <value>酒馆仍在运行。本次是直连启动，关闭启动器时会一并停止。</value>
+  </data>
+  <data name="Console.Meta.Pm2" xml:space="preserve">
+    <value>PM2</value>
+  </data>
+  <data name="Run.Log.Pm2Cleanup" xml:space="preserve">
+    <value>清理了 {0} 个上次残留的 PM2 进程。</value>
+  </data>
+  <data name="Run.Log.Pm2Started" xml:space="preserve">
+    <value>已交给 PM2（{0} · PID {1}），等待端口 {2} 就绪…</value>
+  </data>
+  <data name="Run.Log.Pm2Adopted" xml:space="preserve">
+    <value>接管已在运行的 PM2 进程 {0} · 端口 {1}</value>
+  </data>
+  <data name="Run.Log.Pm2Fallback" xml:space="preserve">
+    <value>PM2 启动失败，改用直连启动：{0}</value>
+  </data>
+  <data name="Run.Log.Pm2Unavailable" xml:space="preserve">
+    <value>未检测到 PM2，「关闭启动器后继续运行」本次不生效。</value>
+  </data>
+  <data name="Run.Log.Pm2Stop" xml:space="preserve">
+    <value>正在停止 PM2 进程 {0}…</value>
+  </data>
+  <data name="Run.Log.Pm2Exited" xml:space="preserve">
+    <value>PM2 进程没能保持运行（{0}），请查看上面的输出。</value>
+  </data>
+  <data name="Run.Log.Pm2PortStuck" xml:space="preserve">
+    <value>PM2 已停止，但端口 {0} 仍被占用；下次启动会自动处理。</value>
+  </data>
+  <data name="Run.Pm2Fallback.Title" xml:space="preserve">
+    <value>这次没能交给 PM2</value>
+  </data>
+  <data name="Run.Pm2Fallback.Body" xml:space="preserve">
+    <value>酒馆已用直连方式启动，关闭启动器时会一并停止（{0}）。</value>
+  </data>
+  <data name="Run.ClosePortStuck.Title" xml:space="preserve">
+    <value>端口还没放开</value>
+  </data>
+  <data name="Run.ClosePortStuck.Body" xml:space="preserve">
+    <value>酒馆已停止，但端口 {0} 仍被占用，下次启动会自动处理。</value>
+  </data>
+  <data name="Cfg.G2.PrivateRanges.Title" xml:space="preserve">
+    <value>私有地址放行范围</value>
+  </data>
+  <data name="Cfg.G2.PrivateRanges.Hint" xml:space="preserve">
+    <value>写入 privateAddressWhitelist.allowedRanges，与上面的 IP 白名单同步，另含本机网段。开启后酒馆才会放行发往这些私有地址的请求。</value>
+  </data>
+  <data name="Cfg.G2.PrivateRanges.Note" xml:space="preserve">
+    <value>自动生成，无需单独维护：改上面的白名单，这一份立刻跟着变。</value>
+  </data>
+  <data name="Cfg.G2.PrivateRanges.Missing" xml:space="preserve">
+    <value>当前 config.yaml 没有 privateAddressWhitelist 段（旧版酒馆），这一项不会写入。升级酒馆后重新打开本页即可。</value>
+  </data>
+  <data name="Run.Log.PrivateRanges" xml:space="preserve">
+    <value>私有地址放行范围：{0}</value>
+  </data>
+  <data name="Run.Log.TailHistory" xml:space="preserve">
+    <value>以下为此前由 PM2 记录的酒馆输出（接管前的历史）</value>
+  </data>
+  <data name="Logs.Tab.Pm2.Label" xml:space="preserve">
+    <value>PM2</value>
+  </data>
+  <data name="Logs.Tab.Pm2.Name" xml:space="preserve">
+    <value>PM2 日志</value>
+  </data>
+  <data name="Run.Log.Pm2History" xml:space="preserve">
+    <value>已从 PM2 日志补全 {0} 行到酒馆日志</value>
+  </data>
+  <data name="Activity.Setting.Changed" xml:space="preserve">
+    <value>修改设置：{0}</value>
+  </data>
+  <data name="Activity.Setting.Reset" xml:space="preserve">
+    <value>恢复默认设置</value>
+  </data>
+  <data name="Activity.Value.On" xml:space="preserve">
+    <value>开</value>
+  </data>
+  <data name="Activity.Value.Off" xml:space="preserve">
+    <value>关</value>
+  </data>
+  <data name="Activity.Item.Level" xml:space="preserve">
+    <value>界面详细程度</value>
+  </data>
+  <data name="Activity.Item.UpdateChannel" xml:space="preserve">
+    <value>更新渠道</value>
+  </data>
+  <data name="Activity.Service.Start" xml:space="preserve">
+    <value>启动酒馆（{0}）</value>
+  </data>
+  <data name="Activity.Service.Stop" xml:space="preserve">
+    <value>停止酒馆</value>
+  </data>
+  <data name="Activity.Service.Adopt" xml:space="preserve">
+    <value>接管已在运行的酒馆（端口 {0}）</value>
+  </data>
+  <data name="Activity.Service.Shutdown" xml:space="preserve">
+    <value>关闭启动器并停止酒馆</value>
+  </data>
+  <data name="Activity.Service.Keep" xml:space="preserve">
+    <value>关闭启动器，酒馆继续在后台运行</value>
+  </data>
+  <data name="Activity.Install.Started" xml:space="preserve">
+    <value>下载 / 安装：{0}</value>
+  </data>
+  <data name="Activity.Install.Tavern" xml:space="preserve">
+    <value>酒馆本体</value>
+  </data>
+  <data name="Activity.Install.Deps" xml:space="preserve">
+    <value>酒馆依赖</value>
+  </data>
+  <data name="Activity.Install.Git" xml:space="preserve">
+    <value>Git</value>
+  </data>
+  <data name="Activity.Install.Node" xml:space="preserve">
+    <value>Node.js</value>
+  </data>
+  <data name="Activity.Install.Pm2" xml:space="preserve">
+    <value>PM2</value>
+  </data>
+  <data name="Activity.Install.Caddy" xml:space="preserve">
+    <value>Caddy</value>
+  </data>
+  <data name="Activity.Install.Other" xml:space="preserve">
+    <value>组件 {0}</value>
+  </data>
+  <data name="Activity.Scan.Done" xml:space="preserve">
+    <value>扫描本地实例：发现 {0} 个</value>
+  </data>
+  <data name="Activity.Scan.Cancelled" xml:space="preserve">
+    <value>扫描本地实例：已取消</value>
+  </data>
+  <data name="Activity.Scan.Failed" xml:space="preserve">
+    <value>扫描本地实例：失败</value>
+  </data>
+  <data name="Logs.Source.Count" xml:space="preserve">
+    <value>3</value>
+  </data>
+  <data name="Logs.Source.0" xml:space="preserve">
+    <value>运行日志</value>
+  </data>
+  <data name="Logs.Source.1" xml:space="preserve">
+    <value>下载日志</value>
+  </data>
+  <data name="Logs.Source.2" xml:space="preserve">
+    <value>操作记录</value>
+  </data>
+  <data name="Logs.Count.Activity" xml:space="preserve">
+    <value>{0} 条记录</value>
+  </data>
+  <data name="Logs.Scope.File" xml:space="preserve">
+    <value>只看 {0} · 点此取消</value>
+  </data>
+  <data name="Logs.Activity.Hint.Setting" xml:space="preserve">
+    <value>点击跳到当时的运行日志</value>
+  </data>
+  <data name="Logs.Activity.Hint.Service" xml:space="preserve">
+    <value>点击跳到当时的运行日志</value>
+  </data>
+  <data name="Logs.Activity.Hint.Install" xml:space="preserve">
+    <value>点击只看这次的安装日志</value>
+  </data>
+  <data name="Logs.Activity.Hint.Scan" xml:space="preserve">
+    <value>点击跳到当时的运行日志</value>
+  </data>
+  <data name="Logs.Activity.Hint.File" xml:space="preserve">
+    <value>点击只看这份日志：{0}</value>
   </data>
 </root>

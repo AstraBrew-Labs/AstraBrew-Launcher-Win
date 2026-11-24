@@ -81,6 +81,12 @@ namespace AstraBrew_Launcher.Services
         /// <summary>运行环境（内置 / 系统）的资源键，与 <see cref="ModeKey"/> 配套。</summary>
         public string EnvKey { get; init; } = string.Empty;
 
+        /// <summary>
+        /// 这次是不是 PM2 在管。关启动器要不要保活、停止走哪条路，全看这一个字段。
+        /// 勾了「继续运行」但 PM2 起不来时是 false（已回退直连），此时关窗照样会杀。
+        /// </summary>
+        public bool ManagedByPm2 { get; init; }
+
         public static TavernProcessState None { get; } = new(
             TavernRunState.NotStarted,
             null,
@@ -144,6 +150,15 @@ namespace AstraBrew_Launcher.Services
 
         /// <summary>本次停止是用户要求的（停止 / 重启 / 退出）：进程退出不该再报「异常」。</summary>
         private static bool _stopRequested;
+
+        /// <summary>PM2 托管的 app 名；null 表示本次是直连启动。</summary>
+        private static string? _pm2AppName;
+
+        /// <summary>PM2 输出尾随器；只有托管时才有。</summary>
+        private static Pm2LogTail? _tail;
+
+        /// <summary>控制台存档是否已经载回内存：决定接管时还要不要从 PM2 兜底回放。</summary>
+        private static bool _consoleHistoryLoaded;
 
         /// <summary>
         /// 本次启动的输出里出现过 ESM 路径格式错误。
@@ -276,12 +291,20 @@ namespace AstraBrew_Launcher.Services
         /// </summary>
         public static async Task StartAsync()
         {
+            bool alreadyRunning;
+
             lock (Gate)
             {
-                if (_state.State is TavernRunState.Starting or TavernRunState.Running or TavernRunState.Stopping)
+                alreadyRunning = _state.State is TavernRunState.Starting or TavernRunState.Running or TavernRunState.Stopping;
+
+                if (alreadyRunning)
                 {
                     return;
                 }
+
+                ActivityLog.Record(
+                    ActivityCategory.Service,
+                    L.F("Activity.Service.Start", TavernSettings.ModeName));
 
                 _queue ??= DispatcherQueue.GetForCurrentThread();
                 _stopRequested = false;
@@ -402,8 +425,13 @@ namespace AstraBrew_Launcher.Services
 
                 // 白名单跟着服务范围走：局域网放行本机网段，互联网全开放。
                 // 每次启动都对一遍，换过 Wi-Fi、改过服务范围之后不会留下过期的名单。
+                //
+                // 两张表一起写：whitelist 管「谁能连进来」，privateAddressWhitelist.allowedRanges
+                // 管「酒馆能连向哪些私有地址」。只写前者时，listen 打开后酒馆会一直刷
+                // 「请配置 privateAddressWhitelist」的警告，局域网里也连不通。
                 IReadOnlyList<string> whitelistHosts = TavernSettings.WhitelistHosts;
-                bool whitelistWritten = GlobalTavernConfig.ApplyWhitelist(whitelistHosts);
+                IReadOnlyList<string> privateRanges = TavernSettings.BuildPrivateRanges(whitelistHosts);
+                bool whitelistWritten = GlobalTavernConfig.ApplyWhitelist(whitelistHosts, privateRanges);
 
                 // 每次都打一行：白名单决定了谁能连上来，出问题时要能一眼看到当时放行了哪些
                 AddLogKey(
@@ -411,6 +439,51 @@ namespace AstraBrew_Launcher.Services
                     whitelistWritten ? "Run.Log.WhitelistDone" : "Run.Log.Whitelist",
                     TavernSettings.ModeName,
                     string.Join(L.Get("Common.List.And"), whitelistHosts));
+
+                // 另一张表单独打：它管的是出站，与「谁能连进来」是两件事，混在一行里看不清
+                AddLogKey(
+                    TavernLogKind.Info,
+                    "Run.Log.PrivateRanges",
+                    string.Join(L.Get("Common.List.And"), privateRanges));
+            }
+
+            // 后面所有 Raise/日志都要投递到 UI 线程。PM2 分支不经过 Process.Start 那条路，
+            // 一旦 _queue 为 null，Post 会在尾随器的计时器线程直接执行 → 控制台动视觉树 → 异常被吞。
+            _queue ??= DispatcherQueue.GetForCurrentThread();
+
+            // ---------- 4.5 PM2：能不能托管、要不要接管 ----------
+            // 判定必须放在端口预检之前：预检要豁免 PM2 托管的进程，否则杀掉它的子进程后
+            // PM2 会 autorestart，形成「启动 → 杀掉 → 又占端口」的死循环。
+            string pm2Name = Pm2Service.AppNameFor(instance);
+            bool pm2Wanted = LauncherSettings.AllowBackground && Pm2Service.IsAvailable;
+            bool pm2Ready = false;
+
+            if (Pm2Service.IsAvailable)
+            {
+                Pm2App? existing = await Pm2Service.FindAsync(pm2Name).ConfigureAwait(false);
+
+                // 上一轮关掉启动器后仍在跑：接管，绝不重启——重启会掐断用户正在用的会话
+                if (pm2Wanted && existing is { IsOnline: true } && IsPortListening(port))
+                {
+                    AdoptPm2(existing, port, instance, builtin, configPath);
+                    return;
+                }
+
+                // 其余情况（半死 / 换端口 / 用户关了继续运行 / 切换了实例）一律清场。
+                // 不传 keep：同名 app 也要删，否则 start 会撞上旧定义直接失败。
+                int stale = await Pm2Service.DeleteSiblingsAsync(null).ConfigureAwait(false);
+
+                if (stale > 0)
+                {
+                    AddLogKey(TavernLogKind.Info, "Run.Log.Pm2Cleanup", stale);
+                }
+
+                pm2Ready = pm2Wanted;
+            }
+            else if (LauncherSettings.AllowBackground)
+            {
+                // 用户勾了「继续运行」但 PM2 不在：这次关启动器就会停，提前说清楚，别让他以为还在后台
+                AddLogKey(TavernLogKind.Warning, "Run.Log.Pm2Unavailable");
             }
 
             // ---------- 5. 端口 ----------
@@ -425,7 +498,13 @@ namespace AstraBrew_Launcher.Services
 
                 AddLogKey(TavernLogKind.Warning, "Run.Log.PortBusyFound", port, detail);
 
-                int released = await PortProbe.ReleaseOwnAsync(owners, port).ConfigureAwait(false);
+                // PM2 管的进程同样是「启动器目录下的 node」，但绝不能杀：
+                // 杀了它会立刻被 autorestart 拉回来，端口又占上，白忙一场
+                IReadOnlySet<int> pm2Pids = await Pm2Service.ManagedPidsAsync().ConfigureAwait(false);
+
+                int released = await PortProbe
+                    .ReleaseOwnAsync(owners, port, pid => pm2Pids.Contains(pid))
+                    .ConfigureAwait(false);
 
                 if (released == 0)
                 {
@@ -480,6 +559,109 @@ namespace AstraBrew_Launcher.Services
             }
 
             // ---------- 7. 起进程 ----------
+            if (pm2Ready)
+            {
+                var pm2Watch = new CancellationTokenSource();
+
+                lock (Gate)
+                {
+                    _readyWatch?.Dispose();
+                    _readyWatch = pm2Watch;
+                    _process = null;
+                    _pm2AppName = pm2Name;
+                    _state = _state with
+                    {
+                        State = TavernRunState.Starting,
+                        Pid = null,
+                        Port = port,
+                        Url = $"http://127.0.0.1:{port}",
+                        ModeKey = TavernSettings.ModeKey,
+                        EnvKey = builtin ? "Run.Env.Builtin" : "Run.Env.System",
+                        VersionLabel = instance.KernelLabel,
+                        ManagedByPm2 = true,
+                    };
+                }
+
+                Raise();
+
+                if (LauncherSettings.ShowStartupCommand)
+                {
+                    AddLog(TavernLogKind.System, $"$ pm2 start {pm2Name}");
+                }
+
+                Pm2Result launch = await Pm2Service
+                    .StartAsync(
+                        new Pm2LaunchSpec(
+                            pm2Name,
+                            instance.Path,
+                            "server.js",
+
+                            // ecosystem 的 script 已经是 server.js，args 里不能再来一个：
+                            // 变成 `node server.js server.js` 会直接把酒馆顶掉
+                            arguments.Skip(1).ToList(),
+                            node,
+                            BuildPm2Environment(node, git, proxy)),
+                        pm2Watch.Token)
+                    .ConfigureAwait(false);
+
+                if (!launch.Ok)
+                {
+                    // pm2 start 在 daemon 冷启动时会挂住 CLI（超时收尾）：这不代表没起来。
+                    // 先查表；查不到就给端口 8 秒——端口在听就说明 app 其实已经被 PM2 拉起来了，
+                    // 只是 CLI 与 daemon 的通信没回来。只看 jlist 会在这种环境里误判成失败，
+                    // 进而「回退直连」与已经在跑的那个抢端口。
+                    Pm2App? probe = await Pm2Service.FindAsync(pm2Name, pm2Watch.Token).ConfigureAwait(false);
+
+                    if (probe is not null || await WaitListeningAsync(port, TimeSpan.FromSeconds(6)).ConfigureAwait(false))
+                    {
+                        launch = new Pm2Result(true, 0, string.Empty, string.Empty);
+                    }
+                }
+
+                if (launch.Ok)
+                {
+                    // 尾随器放在这里而不是更早：StartAsync 内部会清空 out/err 文件，
+                    // 先接上的话读到的偏移是旧文件的长度，启动 banner 会整段丢掉
+                    StartTail(pm2Name, adopted: false);
+
+                    // pm2 start 的退出码只代表「注册成功」，进程可能随后 errored：还要看 jlist
+                    Pm2App? app = await Pm2Service.FindAsync(pm2Name, pm2Watch.Token).ConfigureAwait(false);
+
+                    lock (Gate)
+                    {
+                        _state = _state with { Pid = app?.Pid, StartedAt = app?.StartedAt ?? DateTime.Now };
+                    }
+
+                    Raise();
+                    AddLogKey(TavernLogKind.Info, "Run.Log.Pm2Started", pm2Name, app?.Pid ?? 0, port);
+
+                    await WaitReadyPm2Async(pm2Name, port, clock, pm2Watch.Token).ConfigureAwait(false);
+                    return;
+                }
+
+                // 起不来就回退直连：宁可这次没托管，也不能让酒馆打不开
+                AddLogKey(TavernLogKind.Warning, "Run.Log.Pm2Fallback", launch.Detail);
+                AppNotify.Warning(L.Get("Run.Pm2Fallback.Title"), L.F("Run.Pm2Fallback.Body", launch.Detail));
+
+                StopTail();
+                pm2Watch.Dispose();
+
+                lock (Gate)
+                {
+                    _readyWatch = null;
+                    _pm2AppName = null;
+                    _state = _state with
+                    {
+                        State = TavernRunState.Starting,
+                        Pid = null,
+                        StartedAt = null,
+                        ManagedByPm2 = false,
+                    };
+                }
+
+                Raise();
+            }
+
             var startInfo = new ProcessStartInfo(node)
             {
                 WorkingDirectory = instance.Path,
@@ -540,10 +722,12 @@ namespace AstraBrew_Launcher.Services
                 _readyWatch?.Dispose();
                 _readyWatch = watch;
                 _process = process;
+                _pm2AppName = null;
                 _state = _state with
                 {
                     State = TavernRunState.Starting,
                     Pid = process.Id,
+                    ManagedByPm2 = false,
                     Port = port,
                     Url = $"http://127.0.0.1:{port}",
                     ModeKey = TavernSettings.ModeKey,
@@ -599,7 +783,455 @@ namespace AstraBrew_Launcher.Services
             }
         }
 
-        private static void MarkRunning(int port, TimeSpan elapsed)
+        /// <summary>
+        /// 这条错误在老版本上把用户困死过：报错本身只说「协议不对」，
+        /// 看不出是环境变量里的 --import 在捣鬼，这里补一句能照做的说明。
+        /// 同一条错误会连着刷好几行（throw 行、Error 行、code 行），说明只补一次。
+        /// </summary>
+        private static void CheckEsmHint(string line)
+        {
+            if (_esmSchemeSeen
+                || !line.Contains("ERR_UNSUPPORTED_ESM_URL_SCHEME", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _esmSchemeSeen = true;
+            AddLogKey(TavernLogKind.Error, "Run.Esm.Hint");
+        }
+
+        /// <summary>
+        /// 判断一行输出算什么级别。直连与 PM2 两条来源共用，级别口径才不会分叉。
+        ///
+        /// **stderr 不等于错误**：Node 连 <c>console.warn</c> 都走 stderr，一律标红的话，
+        /// 启动时每句提示都是红的，真正的错误反而淹在里面（例如代理与私有地址过滤同时开启时，
+        /// 酒馆会打两条「请求代理已启用」的提示——它们是警告，不是故障）。
+        /// 所以：有错误关键字才算错误，其余 stderr 降为警告。
+        /// </summary>
+        private static TavernLogKind ClassifyLine(string line, bool fromError)
+        {
+            if (line.Contains("error", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("ERR!", StringComparison.Ordinal))
+            {
+                return TavernLogKind.Error;
+            }
+
+            return fromError ? TavernLogKind.Warning : TavernLogKind.Output;
+        }
+
+        // ==================== PM2 托管 ====================
+
+        /// <summary>
+        /// PM2 模式下等端口就绪。主信号仍是端口（唯一可靠的就绪判据），
+        /// 额外每 1.5 秒看一眼 jlist：状态变 errored 就别再干等满 90 秒。
+        /// </summary>
+        private static async Task WaitReadyPm2Async(string appName, int port, Stopwatch clock, CancellationToken token)
+        {
+            DateTime deadline = DateTime.UtcNow + ReadyTimeout;
+            DateTime nextPoll = DateTime.UtcNow;
+            bool warned = false;
+            int? knownPid = null;
+
+            while (!token.IsCancellationRequested)
+            {
+                if (IsPortListening(port))
+                {
+                    int? readyPid = knownPid;
+                    Post(() => MarkRunning(port, clock.Elapsed, readyPid));
+                    return;
+                }
+
+                if (DateTime.UtcNow >= nextPoll)
+                {
+                    nextPoll = DateTime.UtcNow.AddSeconds(1.5);
+
+                    Pm2App? app = await Pm2Service.FindAsync(appName, token).ConfigureAwait(false);
+
+                    // app 为 null 时**不能判死**：PM2 在部分 Windows 环境里读不到进程表
+                    // （它依赖 wmic 之类的系统工具，被组策略或安全软件拦掉就是空表）。
+                    // 只有明确拿到「已退出」的状态才提前收工，否则继续等端口、由超时兜底。
+                    if (app is not null && app.Status is "errored" or "stopped" or "stopping")
+                    {
+                        // 不清掉的话 PM2 会把它留在表里反复重启（autorestart），
+                        // 端口与日志文件一直被占，用户再点启动还会撞上同名 app
+                        _ = Pm2Service.DeleteAsync(appName);
+
+                        Fail("Run.Log.Pm2Exited", app.Status);
+                        return;
+                    }
+
+                    // pm2 start 返回时 app 常常还在 launching（pid=0），那一次拿不到 pid。
+                    // 这里每轮补写：只写一次，避免每 1.5 秒刷一次 UI。
+                    if (app?.Pid is > 0 and var pid && pid != knownPid)
+                    {
+                        knownPid = pid;
+                        ApplyPm2Pid(pid);
+                    }
+                }
+
+                if (!warned && DateTime.UtcNow > deadline)
+                {
+                    warned = true;
+                    AddLogKey(
+                        TavernLogKind.Warning,
+                        "Run.Log.ReadyTimeout",
+                        ReadyTimeout.TotalSeconds.ToString("0"),
+                        port);
+                }
+
+                try
+                {
+                    await Task.Delay(400, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+        }
+
+        /// <summary>等端口开始监听（不是「空闲」）。给「CLI 超时但进程其实已起」的判定用。</summary>
+        private static async Task<bool> WaitListeningAsync(int port, TimeSpan timeout)
+        {
+            DateTime deadline = DateTime.UtcNow + timeout;
+
+            while (DateTime.UtcNow < deadline)
+            {
+                if (IsPortListening(port))
+                {
+                    return true;
+                }
+
+                try
+                {
+                    await Task.Delay(300).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return false;
+                }
+            }
+
+            return IsPortListening(port);
+        }
+
+        /// <summary>
+        /// 补写 PM2 的 pid。启动初期 app 还是 <c>launching</c>，那一次拿到的 pid 是 null；
+        /// 不补的话 <see cref="TavernProcessState.Pid"/> 会整个会话停在 null，
+        /// 仪表盘的内存 / CPU 与「PID」三处就都是「—」。
+        /// </summary>
+        private static void ApplyPm2Pid(int pid)
+        {
+            lock (Gate)
+            {
+                if (_state.Pid == pid)
+                {
+                    return;
+                }
+
+                _state = _state with { Pid = pid };
+            }
+
+            Raise();
+        }
+
+        /// <summary>
+        /// 接管一个已经在跑的 PM2 app：不重启、不改配置，只把状态与日志接回来。
+        /// 重启会掐断用户正在用的会话，必须认领而不是重来。
+        /// </summary>
+        private static void AdoptPm2(Pm2App app, int port, TavernInstance instance, bool builtin, string configPath)
+        {
+            _queue ??= DispatcherQueue.GetForCurrentThread();
+
+            lock (Gate)
+            {
+                _process = null;
+                _pm2AppName = app.Name;
+                _state = _state with
+                {
+                    State = TavernRunState.Running,
+                    Pid = app.Pid,
+                    Port = port,
+                    Url = $"http://127.0.0.1:{port}",
+                    ModeKey = TavernSettings.ModeKey,
+                    EnvKey = builtin ? "Run.Env.Builtin" : "Run.Env.System",
+                    VersionLabel = instance.KernelLabel,
+                    Error = null,
+                    StartedAt = app.StartedAt ?? DateTime.Now,
+                    StartupSeconds = 0,
+                    ManagedByPm2 = true,
+                };
+            }
+
+            // 启动器没开的时候，酒馆的输出只写在 PM2 的 out / err 里：
+            // 把它截一段补进日志页，否则「酒馆」页签只有启动器自己那几行
+            int imported = ImportPm2History(app.Name);
+
+            StartTail(app.Name, adopted: true);
+            Raise();
+            AddLogKey(TavernLogKind.Info, "Run.Log.Config", configPath);
+            AddLogKey(TavernLogKind.Success, "Run.Log.Pm2Adopted", app.Name, port);
+
+            if (imported > 0)
+            {
+                AddLogKey(TavernLogKind.Info, "Run.Log.Pm2History", imported);
+            }
+
+            // PM2 页签里也留一条：接管不执行任何命令（只查 jlist，而它是轮询、不记），
+            // 不写这一行的话，重启后打开「PM2」看到的是上一轮的旧记录，像是没生效
+            RuntimeLog.Pm2(
+                $"adopt {app.Name} · {app.Status} · pid {app.Pid?.ToString() ?? "-"} · port {port}");
+
+            ActivityLog.Record(ActivityCategory.Service, L.F("Activity.Service.Adopt", port));
+        }
+
+        /// <summary>
+        /// 启动器刚开起来时，把上一轮关掉后 PM2 还在跑的 app 认领回来。
+        /// 不认领的话，控制台显示「未启动」而端口却被占着，用户点启动只会撞端口。
+        /// </summary>
+        public static async Task AdoptExistingAsync()
+        {
+            if (!Pm2Service.IsAvailable || !LauncherSettings.AllowBackground)
+            {
+                return;
+            }
+
+            _queue ??= DispatcherQueue.GetForCurrentThread();
+
+            try
+            {
+                TavernInstance instance = TavernInstances.Current;
+
+                if (!instance.IsInstalled)
+                {
+                    return;
+                }
+
+                string appName = Pm2Service.AppNameFor(instance);
+                Pm2App? app = await Pm2Service.FindAsync(appName).ConfigureAwait(false);
+
+                if (app is not { IsOnline: true })
+                {
+                    return;
+                }
+
+                (string configPath, _) = ResolveData(instance);
+                int port = ReadPort(configPath);
+
+                if (!IsPortListening(port))
+                {
+                    // 进程在跑、端口却没监听：半死状态。留着只会让用户点启动撞端口
+                    await Pm2Service.DeleteAsync(appName).ConfigureAwait(false);
+                    return;
+                }
+
+                AdoptPm2(app, port, instance, LauncherSettings.Runtime == RuntimeSource.Builtin, configPath);
+            }
+            catch (Exception ex)
+            {
+                RuntimeLog.Warn($"pm2 adopt failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>把 PM2 的输出文件接上：行会回灌进 <see cref="IngestExternalLine"/>，三处日志同步。</summary>
+        /// <param name="adopted">本次是接管上一轮遗留的 app（而不是刚启动）。</param>
+        private static void StartTail(string appName, bool adopted)
+        {
+            StopTail();
+
+            var tail = new Pm2LogTail(appName, IngestExternalLine);
+            _tail = tail;
+
+            if (!adopted)
+            {
+                // 文件刚被 PrepareLogFiles 清空，读到什么就是本次启动的输出
+                tail.Start(replayHistory: true);
+                return;
+            }
+
+            // 接管时只跟新行：历史已经由 ImportPm2History 补进日志页（去重后），
+            // 控制台那一侧由 ConsoleArchive 负责。再回放一遍只会重复。
+            tail.Start(replayHistory: false);
+        }
+
+        /// <summary>
+        /// 启动时把控制台存档载回内存。**只做一次**，且必须在 UI 线程调用。
+        ///
+        /// 控制台显示的就是上一轮保存下来的那些行，格式、顺序、内容都和关掉时一样；
+        /// 这也顺带解决了「接管时从 PM2 重放、结构全变了」的问题。
+        /// </summary>
+        public static void RestoreConsoleHistory()
+        {
+            if (_consoleHistoryLoaded)
+            {
+                return;
+            }
+
+            _consoleHistoryLoaded = true;
+
+            IReadOnlyList<TavernLogEntry> entries = ConsoleArchive.Load(MaxLogLines);
+
+            if (entries.Count == 0)
+            {
+                // 首次运行 / 存档被删：保留「可以回放兜底」这条路
+                _consoleHistoryLoaded = false;
+                return;
+            }
+
+            Post(() =>
+            {
+                _logs.Clear();
+                _logs.AddRange(entries);
+                Cleared?.Invoke(null, EventArgs.Empty);
+            });
+        }
+
+        private static void StopTail()
+        {
+            try
+            {
+                _tail?.Dispose();
+            }
+            catch (Exception)
+            {
+                // 退出路径上不再纠缠
+            }
+
+            _tail = null;
+        }
+
+        /// <summary>
+        /// 把 PM2 记录的那段输出补进**日志页**（不进控制台）。
+        ///
+        /// 去重靠「今天的酒馆日志里已经有的行跳过」：启动器开着时尾随器已经写过一遍，
+        /// 补的时候再把它们抄一遍，就成了每条都重复两次。用最近 600 行做对照，
+        /// 命中即跳过（同一条一模一样的输出连发两次会被误判，但日志里这无关紧要）。
+        /// </summary>
+        /// <returns>实际补进来的行数。</returns>
+        private static int ImportPm2History(string appName)
+        {
+            Dictionary<string, int>? seen = RecentTavernTexts(600);
+            int imported = 0;
+
+            foreach ((string line, bool fromError) in Pm2LogTail.ReadTail(appName, Pm2LogTail.AdoptReplayBytes))
+            {
+                string text = AnsiPattern.Replace(line, string.Empty).TrimEnd();
+
+                if (text.Length == 0)
+                {
+                    continue;
+                }
+
+                // 按次数扣减而不是「见过就跳过」：分隔线、重复横幅这类同一句会出现多次，
+                // 用集合会把第二次以后的新行也当成重复吞掉
+                if (seen is not null && seen.TryGetValue(text, out int count) && count > 0)
+                {
+                    seen[text] = count - 1;
+                    continue;
+                }
+
+                RuntimeLog.Tavern(
+                    new TavernLogEntry(DateTime.Now, ClassifyLine(text, fromError), text),
+                    mirrorToConsole: false);
+
+                imported++;
+            }
+
+            return imported;
+        }
+
+        /// <summary>今天酒馆日志里最近若干行的正文（去掉时间与级别前缀）及其出现次数，用于补历史时去重。</summary>
+        private static Dictionary<string, int>? RecentTavernTexts(int maxLines)
+        {
+            try
+            {
+                var texts = new List<string>();
+
+                foreach (string path in Directory.EnumerateFiles(
+                    RuntimeLog.FolderPath,
+                    $"tavern-{DateTime.Today:yyyyMMdd}*.log"))
+                {
+                    foreach (string line in File.ReadLines(path))
+                    {
+                        Match match = RuntimeLinePattern.Match(line);
+
+                        if (match.Success)
+                        {
+                            texts.Add(match.Groups["text"].Value);
+                        }
+                    }
+                }
+
+                var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+                foreach (string text in texts.Skip(Math.Max(0, texts.Count - maxLines)))
+                {
+                    counts[text] = counts.TryGetValue(text, out int count) ? count + 1 : 1;
+                }
+
+                return counts;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>与 <see cref="LogCatalog"/> 同一套行格式：时间、5 字符标签、正文。</summary>
+        private static readonly Regex RuntimeLinePattern = new(
+            @"^(?<time>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\s+[A-Z]+\s+(?<text>.*)$",
+            RegexOptions.Compiled);
+
+        /// <summary>
+        /// PM2 输出的一行。来源不是我们的 <see cref="Process"/>，但走同一条日志管线——
+        /// 控制台、日志页、磁盘三处看到的才是同一份。
+        /// </summary>
+        internal static void IngestExternalLine(string line, bool fromError)
+        {
+            string text = AnsiPattern.Replace(line, string.Empty).TrimEnd();
+
+            if (text.Length == 0)
+            {
+                return;
+            }
+
+            CheckEsmHint(text);
+            AddLog(ClassifyLine(text, fromError), text);
+        }
+
+        /// <summary>
+        /// 交给 PM2 拉起的进程要继承的环境。命令行参数传不了环境变量，
+        /// 只能走 ecosystem 的 <c>env</c> 字段（见 <see cref="Pm2Service"/>）。
+        /// </summary>
+        private static IReadOnlyDictionary<string, string> BuildPm2Environment(string node, string? git, string? proxy)
+        {
+            var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["PATH"] = BuildPm2Path(node, git),
+            };
+
+            if (File.Exists(TavernGitConfig.FilePath))
+            {
+                env["GIT_CONFIG_GLOBAL"] = TavernGitConfig.FilePath;
+            }
+
+            if (ComposeNodeOptions() is { Length: > 0 } nodeOptions)
+            {
+                env["NODE_OPTIONS"] = nodeOptions;
+            }
+
+            if (proxy is not null)
+            {
+                foreach (string key in new[] { "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy" })
+                {
+                    env[key] = proxy;
+                }
+            }
+
+            return env;
+        }
+
+        private static void MarkRunning(int port, TimeSpan elapsed, int? pid = null)
         {
             lock (Gate)
             {
@@ -611,6 +1243,7 @@ namespace AstraBrew_Launcher.Services
                 _state = _state with
                 {
                     State = TavernRunState.Running,
+                    Pid = pid ?? _state.Pid,
                     Port = port,
                     Url = $"http://127.0.0.1:{port}",
                     StartedAt = _state.StartedAt ?? DateTime.Now,
@@ -650,6 +1283,16 @@ namespace AstraBrew_Launcher.Services
         /// </summary>
         public static async Task StopAsync(bool force = false)
         {
+            ActivityLog.Record(ActivityCategory.Service, L.Get("Activity.Service.Stop"));
+
+            // PM2 分支必须放在最前：下面的实现第一个判断就是「_process 为空就返回」，
+            // 托管模式下根本没有 Process，放在后面等于「点停止没反应」
+            if (_state.ManagedByPm2 && _pm2AppName is { Length: > 0 } pm2Name)
+            {
+                await StopPm2Async(pm2Name, force).ConfigureAwait(false);
+                return;
+            }
+
             Process? process;
             int pid;
 
@@ -766,23 +1409,104 @@ namespace AstraBrew_Launcher.Services
         }
 
         /// <summary>
-        /// 退出启动器时调用：同步结束进程树，不等 Exited 事件。
-        /// 窗口一关事件循环就没了，异步收尾根本跑不完，进程会变成孤儿继续占着端口。
+        /// 退出启动器时调用：**同步**把酒馆停干净，并等到端口真的释放。
+        ///
+        /// 窗口一关事件循环就没了，异步收尾根本跑不完，进程会变成孤儿继续占着端口；
+        /// 所以这里用同步路径，并且把「等到端口释放」也算进职责——只杀进程不校验端口，
+        /// 下次启动就可能撞上 TIME_WAIT 或杀失败的残留。
         /// </summary>
-        public static void Shutdown()
+        /// <param name="portWait">最多等多久（默认 3 秒）。超时不阻断退出，只记日志。</param>
+        /// <returns>端口是否已释放。false 表示还被别的进程占着。</returns>
+        public static bool Shutdown(TimeSpan? portWait = null)
         {
+            TimeSpan budget = portWait ?? TimeSpan.FromSeconds(3);
+            var clock = Stopwatch.StartNew();
+
             int? pid;
+            bool managed;
+            string? appName;
+            int port;
+
             lock (Gate)
             {
                 pid = _state.Pid;
+                managed = _state.ManagedByPm2;
+                appName = _pm2AppName;
+                port = _state.Port;
                 _stopRequested = true;
                 _readyWatch?.Cancel();
             }
 
-            if (pid is { } value)
+            StopTail();
+
+            if (managed && appName is { Length: > 0 } name)
+            {
+                // PM2 的 app 只能走 delete：对它的子进程用 taskkill 会被 autorestart 拉回来
+                Pm2Service.Delete(name, TimeSpan.FromMilliseconds(1500));
+            }
+            else if (pid is { } value)
             {
                 KillTree(value, force: true);
             }
+            else
+            {
+                return true;
+            }
+
+            TimeSpan left = budget - clock.Elapsed;
+            bool free = port <= 0 || (left > TimeSpan.Zero && PortProbe.WaitFree(port, left));
+
+            if (!free && port > 0)
+            {
+                // 兜底：PM2 的 delete 在 daemon 通信失败时不会真的结束进程。
+                // 用户的要求是「关掉启动器就把端口放开」，这里强制清一次占用者。
+                free = PortProbe.ReleaseOwn(port, TimeSpan.FromMilliseconds(1200));
+            }
+
+            if (!free)
+            {
+                RuntimeLog.Warn($"shutdown: port {port} still busy after {clock.ElapsedMilliseconds}ms");
+            }
+
+            return free;
+        }
+
+        /// <summary>PM2 模式的停止：delete 之后还要等端口放开，否则「已停止」是假的。</summary>
+        private static async Task StopPm2Async(string appName, bool force)
+        {
+            int port;
+
+            lock (Gate)
+            {
+                if (_state.State is TavernRunState.Stopping)
+                {
+                    return;
+                }
+
+                port = _state.Port;
+                _stopRequested = true;
+                _state = _state with { State = TavernRunState.Stopping };
+                _readyWatch?.Cancel();
+            }
+
+            Raise();
+            AddLogKey(TavernLogKind.Info, "Run.Log.Pm2Stop", appName);
+
+            // PM2 模式没有「优雅 / 强制」两档：delete 本身就是强杀，日志如实写一句即可
+            if (force)
+            {
+                AddLogKey(TavernLogKind.Info, "Run.Log.KillingTree");
+            }
+
+            await Pm2Service.DeleteAsync(appName).ConfigureAwait(false);
+
+            if (!await PortProbe.WaitFreeAsync(port, TimeSpan.FromSeconds(5)).ConfigureAwait(false))
+            {
+                AddLogKey(TavernLogKind.Warning, "Run.Log.Pm2PortStuck", port);
+            }
+
+            StopTail();
+            Post(FinishStopped);
         }
 
         private static async Task WaitExitAsync(Process process, TimeSpan timeout)
@@ -830,7 +1554,8 @@ namespace AstraBrew_Launcher.Services
                     return false;
                 }
 
-                killer.WaitForExit(4000);
+                                // 压到 2.5 秒：窗口关闭路径给整个停止流程的预算只有 3 秒
+                killer.WaitForExit(2500);
                 return killer.HasExited && killer.ExitCode == 0;
             }
             catch
@@ -851,24 +1576,8 @@ namespace AstraBrew_Launcher.Services
 
             string line = AnsiPattern.Replace(raw, string.Empty).TrimEnd();
 
-            // 这条错误在老版本上把用户困死过：报错本身只说「协议不对」，
-            // 看不出是环境变量里的 --import 在捣鬼，这里补一句能照做的说明。
-            // 同一条错误会连着刷好几行（throw 行、Error 行、code 行），说明只补一次
-            if (!_esmSchemeSeen
-                && line.Contains("ERR_UNSUPPORTED_ESM_URL_SCHEME", StringComparison.Ordinal))
-            {
-                _esmSchemeSeen = true;
-                AddLogKey(TavernLogKind.Error, "Run.Esm.Hint");
-            }
-
-            // 酒馆自己的输出按「有内容的行」入日志；错误级别靠关键字粗判，
-            // 这里不做颜色回放——终端里的色块进界面只会变成噪声
-            TavernLogKind kind = line.Contains("error", StringComparison.OrdinalIgnoreCase)
-                || line.Contains("ERR!", StringComparison.Ordinal)
-                ? TavernLogKind.Error
-                : TavernLogKind.Output;
-
-            AddLog(kind, line);
+            CheckEsmHint(line);
+            AddLog(ClassifyLine(line, fromError: false), line);
         }
 
         /// <summary>ESM 路径格式出错时给的说明：说清原因、来源与怎么改。</summary>
@@ -955,8 +1664,16 @@ namespace AstraBrew_Launcher.Services
                     Url = string.Empty,
                     Error = null,
                     StartedAt = null,
+
+                    // 托管标记必须跟着清：不清的话仪表盘会显示「已停止 · PM2」这种假标记，
+                    // 还会让关窗逻辑误以为「有 PM2 保活」而跳过停服
+                    ManagedByPm2 = false,
                 };
+
+                _pm2AppName = null;
             }
+
+            StopTail();
 
             // 酒馆没了，桌面窗口里的页面也活不了：一起关掉，别留个白屏窗口
             DesktopWindow.Close();
@@ -981,8 +1698,15 @@ namespace AstraBrew_Launcher.Services
                     Pid = null,
                     Error = message,
                     StartedAt = null,
+
+                    // 启动都失败了，不可能还有 PM2 在管：不清的话关窗会误判成「有保活」
+                    ManagedByPm2 = false,
                 };
+
+                _pm2AppName = null;
             }
+
+            StopTail();
 
             Raise();
             AddEntry(new TavernLogEntry(DateTime.Now, TavernLogKind.Error, message) { Key = key, Args = args });
@@ -1111,13 +1835,54 @@ namespace AstraBrew_Launcher.Services
         /// </summary>
         private static void ApplyNodeOptions(ProcessStartInfo startInfo)
         {
-            string? inherited = startInfo.Environment.TryGetValue("NODE_OPTIONS", out string? value)
-                ? value
-                : null;
+            if (ComposeNodeOptions() is { Length: > 0 } options)
+            {
+                startInfo.Environment["NODE_OPTIONS"] = options;
+            }
+        }
+
+        /// <summary>
+        /// 最终交给 node 的 NODE_OPTIONS：继承值（规整过） + 隐藏子进程窗口的补丁。
+        ///
+        /// 直连与 PM2 两条通道都走这里，否则会出现「托管时还在闪窗、直连却好了」这种分叉。
+        /// 补丁文件写不出来时**只保留继承值**：宁可闪一下，也不能让酒馆因为
+        /// <c>--require</c> 指向一个不存在的文件而起不来。
+        /// </summary>
+        private static string? ComposeNodeOptions()
+        {
+            string? inherited = SanitizeInheritedNodeOptions();
+            string? shim = NodeShim.RequireOption();
+
+            if (shim is null)
+            {
+                return inherited;
+            }
+
+            if (inherited is null)
+            {
+                return shim;
+            }
+
+            // 用户自己的 NODE_OPTIONS 里可能已经引了同一个补丁：别叠两层
+            if (inherited.Contains("winhide.cjs", StringComparison.OrdinalIgnoreCase))
+            {
+                return inherited;
+            }
+
+            return inherited + " " + shim;
+        }
+
+        /// <summary>
+        /// 把继承来的 NODE_OPTIONS 规整成能用的值（裸路径改写成 file://），并如实记日志。
+        /// 直连与 PM2 两条路径共用：PM2 那边要把同样的值写进 ecosystem 的 env。
+        /// </summary>
+        private static string? SanitizeInheritedNodeOptions()
+        {
+            string? inherited = Environment.GetEnvironmentVariable("NODE_OPTIONS");
 
             if (string.IsNullOrWhiteSpace(inherited))
             {
-                return;
+                return null;
             }
 
             AddLogKey(TavernLogKind.Info, "Run.Log.InheritedNodeOptions", inherited);
@@ -1126,12 +1891,13 @@ namespace AstraBrew_Launcher.Services
 
             if (note is null || fixedOptions is null)
             {
-                return;
+                return null;
             }
 
-            startInfo.Environment["NODE_OPTIONS"] = fixedOptions;
             AddLogKey(TavernLogKind.Warning, "Miss.NodeEnvNote");
             AddLogKey(TavernLogKind.Info, "Run.Log.Rewritten", fixedOptions);
+
+            return fixedOptions;
         }
 
         /// <summary>回显用的命令行。参数里有空格就加引号，粘到终端里能直接跑。</summary>
@@ -1146,7 +1912,11 @@ namespace AstraBrew_Launcher.Services
         }
 
         /// <summary>node 目录与 git 目录前置到 PATH：酒馆的子进程（npm、扩展脚本）要靠它找工具。</summary>
-        private static string BuildPath(string node, string? git)
+        /// <summary>
+        /// 拼给子进程的 PATH：node 与 git 的目录前置，内置环境不在系统 PATH 里也能跑。
+        /// internal：PM2 服务起 pm2 子进程时要用同一份，别各拼一套。
+        /// </summary>
+        internal static string BuildPath(string node, string? git)
         {
             var parts = new List<string>();
 
@@ -1175,6 +1945,46 @@ namespace AstraBrew_Launcher.Services
             }
 
             return string.Join(Path.PathSeparator, parts);
+        }
+
+        /// <summary>
+        /// 给 PM2 拉起的酒馆进程的 PATH：只放它真正需要的目录。
+        ///
+        /// 不能照抄 <see cref="BuildPath"/>——那会把整个宿主 PATH 写进 ecosystem 文件，
+        /// 一个 json 能撑到几十万字符，还把这些与本项目无关的目录带进常驻进程。
+        /// 酒馆真正要的只有：node、git，以及 cmd / powershell 所在的系统目录。
+        /// </summary>
+        private static string BuildPm2Path(string node, string? git)
+        {
+            var parts = new List<string>();
+
+            if (Path.GetDirectoryName(node) is { Length: > 0 } nodeDir)
+            {
+                parts.Add(nodeDir);
+            }
+
+            if (git is not null && Path.GetDirectoryName(git) is { Length: > 0 } gitDir)
+            {
+                parts.Add(gitDir);
+
+                string root = Path.GetDirectoryName(gitDir) ?? gitDir;
+                parts.Add(Path.Combine(root, "bin"));
+                parts.Add(Path.Combine(root, "mingw64", "bin"));
+            }
+
+            foreach (string system in new[]
+            {
+                Environment.GetFolderPath(Environment.SpecialFolder.System),
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            })
+            {
+                if (system is { Length: > 0 })
+                {
+                    parts.Add(system);
+                }
+            }
+
+            return string.Join(Path.PathSeparator, parts.Where(item => item.Length > 0));
         }
 
         private static Task<string?> RunVersionAsync(string executable, string arguments)
@@ -1294,6 +2104,10 @@ namespace AstraBrew_Launcher.Services
             Post(() =>
             {
                 _logs.Add(entry);
+
+                // 内存一份、磁盘一份：内存只留最近 2000 行给控制台，磁盘按天滚动给日志页。
+                // Tavern() 只是入队（有界队列 + 后台写），stdout 刷屏也不会卡住 UI 线程。
+                RuntimeLog.Tavern(entry);
 
                 if (_logs.Count > MaxLogLines)
                 {

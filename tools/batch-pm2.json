@@ -1,0 +1,19 @@
+{
+  "Settings.Row.KeepRunning.Description": ["交给 PM2 托管：关掉启动器或酒馆窗口后，服务继续在后台运行。", "Run through PM2 so the service keeps running after you close the launcher or the tavern window."],
+  "Settings.KeepRunning.Pm2Tip": ["安装 PM2 后才能让酒馆在关闭启动器后继续运行。", "Install PM2 to keep the tavern running after the launcher closes."],
+  "Dw.Closed.Stopping": ["正在停止酒馆服务。想让它继续在后台运行，请打开「关闭启动器后继续运行」（需要 PM2）。", "Stopping the tavern service. To keep it running, turn on \"Keep running after the launcher closes\" (requires PM2)."],
+  "Dw.Closed.KeepingUnmanaged": ["酒馆仍在运行。本次是直连启动，关闭启动器时会一并停止。", "The tavern is still running. It was started directly, so it stops when you close the launcher."],
+  "Console.Meta.Pm2": ["PM2", "PM2"],
+  "Run.Log.Pm2Cleanup": ["清理了 {0} 个上次残留的 PM2 进程。", "Cleaned up {0} leftover PM2 app(s)."],
+  "Run.Log.Pm2Started": ["已交给 PM2（{0} · PID {1}），等待端口 {2} 就绪…", "Handed to PM2 ({0} · PID {1}), waiting for port {2}…"],
+  "Run.Log.Pm2Adopted": ["接管已在运行的 PM2 进程 {0} · 端口 {1}", "Adopted running PM2 app {0} · port {1}"],
+  "Run.Log.Pm2Fallback": ["PM2 启动失败，改用直连启动：{0}", "PM2 start failed, falling back to a direct launch: {0}"],
+  "Run.Log.Pm2Unavailable": ["未检测到 PM2，「关闭启动器后继续运行」本次不生效。", "PM2 not found; \"keep running after closing\" will not apply this time."],
+  "Run.Log.Pm2Stop": ["正在停止 PM2 进程 {0}…", "Stopping PM2 app {0}…"],
+  "Run.Log.Pm2Exited": ["PM2 进程没能保持运行（{0}），请查看上面的输出。", "The PM2 app did not stay up ({0}). Check the output above."],
+  "Run.Log.Pm2PortStuck": ["PM2 已停止，但端口 {0} 仍被占用；下次启动会自动处理。", "PM2 stopped, but port {0} is still in use; the next launch will handle it."],
+  "Run.Pm2Fallback.Title": ["这次没能交给 PM2", "Could not hand over to PM2"],
+  "Run.Pm2Fallback.Body": ["酒馆已用直连方式启动，关闭启动器时会一并停止（{0}）。", "The tavern started directly, so it will stop when you close the launcher ({0})."],
+  "Run.ClosePortStuck.Title": ["端口还没放开", "Port still in use"],
+  "Run.ClosePortStuck.Body": ["酒馆已停止，但端口 {0} 仍被占用，下次启动会自动处理。", "The tavern stopped, but port {0} is still in use; the next launch will handle it."]
+}

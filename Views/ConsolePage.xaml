@@ -171,6 +171,15 @@
                             Text="—" />
                     </StackPanel>
 
+                    <!--  托管标记：与仪表盘同款，一眼看出关掉启动器后它还不会停  -->
+                    <Border
+                        x:Name="Pm2Pill"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource StatusPillStyle}"
+                        Visibility="Collapsed">
+                        <TextBlock Style="{StaticResource StatusPillTextStyle}" controls:Loc.Text="Console.Meta.Pm2" />
+                    </Border>
+
                     <!--  网络模式胶囊：运行中才出现，点开设备访问弹窗  -->
                     <Button
                         x:Name="NetworkButton"

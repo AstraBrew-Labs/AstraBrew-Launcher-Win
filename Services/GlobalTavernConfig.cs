@@ -348,14 +348,23 @@ namespace AstraBrew_Launcher.Services
         }
 
         /// <summary>
-        /// 把白名单整体写进 <c>config.yaml</c>，并确保 <c>whitelistMode</c> 是开的。
+        /// 把白名单整体写进 <c>config.yaml</c>：<c>whitelist</c> 与
+        /// <c>privateAddressWhitelist.allowedRanges</c> **两张表一起写**，并确保两个开关都是开的。
         ///
-        /// 白名单现在由「服务范围」推导（局域网 = 放行本机所在网段，互联网 = 全开放），
-        /// 界面不再手工编辑，所以这里是唯一的写入点。内容没变就不写盘，
-        /// 免得每次启动都改一遍文件时间。
+        /// 为什么必须成对写：
+        /// · <c>whitelist</c> + <c>whitelistMode</c> 决定「谁能连进来」；
+        /// · <c>privateAddressWhitelist.allowedRanges</c> + <c>enabled</c> 决定「酒馆能连向哪些私有地址」，
+        ///   它同时是打开 <c>listen</c> 后不再刷那句 SSRF 警告的开关。
+        /// 只写前者时，用户按提示去改后者——两条名单迟早对不上，局域网里一台都连不通。
+        ///
+        /// 内容没变就不写盘，免得每次启动都改一遍文件时间。
         /// </summary>
+        /// <param name="hosts">访问白名单（<c>whitelist</c>）。</param>
+        /// <param name="privateRanges">
+        /// 私有地址放行范围（<c>allowedRanges</c>）。传空表示这份配置不动这一项。
+        /// </param>
         /// <returns>真的写了文件返回 true。</returns>
-        public static bool ApplyWhitelist(IReadOnlyList<string> hosts)
+        public static bool ApplyWhitelist(IReadOnlyList<string> hosts, IReadOnlyList<string>? privateRanges = null)
         {
             if (!HasGlobalConfig || hosts.Count == 0)
             {
@@ -365,30 +374,39 @@ namespace AstraBrew_Launcher.Services
             try
             {
                 string text = ReadGlobal();
-                List<string> current = YamlConfig.ReadList(text, "whitelist");
+                Dictionary<string, string> scalars = YamlConfig.ReadScalars(text);
+                string updated = text;
 
-                bool same = current.Count == hosts.Count;
-                if (same)
+                if (!SameList(YamlConfig.ReadList(updated, "whitelist"), hosts))
                 {
-                    for (int index = 0; index < hosts.Count; index++)
+                    updated = YamlConfig.SetList(updated, "whitelist", hosts);
+                }
+
+                // 白名单不打开等于没写：顺手把开关置真
+                if (!IsTrue(scalars, "whitelistMode"))
+                {
+                    updated = YamlConfig.SetScalar(updated, "whitelistMode", "true");
+                }
+
+                if (privateRanges is { Count: > 0 })
+                {
+                    if (!SameList(YamlConfig.ReadList(updated, "privateAddressWhitelist.allowedRanges"), privateRanges))
                     {
-                        if (!string.Equals(current[index], hosts[index], StringComparison.OrdinalIgnoreCase))
-                        {
-                            same = false;
-                            break;
-                        }
+                        updated = YamlConfig.SetList(updated, "privateAddressWhitelist.allowedRanges", privateRanges);
+                    }
+
+                    // enabled 置真才会真正生效；老版本配置里没有这一段时 SetScalar 原样返回，
+                    // 自然就什么都不写（不能凭空造段，那会改坏官方那份配置的结构）
+                    if (!IsTrue(scalars, "privateAddressWhitelist.enabled"))
+                    {
+                        updated = YamlConfig.SetScalar(updated, "privateAddressWhitelist.enabled", "true");
                     }
                 }
 
-                if (same)
+                if (string.Equals(updated, text, StringComparison.Ordinal))
                 {
                     return false;
                 }
-
-                string updated = YamlConfig.SetList(text, "whitelist", hosts);
-
-                // 白名单不打开等于没写：顺手把开关置真
-                updated = YamlConfig.SetScalar(updated, "whitelistMode", "true");
 
                 SaveGlobal(updated);
                 return true;
@@ -398,6 +416,29 @@ namespace AstraBrew_Launcher.Services
                 return false;
             }
         }
+
+        /// <summary>两份名单是不是一模一样（顺序也算，因为写进去的就是这个顺序）。</summary>
+        private static bool SameList(IReadOnlyList<string> left, IReadOnlyList<string> right)
+        {
+            if (left.Count != right.Count)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < left.Count; index++)
+            {
+                if (!string.Equals(left[index], right[index], StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool IsTrue(IReadOnlyDictionary<string, string> scalars, string path) =>
+            scalars.TryGetValue(path, out string? value)
+            && string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>读 config.yaml 里现有的白名单（读不到就是空表）。</summary>
         public static IReadOnlyList<string> ReadWhitelist()
@@ -419,6 +460,67 @@ namespace AstraBrew_Launcher.Services
                 return Array.Empty<string>();
             }
         }
+
+        /// <summary>
+        /// 读 <c>privateAddressWhitelist.allowedRanges</c>。迁移用：老版本只改过这一张表时，
+        /// 把它并进用户名单，两处才算「相互同步」。
+        ///
+        /// 回环网段折回单个地址（<c>127.0.0.0/8</c> → <c>127.0.0.1</c>）：官方默认写的是网段，
+        /// 直接并进界面会多出两条看着莫名其妙的条目。
+        /// </summary>
+        public static IReadOnlyList<string> ReadPrivateRanges()
+        {
+            if (!HasGlobalConfig)
+            {
+                return Array.Empty<string>();
+            }
+
+            try
+            {
+                return YamlConfig.ReadList(ReadGlobal(), "privateAddressWhitelist.allowedRanges")
+                    .Where(item => !string.IsNullOrWhiteSpace(item))
+                    .Select(item => item.Trim())
+                    .Select(FoldLoopbackRange)
+                    .Where(item => item.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return Array.Empty<string>();
+            }
+        }
+
+        /// <summary>
+        /// 这份配置里有没有 <c>privateAddressWhitelist</c> 段。老版本酒馆没有，
+        /// 界面上要说清「这一项写不进去」，而不是让用户以为已经同步好了。
+        /// </summary>
+        public static bool HasPrivateAddressWhitelist
+        {
+            get
+            {
+                if (!HasGlobalConfig)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    return YamlConfig.HasKey(ReadGlobal(), "privateAddressWhitelist.allowedRanges");
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    return false;
+                }
+            }
+        }
+
+        private static string FoldLoopbackRange(string value) => value switch
+        {
+            "127.0.0.0/8" => "127.0.0.1",
+            "::1/128" => "::1",
+            _ => value,
+        };
 
         /// <summary>先写临时文件再换名：写一半断掉不会留下半份 YAML。</summary>
         private static void WriteAtomic(string path, string content)

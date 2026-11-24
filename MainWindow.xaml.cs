@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using AstraBrew_Launcher.Services;
 using AstraBrew_Launcher.Views;
@@ -32,6 +33,7 @@ namespace AstraBrew_Launcher
             ["resources"] = typeof(ResourcesPage),
             ["workbench"] = typeof(WorkbenchPage),
             ["console"] = typeof(ConsolePage),
+            ["logs"] = typeof(LogsPage),
             ["settings"] = typeof(SettingsPage),
             ["about"] = typeof(AboutPage),
         };
@@ -551,8 +553,16 @@ namespace AstraBrew_Launcher
         ///   1. 先记录窗口位置 —— 此时 AppWindow 还是正常态，坐标才有意义；
         ///   2. 再把待写的设置刷到磁盘 —— 进程结束后防抖定时器里的那次写入就没了。
         /// </summary>
+        private static int _closing;
+
         private void OnClosed(object sender, WindowEventArgs args)
         {
+            // 停服务并等端口的那几秒里用户可能再点一次关闭：只处理一遍
+            if (Interlocked.Exchange(ref _closing, 1) == 1)
+            {
+                return;
+            }
+
             AppNotify.Raised -= OnNotifyRaised;
             TavernInstances.Changed -= OnInstancesChanged;
 
@@ -581,20 +591,45 @@ namespace AstraBrew_Launcher
 
             _placement?.PersistBounds();
 
-            // 关窗口要不要连酒馆一起停：运行时活在静态状态里，这里不收它就会变成孤儿进程，
-            // 端口一直被占着，下次启动只会看到「端口被占用」。同步杀进程树——窗口一关事件循环就没了。
-            if (LauncherSettings.StopTavernOnWindowClose)
+            // 「关闭启动器后继续运行」是唯一真值：
+            //   · 关着 → 一定停（进程跟随启动器）
+            //   · 开着但这次是直连（PM2 缺失或回退）→ 也停：没有 PM2 保活，留下只可能是占端口的孤儿
+            bool keep = LauncherSettings.AllowBackground && TavernRuntime.State.ManagedByPm2;
+            TavernProcessState state = TavernRuntime.State;
+
+            if (keep)
             {
-                TavernRuntime.Shutdown();
+                RuntimeLog.Info("shutdown: tavern kept by PM2");
+                ActivityLog.Record(ActivityCategory.Service, L.Get("Activity.Service.Keep"));
+            }
+            else if (state.HasProcess || state.ManagedByPm2)
+            {
+                // 顺序是硬要求：先停进程、再等端口真的放开，最后才允许退出。
+                // 只杀进程不校验端口的话，下次启动可能撞上残留或 TIME_WAIT。
+                ActivityLog.Record(ActivityCategory.Service, L.Get("Activity.Service.Shutdown"));
+
+                bool free = TavernRuntime.Shutdown(TimeSpan.FromSeconds(3));
+
+                if (!free && state.Port > 0)
+                {
+                    AppNotify.Warning(
+                        L.Get("Run.ClosePortStuck.Title"),
+                        L.F("Run.ClosePortStuck.Body", state.Port));
+                }
             }
 
             // 窗口位置是静默写入的（不进保存队列），必须整份写一次；
             // 顺带把还在防抖里的改动一起落盘，进程结束后定时器不会再触发。
+            // 放在停止之后：上面的「是否托管、端口有没有卡住」要能进日志再关会话。
             SettingsStore.SaveNow();
             SettingsStore.Flush();
 
             _placement?.Dispose();
             _appearance?.Dispose();
+
+            // 最后一件事：写完 session end 并把日志队列排空、放掉文件句柄。
+            // 放在所有持久化之后，这样前面的收尾万一抛异常也已经在日志里留痕。
+            RuntimeLog.EndSession();
         }
 
         /// <summary>

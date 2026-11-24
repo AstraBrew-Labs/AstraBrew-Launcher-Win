@@ -65,6 +65,10 @@ namespace AstraBrew_Launcher
 
         protected override void OnLaunched(LaunchActivatedEventArgs args)
         {
+            // 日志会话要最先开：后面任何一步出错（协议注册、单实例、窗口创建）都得留痕。
+            // 它自己会先清理过期文件，失败也静默，不会挡住启动。
+            RuntimeLog.StartSession();
+
             // 浏览器点 launcher-astrabrew:// 时，Windows 会把链接当命令行参数塞进来
             string? deepLink = UriScheme.FindInArgs(Environment.GetCommandLineArgs());
 
@@ -106,6 +110,18 @@ namespace AstraBrew_Launcher
             // 放到这之后，用户看到的是「窗口 + 加载遮罩」，而不是干等一秒才出窗口。
             window.StartShell();
 
+            // 从这里开始记操作日志：之前的写入都是「载入配置」，不是用户干的
+            ActivityLog.Enabled = true;
+
+            // 先把控制台里上一轮保存的日志载回来：用户重开启动器要看到的是「上次那一屏」，
+            // 而不是从 PM2 重新拼一份结构都不一样的。必须在认领之前，认领要据此判断
+            // 「还要不要从 PM2 兜底回放」。
+            TavernRuntime.RestoreConsoleHistory();
+
+            // 上一轮关掉启动器后由 PM2 托管、现在还在跑的酒馆要认领回来：
+            // 否则界面显示「未启动」而端口被占着，用户点启动只会撞端口
+            _ = TavernRuntime.AdoptExistingAsync();
+
             // 启动后的静默更新检查：不挡首屏，也不弹窗，有新版才在右下角冒一条
             _ = CheckUpdatesInBackgroundAsync();
         }
@@ -137,19 +153,31 @@ namespace AstraBrew_Launcher
 
                 if (result.State != UpdateStatus.Available || result.Latest is null)
                 {
+                    // 「没新版」是常态，不记；只有真检查过且结论异常时才留一行
+                    if (result.State is UpdateStatus.Failed or UpdateStatus.NoReleaseForChannel)
+                    {
+                        string failure = result.Failure == UpdateFailure.None
+                            ? string.Empty
+                            : $" · {result.Failure}";
+
+                        RuntimeLog.Warn($"update check: {result.State}{failure}");
+                    }
+
                     return;
                 }
 
                 string latest = result.Latest.DisplayVersion;
+                RuntimeLog.Info($"update available: {BuildChannelInfo.DisplayVersion} -> {latest}");
                 AppNotify.Info(
                     L.F("Update.Notify.Title", latest),
                     L.F("Update.Notify.Message", BuildChannelInfo.DisplayVersion, latest),
                     L.Get("Update.Notify.Action"),
                     () => MainWindow?.NavigateTo("about"));
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // 网络抖动、JSON 变形之类一律吞掉：启动阶段的更新检查不该留下任何噪音
+                // 界面仍然不打扰，但日志里得留下：排「为什么没提示更新」时全靠这一行
+                RuntimeLog.Warn($"update check failed: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
@@ -168,6 +196,9 @@ namespace AstraBrew_Launcher
                 File.AppendAllText(
                     Path.Combine(dir, "crash.log"),
                     $"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff}] {ex.GetType().FullName}: {ex.Message}{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}{Environment.NewLine}");
+
+                // 运行日志里只留一行摘要，堆栈仍归 crash.log——页面表格不适合铺堆栈
+                RuntimeLog.Error($"crash: {ex.GetType().FullName}: {ex.Message}");
             }
             catch
             {

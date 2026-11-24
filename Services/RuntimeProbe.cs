@@ -214,11 +214,10 @@ namespace AstraBrew_Launcher.Services
 
             string? caddyExe = FirstExisting(Under(roots, "caddy", "caddy.exe"));
 
-            string? pm2 = ReadPackageVersion(
-                Under(roots, "pm2", "node_modules", "pm2", "package.json")
-                    .Concat(Under(roots, "nodejs", "node_modules", "pm2", "package.json"))
-                    .Concat(Under(roots, "pm2", "package.json"))
-                    .Concat(Under(roots, "node_modules", "pm2", "package.json")));
+            // PM2 只认启动器自己装的那一份：运行时（Pm2Service）只驱动它，
+            // 顺手把「界面上写着有、实际用不了」的口子堵掉（以前只看 package.json，
+            // 早期非全局安装残留也会被算成已装，命令却根本不存在）
+            string? pm2 = ReadPackageVersion(BuiltinPm2Candidates(roots));
 
             // npm 跟 Node.js 一起装在同一个目录：<nodejs>\node_modules\npm\package.json。
             // 读 package.json 而不是跑 npm --version：.cmd 得起 cmd.exe，为一个版本号拉子进程不值
@@ -256,18 +255,9 @@ namespace AstraBrew_Launcher.Services
 
             await Task.WhenAll(gitTask, nodeTask, caddyTask).ConfigureAwait(false);
 
-            var pm2Candidates = new List<string>
-            {
-                // 启动器全局安装的那一份：内置与系统**共用**，系统侧要认它，
-                // 否则切到「系统」运行时时 PM2 会突然显示成没装
-                Path.Combine(Pm2Installer.InstallRoot, "node_modules", "pm2", "package.json"),
-                Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    "npm", "node_modules", "pm2", "package.json"),
-                Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                    "nodejs", "node_modules", "pm2", "package.json"),
-            };
+            // 与内置分支同一口径：只有启动器自己那份 PM2 算数（运行时只驱动它）。
+            // 启动器装的那份内置与系统**共用**，所以切到「系统」环境时不该突然变成没装。
+            var pm2Candidates = BuiltinPm2Candidates(BuiltinRoots);
 
             var npmCandidates = new List<string>
             {
@@ -279,7 +269,8 @@ namespace AstraBrew_Launcher.Services
 
             if (nodeExe is not null && Path.GetDirectoryName(nodeExe) is { Length: > 0 } nodeDir)
             {
-                pm2Candidates.Add(Path.Combine(nodeDir, "node_modules", "pm2", "package.json"));
+                // PM2 不在这里追加：运行时只驱动启动器自己装的那份，
+                // 把系统 node 目录下的 pm2 报成「已安装」只会让开关可点、启动却用不了
                 npmCandidates.Insert(0, Path.Combine(nodeDir, "node_modules", "npm", "package.json"));
             }
 
@@ -290,6 +281,22 @@ namespace AstraBrew_Launcher.Services
                 caddyTask.Result,
                 ReadPackageVersion(pm2Candidates),
                 DetectWebView2());
+        }
+
+        /// <summary>
+        /// 启动器自己那份 PM2 的 package.json 候选。**命令 shim 不在就直接返回空**：
+        /// 没有 <c>pm2.cmd</c> 说明这份装坏了，报「已安装」只会让运行时在启动时才发现用不了。
+        /// </summary>
+        private static IEnumerable<string> BuiltinPm2Candidates(string[] roots)
+        {
+            if (!File.Exists(Pm2Installer.CommandPath))
+            {
+                return Array.Empty<string>();
+            }
+
+            return Under(roots, "pm2", "node_modules", "pm2", "package.json")
+                .Concat(Under(roots, "nodejs", "node_modules", "pm2", "package.json"))
+                .Concat(Under(roots, "pm2", "package.json"));
         }
 
         private static string? FindOnPath(string fileName)

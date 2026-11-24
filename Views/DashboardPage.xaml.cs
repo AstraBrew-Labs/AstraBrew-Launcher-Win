@@ -261,7 +261,10 @@ namespace AstraBrew_Launcher.Views
                 return;
             }
 
-            (long memory, double? cpu) = TavernMetricsService.SampleProcess();
+            // PM2 托管时 LiveProcess 为空，只能按状态里的 pid 现开一个句柄
+            (long memory, double? cpu) = state.ManagedByPm2
+                ? TavernMetricsService.SampleProcess(state.Pid)
+                : TavernMetricsService.SampleProcess();
 
             MemoryValue.Text = memory > 0 ? TavernMetricsService.FormatSize(memory) : "—";
             CpuValue.Text = cpu is { } percent ? $"{percent:0.0}%" : "—";
@@ -647,10 +650,6 @@ namespace AstraBrew_Launcher.Views
             VersionPathText.Text = instance.Path;
             VersionSizeText.Text = instance.Size;
 
-            HeroVersionPillText.Text = L.F(
-                "Dashboard.Version.Pill",
-                instance.KindLabel,
-                instance.KernelLabel);
             CurrentVersionValue.Text = instance.KernelLabel;
             CurrentVersionCaption.Text = BuildVersionCaption(instance);
         }
@@ -1175,11 +1174,23 @@ namespace AstraBrew_Launcher.Views
                 _ => "Dashboard.Service.Stopped",
             });
 
-            StatusHalo.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
-            StatusDotRunning.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
-            StatusDotStopped.Visibility = running ? Visibility.Collapsed : Visibility.Visible;
+            // 托管与否决定了「关掉启动器还在不在」：用独立胶囊标出来，别混在状态文字里
+            Pm2Pill.Visibility = state.ManagedByPm2 && state.IsRunning
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
-            if (running)
+            // 三态：起停进行中 = 转圈，跑起来 = 绿点（带呼吸），其余 = 红点。
+            // 少了「进行中」这一态，点下启动的瞬间灯就变红，看着像失败。
+            StatusRing.IsActive = busy;
+            StatusRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+
+            bool settled = running && !busy;
+
+            StatusHalo.Visibility = settled ? Visibility.Visible : Visibility.Collapsed;
+            StatusDotRunning.Visibility = settled ? Visibility.Visible : Visibility.Collapsed;
+            StatusDotStopped.Visibility = !running && !busy ? Visibility.Visible : Visibility.Collapsed;
+
+            if (settled)
             {
                 StopStatusPulse();
                 StartStatusPulse();

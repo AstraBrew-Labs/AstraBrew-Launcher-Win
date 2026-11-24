@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -69,6 +69,12 @@ namespace AstraBrew_Launcher.Services
 
             return items;
         }
+
+        /// <summary>
+        /// 这份配置里有没有这个键。老版本酒馆没有 <c>privateAddressWhitelist</c> 段，
+        /// 界面上要先问一句再决定显不显示「这一项写不进去」的提示。
+        /// </summary>
+        public static bool HasKey(string text, string path) => Find(Split(text), path) is not null;
 
         /// <summary>改一个标量；路径不存在时原样返回（不擅自往配置里加东西）。</summary>
         public static string SetScalar(string text, string path, string value)

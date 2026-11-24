@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text;
 
@@ -52,6 +52,13 @@ namespace AstraBrew_Launcher.Services
                 log.Info(L.F("Miss.Log.Os", Environment.OSVersion.VersionString, Environment.Is64BitProcess ? 64 : 32));
                 log.Info(L.F("Miss.Log.File", file));
                 log.Info(new string('-', 64));
+
+                // 操作记录里留一条，点开就是这份日志：用户问「刚才那次下载为什么失败」时能直接翻到
+                ActivityLog.Record(
+                    ActivityCategory.Install,
+                    L.F("Activity.Install.Started", ActivityLabels.InstallTask(task)),
+                    logFile: file);
+
                 return log;
             }
             catch

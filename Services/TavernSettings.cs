@@ -360,9 +360,14 @@ namespace AstraBrew_Launcher.Services
             {
                 // 老版本没有这个字段：把 config.yaml 里那份当作用户名单迁移过来。
                 // 但服务器模式下文件里放的是推导结果（可能含 0.0.0.0/0），不能当成用户的。
+                //
+                // 取两张表的并集：用户可能只往 privateAddressWhitelist 里加过网段，
+                // 只读 whitelist 会把那份改动丢掉——「相互同步」在读取这一侧也要成立。
                 stored = Mode == LaunchMode.Server
                     ? LocalDefaults().ToList()
-                    : GlobalTavernConfig.ReadWhitelist().ToList();
+                    : GlobalTavernConfig.ReadWhitelist()
+                        .Concat(GlobalTavernConfig.ReadPrivateRanges())
+                        .ToList();
 
                 if (stored.Count == 0)
                 {
@@ -413,10 +418,45 @@ namespace AstraBrew_Launcher.Services
 
             if (persist)
             {
-                GlobalTavernConfig.ApplyWhitelist(_hosts);
+                GlobalTavernConfig.ApplyWhitelist(_hosts, BuildPrivateRanges(_hosts));
             }
 
             WhitelistChanged?.Invoke(null, EventArgs.Empty);
+        }
+
+        /// <summary>
+        /// 写进 <c>privateAddressWhitelist.allowedRanges</c> 的内容，界面上那块只读镜像也读它。
+        /// </summary>
+        public static IReadOnlyList<string> PrivateRanges => BuildPrivateRanges(WhitelistHosts);
+
+        /// <summary>
+        /// 私有地址放行范围 = 访问白名单 + 本机网段。
+        ///
+        /// 为什么不完全照抄白名单：这张表管的是**出站**请求能连哪些私有地址（本机或局域网上的模型服务），
+        /// 与「谁能连进来」是两回事。桌面模式的访问白名单只放行回环，照抄会把局域网里的模型一并挡掉。
+        /// 补上本机网段才不会把人锁在门外——这就是「保留本地地址防止无法访问」的落点。
+        /// </summary>
+        public static IReadOnlyList<string> BuildPrivateRanges(IEnumerable<string> hosts)
+        {
+            var ranges = new List<string>();
+
+            foreach (string host in hosts)
+            {
+                if (ranges.Any(existing => Covers(existing, host)))
+                {
+                    continue;
+                }
+
+                ranges.Add(host);
+            }
+
+            if (NetworkInfo.LocalSubnet() is { Length: > 0 } subnet
+                && !ranges.Any(existing => Covers(existing, subnet)))
+            {
+                ranges.Add(subnet);
+            }
+
+            return ranges;
         }
 
         /// <summary>规范化后决定每一项锁不锁：锁定模式下全锁，可编辑模式下只锁回环。</summary>
